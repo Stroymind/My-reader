@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#faf9f6">
+<title>我的书房</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="fonts/fonts.css">
+<link rel="stylesheet" href="app.css">
+<script src="vendor/jszip.min.js"></script>
+<script src="vendor/epub.min.js"></script>
+</head>
+<body class="theme-day">
+<!-- 书架 -->
+<section id="library" class="view active">
+  <header class="topbar">
+    <h1>我的书房</h1>
+    <div class="actions">
+      <button id="btn-edit" class="txt">管理</button>
+      <label class="btn primary" for="file-input">导入</label>
+      <input id="file-input" type="file" multiple hidden>
+    </div>
+  </header>
+  <div id="import-status" class="status hidden"></div>
+  <div id="empty" class="empty hidden">
+    <p>书架还是空的</p>
+    <p class="hint">点击右上角“导入”，可一次选择多个 EPUB / PDF / TXT 文件，或包含许多书的 .zip 压缩包。</p>
+  </div>
+  <div class="sortbar"><input id="search" type="search" placeholder="搜索书名或作者"><select id="sort"><option value="recent">最近阅读</option><option value="added">最近导入</option><option value="title">书名</option></select></div>
+  <div id="grid" class="grid"></div>
+  <footer id="storage-info" class="foot"></footer>
+</section>
+
+<!-- 阅读器 -->
+<section id="reader" class="view">
+  <div class="run run-top" id="run-title"></div>
+  <div id="stage"><div id="viewer"></div><div id="tap"></div></div>
+  <div class="run run-bottom" id="run-pct"></div>
+  <div id="bars" class="hidden">
+    <header class="rbar top">
+      <button id="btn-back" class="icon" aria-label="返回书架"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></button>
+      <div id="r-title" class="rtitle"></div>
+      <button id="btn-bm" class="icon star" aria-label="书签">☆</button>
+    </header>
+    <footer class="rbar bottom">
+      <div class="progress-row"><span id="r-pos"></span><input id="r-slider" type="range" min="0" max="1000" value="0"><span id="r-pct">0%</span></div>
+      <div class="btn-row">
+        <button id="btn-toc"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg><span>目录</span></button>
+        <button id="btn-bms"><svg viewBox="0 0 24 24"><path d="M7 4h10v16l-5-4-5 4z"/></svg><span>书签</span></button>
+        <button id="btn-aa"><b class="aa">Aa</b><span>排版</span></button>
+      </div>
+    </footer>
+    <div id="settings" class="sheet hidden"></div>
+  </div>
+  <div id="loading" class="loading hidden">正在打开…</div>
+  <div id="panel" class="panel hidden">
+    <div class="panel-head"><span id="panel-title"></span><button id="panel-close" class="icon" aria-label="关闭">×</button></div>
+    <div id="panel-body"></div>
+  </div>
+</section>
+<div id="toast" class="toast hidden"></div>
+<script type="module" src="app.js"></script>
+</body>
+</html>

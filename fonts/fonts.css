@@ -1,0 +1,6 @@
+/* 本地打包字体（离线可用）。Literata：西文正文；思源宋体(Noto Serif CJK SC)子集：中日文正文；霞鹜文楷子集：可选 */
+@font-face{font-family:"RR Latin Serif";src:url(literata.woff2) format("woff2");font-weight:200 900;font-style:normal;font-display:swap;unicode-range:U+0000-024F,U+02B0-036F,U+1E00-1EFF,U+2000-206F,U+20AC,U+2122,U+2190-2193,U+2212,U+FB00-FB06}
+@font-face{font-family:"RR Latin Serif";src:url(literata-italic.woff2) format("woff2");font-weight:200 900;font-style:italic;font-display:swap;unicode-range:U+0000-024F,U+02B0-036F,U+1E00-1EFF,U+2000-206F,U+20AC,U+2122,U+2190-2193,U+2212,U+FB00-FB06}
+@font-face{font-family:"RR CJK Serif";src:url(serif-cjk-sc.woff2) format("woff2");font-weight:400;font-display:swap;unicode-range:U+2E80-9FFF,U+F900-FAFF,U+FE30-FE4F,U+FF00-FFEF,U+20000-2FFFF}
+@font-face{font-family:"RR CJK Punct";src:url(serif-cjk-sc.woff2) format("woff2");font-weight:400;font-display:swap;unicode-range:U+2014-2015,U+2018-2019,U+201C-201D,U+2026}
+@font-face{font-family:"RR Kai";src:url(wenkai.woff2) format("woff2");font-weight:400;font-display:swap}
