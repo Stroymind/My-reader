@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0f172a" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="description" content="把 X/Twitter 推文转成文本并翻译成中文" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" href="icons/icon-192.png" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <title>推文转文本</title>
+  <link rel="stylesheet" href="app.css" />
+</head>
+<body>
+  <header class="top">
+    <h1>推文转文本</h1>
+    <button type="button" id="btnSettings" class="icon-btn" aria-label="设置">⚙</button>
+  </header>
+
+  <main>
+    <section class="card" id="inputCard">
+      <label for="urlInput">粘贴推文链接，或从 X App 分享到这里</label>
+      <div class="row">
+        <input id="urlInput" type="url" inputmode="url" autocomplete="off"
+               placeholder="https://x.com/用户名/status/…" />
+        <button type="button" id="btnFetch" class="primary">提取</button>
+      </div>
+      <p class="hint" id="shareHint">安卓：在 X App 点「分享」→ 选择「推文转文本」</p>
+      <p class="status" id="status" hidden></p>
+    </section>
+
+    <section class="card" id="resultCard" hidden>
+      <div class="meta" id="meta"></div>
+      <div class="view-tabs" role="tablist">
+        <button type="button" class="tab active" data-view="bilingual">中英对照</button>
+        <button type="button" class="tab" data-view="zh">仅中文</button>
+        <button type="button" class="tab" data-view="en">仅原文</button>
+      </div>
+      <article id="output" class="output"></article>
+      <div class="actions">
+        <button type="button" id="btnCopy" class="primary">一键复制</button>
+        <button type="button" id="btnSave">保存 .txt</button>
+        <button type="button" id="btnShare">系统分享</button>
+      </div>
+    </section>
+
+    <section class="card" id="historyCard">
+      <div class="hist-head">
+        <h2>最近记录</h2>
+        <button type="button" id="btnClearHistory" class="linkish">清空</button>
+      </div>
+      <ul id="historyList" class="history"></ul>
+      <p class="hint" id="historyEmpty">还没有记录</p>
+    </section>
+  </main>
+
+  <dialog id="settingsDialog">
+    <form method="dialog" id="settingsForm" class="settings">
+      <h2>设置</h2>
+      <p class="hint">默认用免费翻译（无需密钥）。也可填入兼容 OpenAI 的接口，翻译质量更好。密钥只存在本机浏览器。</p>
+
+      <label class="check">
+        <input type="checkbox" id="useAi" />
+        使用自备 AI 翻译
+      </label>
+
+      <label>API Base URL
+        <input id="aiBase" type="url" placeholder="https://api.openai.com/v1" />
+      </label>
+      <label>API Key
+        <input id="aiKey" type="password" autocomplete="off" placeholder="sk-…" />
+      </label>
+      <label>模型名
+        <input id="aiModel" type="text" placeholder="gpt-4o-mini" />
+      </label>
+
+      <label class="check">
+        <input type="checkbox" id="preferThread" checked />
+        尽量抓取整串推文（thread）
+      </label>
+
+      <div class="actions">
+        <button type="submit" value="cancel" class="ghost">取消</button>
+        <button type="submit" value="save" class="primary">保存</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="app.js" type="module"></script>
+</body>
+</html>
