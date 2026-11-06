@@ -19,15 +19,16 @@
   <header class="topbar">
     <h1>我的书房</h1>
     <div class="actions">
+      <button id="btn-excerpts" class="txt">摘录</button>
       <button id="btn-edit" class="txt">管理</button>
-      <label class="btn primary" for="file-input">导入</label>
+      <label class="btn primary" for="file-input" title="可一次选择多个 EPUB、PDF、TXT、HTML 或 ZIP">导入</label>
       <input id="file-input" type="file" multiple hidden>
     </div>
   </header>
   <div id="import-status" class="status hidden"></div>
   <div id="empty" class="empty hidden">
     <p>书架还是空的</p>
-    <p class="hint">点击右上角“导入”，可一次选择多个 EPUB / PDF / TXT 文件，或包含许多书的 .zip 压缩包。</p>
+    <p class="hint">点击右上角“导入”，可一次选择多个 EPUB、PDF、TXT、HTML 文件，或包含许多书的 ZIP 压缩包。导入后可离线阅读。</p>
   </div>
   <div class="sortbar"><input id="search" type="search" placeholder="搜索书名或作者"><select id="sort"><option value="recent">最近阅读</option><option value="added">最近导入</option><option value="title">书名</option></select></div>
   <div id="grid" class="grid"></div>
@@ -43,6 +44,7 @@
     <header class="rbar top">
       <button id="btn-back" class="icon" aria-label="返回书架"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></button>
       <div id="r-title" class="rtitle"></div>
+      <button id="btn-select" class="icon" aria-label="选择文字"><svg viewBox="0 0 24 24"><path d="M4 20l3.2-.8L18.5 8a1.8 1.8 0 0 0-2.5-2.5L4.7 16.8 4 20z"/><path d="M13.5 6.5l4 4"/></svg></button>
       <button id="btn-bm" class="icon star" aria-label="书签">☆</button>
     </header>
     <footer class="rbar bottom">
@@ -50,17 +52,42 @@
       <div class="btn-row">
         <button id="btn-toc"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg><span>目录</span></button>
         <button id="btn-bms"><svg viewBox="0 0 24 24"><path d="M7 4h10v16l-5-4-5 4z"/></svg><span>书签</span></button>
+        <button id="btn-hls"><svg viewBox="0 0 24 24"><path d="M5 19l3.2-.7L18.2 8.3a1.6 1.6 0 0 0-2.3-2.3L5.9 16.1 5 19z"/><path d="M4 21h16"/></svg><span>划线</span></button>
         <button id="btn-aa"><b class="aa">Aa</b><span>排版</span></button>
       </div>
     </footer>
     <div id="settings" class="sheet hidden"></div>
   </div>
   <div id="loading" class="loading hidden">正在打开…</div>
+  <div id="select-bar" class="selectbar hidden">
+    <p id="select-hint">拖动选择文字，或长按一段</p>
+    <div class="select-actions">
+      <button id="btn-hl" type="button">高亮</button>
+      <button id="btn-copy" type="button">复制</button>
+      <button id="btn-excerpt" type="button">摘录</button>
+      <button id="btn-select-done" type="button">完成</button>
+    </div>
+  </div>
   <div id="panel" class="panel hidden">
     <div class="panel-head"><span id="panel-title"></span><button id="panel-close" class="icon" aria-label="关闭">×</button></div>
     <div id="panel-body"></div>
   </div>
 </section>
+<div id="lib-panel" class="lib-panel hidden">
+  <div class="panel-head"><span id="lib-title">摘录</span><button id="lib-close" class="icon" aria-label="关闭">×</button></div>
+  <div id="lib-body"></div>
+</div>
+<div id="note-mask" class="note-mask hidden">
+  <form id="note-dialog" class="note-dialog">
+    <h3>保存摘录</h3>
+    <p id="note-quote" class="quote"></p>
+    <textarea id="note-text" rows="3" placeholder="写一句笔记，也可以留空"></textarea>
+    <div class="note-actions">
+      <button type="button" id="note-cancel">取消</button>
+      <button type="submit" class="btn primary" id="note-save">保存</button>
+    </div>
+  </form>
+</div>
 <div id="toast" class="toast hidden"></div>
 <script type="module" src="app.js"></script>
 </body>

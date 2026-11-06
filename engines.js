@@ -1,5 +1,77 @@
 import { settings, epubCss, FONTS, fontStack } from './settings.js';
 
+function cleanWs(s) { return (s || '').replace(/\s+/g, ' ').trim(); }
+
+// HTML / HTM / XHTML → 纯文本段落。只取可读正文，不执行脚本。
+export function htmlToPlain(html) {
+  const doc = new DOMParser().parseFromString(String(html || ''), 'text/html');
+  const title = cleanWs(doc.querySelector('title')?.textContent) || cleanWs(doc.querySelector('h1')?.textContent);
+  const author = cleanWs(doc.querySelector('meta[name="author" i]')?.getAttribute('content'))
+    || cleanWs(doc.querySelector('meta[name="creator" i]')?.getAttribute('content'))
+    || cleanWs(doc.querySelector('meta[name="dc.creator" i]')?.getAttribute('content'));
+  doc.querySelectorAll('script,style,noscript,iframe,object,embed,template,svg,link,meta').forEach(n => n.remove());
+  doc.querySelectorAll('br').forEach(br => br.replaceWith('\n'));
+  const root = doc.body || doc.documentElement;
+  const lines = [];
+  const push = (el) => {
+    const t = cleanWs(el.innerText || el.textContent);
+    if (t) lines.push(t);
+  };
+  for (const el of root.querySelectorAll('h1,h2,h3,h4,h5,p,li,blockquote,pre,figcaption')) {
+    if (!/^H[1-5]$/.test(el.tagName) && el.tagName !== 'LI' && el.querySelector('p,li,blockquote,pre,h1,h2,h3,h4,h5')) continue;
+    push(el);
+  }
+  if (!lines.length) {
+    for (const el of root.querySelectorAll('div,section,article')) {
+      if (el.querySelector('div,section,article,p,h1,h2,h3')) continue;
+      push(el);
+    }
+  }
+  if (!lines.length) {
+    const raw = (root.innerText || root.textContent || '').replace(/\r\n?/g, '\n');
+    for (const line of raw.split(/\n+/)) {
+      const t = cleanWs(line);
+      if (t) lines.push(t);
+    }
+  }
+  return { title: title || '', author: author || '', text: lines.join('\n') };
+}
+
+export function normalizeQuote(text) {
+  return String(text || '').replace(/\u00a0/g, ' ').replace(/\r\n/g, '\n').replace(/[ \t\u3000]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').replace(/[ \t\u3000]{2,}/g, ' ').trim();
+}
+
+function renderMarked(line, marks) {
+  const ranges = [];
+  for (const m of marks) {
+    const parts = String(m.text || '').split(/\n+/).map(s => s.replace(/\s+/g, ' ').trim()).filter(Boolean);
+    for (const part of parts) {
+      let from = 0, at;
+      while ((at = line.indexOf(part, from)) >= 0) {
+        ranges.push([at, at + part.length, m.kind]);
+        from = at + part.length;
+        if (part.length < 4) break;
+      }
+    }
+  }
+  if (!ranges.length) return esc(line);
+  ranges.sort((a, b) => a[0] - b[0] || b[1] - a[1]);
+  const merged = [];
+  for (const r of ranges) {
+    const last = merged[merged.length - 1];
+    if (last && r[0] <= last[1]) last[1] = Math.max(last[1], r[1]);
+    else merged.push([r[0], r[1], r[2]]);
+  }
+  let out = '', pos = 0;
+  for (const [a, b, kind] of merged) {
+    if (a < pos) continue;
+    out += esc(line.slice(pos, a));
+    out += `<mark class="${kind === 'excerpt' ? 'ex' : 'hl'}">${esc(line.slice(a, b))}</mark>`;
+    pos = b;
+  }
+  return out + esc(line.slice(pos));
+}
+
 function flatToc(items, depth = 0, out = []) {
   for (const it of items || []) { out.push({ label: (it.label || '').trim(), target: it.href, depth }); flatToc(it.subitems, depth + 1, out); }
   return out;
@@ -7,7 +79,7 @@ function flatToc(items, depth = 0, out = []) {
 
 /* ---------------- EPUB (epub.js) ---------------- */
 export class EpubEngine {
-  constructor(el, rec, onRelocate) { this.el = el; this.rec = rec; this.onRelocate = onRelocate; this.loc = null; }
+  constructor(el, rec, onRelocate) { this.el = el; this.rec = rec; this.onRelocate = onRelocate; this.loc = null; this.highlights = []; this.selecting = false; this._hlCfis = []; }
   async open(blob) {
     this.book = ePub(await blob.arrayBuffer());
     this.horiz = !!settings.horiz;
@@ -78,9 +150,90 @@ export class EpubEngine {
     doc.fonts?.addEventListener?.('loadingdone', () => this.expandViews());
     let s = doc.getElementById('rr-style');
     if (!s) { s = doc.createElement('style'); s.id = 'rr-style'; doc.head.appendChild(s); }
-    s.textContent = epubCss(this.cjk);
+    s.textContent = epubCss(this.cjk) + '::selection{background:rgba(74,107,93,.28)}';
     // 页边距
     doc.documentElement.style.setProperty('--rr-margin', settings.margin + 'px');
+    this.bindSelect(contents);
+  }
+  bindSelect(contents) {
+    const doc = contents.document;
+    if (!doc || doc.__rrSel) return;
+    doc.__rrSel = true;
+    const report = () => { if (this.selecting) this.onSelectionChange?.(); };
+    doc.addEventListener('selectionchange', report);
+    doc.addEventListener('mouseup', report);
+    doc.addEventListener('touchend', report);
+    doc.addEventListener('click', e => {
+      if (this.selecting && e.target.closest?.('a')) e.preventDefault();
+    }, true);
+  }
+  setSelectMode(on) { this.selecting = !!on; if (!on) this.clearSelection(); }
+  selectAt(x, y) {
+    let contents = [];
+    try { contents = this.rendition.getContents(); } catch { return false; }
+    for (const c of contents) {
+      const frame = c.document?.defaultView?.frameElement;
+      if (!frame) continue;
+      const rect = frame.getBoundingClientRect();
+      if (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) continue;
+      const el = c.document.elementFromPoint(x - rect.left, y - rect.top);
+      if (!el) return false;
+      let block = el.closest?.('p, h1, h2, h3, h4, h5, h6, li, blockquote, pre, dd');
+      if (!block) block = el.nodeType === 1 ? el : el.parentElement;
+      if (!block || block === c.document.body || block === c.document.documentElement) return false;
+      const text = (block.textContent || '').replace(/\s+/g, ' ').trim();
+      if (!text) return false;
+      if (text.length > 500) {
+        const leaf = el.closest?.('span, a, em, strong, b, i') || el;
+        if ((leaf.textContent || '').trim().length > 500 || !(leaf.textContent || '').trim()) return false;
+        block = leaf;
+      }
+      const range = c.document.createRange();
+      range.selectNodeContents(block);
+      const sel = c.window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+      return true;
+    }
+    return false;
+  }
+  getSelection() {
+    let contents = [];
+    try { contents = this.rendition.getContents(); } catch { return null; }
+    for (const c of contents) {
+      const sel = c.window.getSelection();
+      if (!sel || sel.isCollapsed || !sel.rangeCount) continue;
+      const text = normalizeQuote(sel.toString());
+      if (!text) continue;
+      let cfiRange = null;
+      try { cfiRange = c.cfiFromRange(sel.getRangeAt(0)); } catch {}
+      return { text, pos: this.current()?.pos || null, cfiRange, ch: null, page: null };
+    }
+    return null;
+  }
+  clearSelection() {
+    let contents = [];
+    try { contents = this.rendition.getContents(); } catch { return; }
+    for (const c of contents) { try { c.window.getSelection()?.removeAllRanges(); } catch {} }
+  }
+  setHighlights(list) { this.highlights = list || []; this.syncHighlights(); }
+  syncHighlights() {
+    if (!this.rendition) return;
+    for (const cfi of this._hlCfis || []) {
+      try { this.rendition.annotations.remove(cfi, 'highlight'); } catch {}
+    }
+    this._hlCfis = [];
+    const night = settings.theme === 'night';
+    for (const h of this.highlights) {
+      if (!h.cfiRange || h.kind === 'copy') continue;
+      const styles = h.kind === 'excerpt'
+        ? { fill: night ? '#6ea894' : '#8fbfa8', 'fill-opacity': night ? '0.55' : '0.5', 'mix-blend-mode': 'multiply' }
+        : { fill: night ? '#d7b15a' : '#e2c15a', 'fill-opacity': night ? '0.5' : '0.55', 'mix-blend-mode': 'multiply' };
+      try {
+        this.rendition.annotations.highlight(h.cfiRange, { id: h.id }, null, 'rr-hl', styles);
+        this._hlCfis.push(h.cfiRange);
+      } catch (err) { console.warn(err); }
+    }
   }
   async ensureLocations() {
     if (this.book.locations.length()) return;
@@ -135,6 +288,7 @@ export class EpubEngine {
     for (const c of this.rendition.getContents()) this.inject(c);
     this.rendition.themes.fontSize(settings.size + 'px'); // 触发重新分页
     if (cfi) { await this.rendition.display(cfi); await this.settle(cfi); }
+    this.syncHighlights();
   }
   resize() { try { this.rendition.resize(); } catch {} }
   destroy() { this.dead = true; try { this.book.destroy(); } catch {} this.el.innerHTML = ''; }
@@ -142,7 +296,7 @@ export class EpubEngine {
 
 /* ---------------- PDF (pdf.js) ---------------- */
 export class PdfEngine {
-  constructor(el, rec, onRelocate, pdfjsLib) { this.el = el; this.rec = rec; this.onRelocate = onRelocate; this.lib = pdfjsLib; this.zoom = 1; }
+  constructor(el, rec, onRelocate, pdfjsLib) { this.el = el; this.rec = rec; this.onRelocate = onRelocate; this.lib = pdfjsLib; this.zoom = 1; this.highlights = []; this.selecting = false; }
   async open(blob) {
     this.doc = await this.lib.getDocument({ data: new Uint8Array(await blob.arrayBuffer()), cMapUrl: './vendor/cmaps/', cMapPacked: true, standardFontDataUrl: './vendor/standard_fonts/' }).promise;
     this.n = this.doc.numPages;
@@ -170,11 +324,95 @@ export class PdfEngine {
     this.renderTask = page.render({ canvasContext: c.getContext('2d'), viewport: vp });
     try { await this.renderTask.promise; } catch { return; }
     if (token !== this.token) return;
-    this.wrap.replaceChildren(c); this.canvas = c; this.wrap.scrollTo(0, 0);
+    const box = document.createElement('div');
+    box.className = 'pdfpage';
+    const textLayerEl = document.createElement('div');
+    textLayerEl.className = 'textLayer';
+    box.append(c, textLayerEl);
+    this.wrap.replaceChildren(box);
+    this.canvas = c;
+    this.textLayerEl = textLayerEl;
+    this.wrap.scrollTo(0, 0);
     this.wrap.style.alignItems = this.zoom > 1 ? 'flex-start' : 'center';
     this.wrap.style.justifyContent = this.zoom > 1 ? 'flex-start' : 'center';
+    const vpCss = page.getViewport({ scale: fit });
+    try {
+      textLayerEl.replaceChildren();
+      const textContent = await page.getTextContent();
+      if (token !== this.token) return;
+      const layer = new this.lib.TextLayer({ textContentSource: textContent, container: textLayerEl, viewport: vpCss });
+      this.textTask = layer;
+      await layer.render();
+    } catch (err) { console.warn(err); }
+    if (token !== this.token) return;
+    this.paintMarks();
     this.onRelocate(this.current());
   }
+  paintMarks() {
+    const root = this.textLayerEl;
+    if (!root) return;
+    root.querySelectorAll('.rr-mark').forEach(el => el.classList.remove('rr-mark', 'ex'));
+    const quotes = (this.highlights || []).filter(h => h.kind !== 'copy' && h.text && (h.page == null || h.page === this.page));
+    if (!quotes.length) return;
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    const nodes = [];
+    let raw = '';
+    while (walker.nextNode()) {
+      nodes.push({ node: walker.currentNode, start: raw.length });
+      raw += walker.currentNode.nodeValue;
+    }
+    const map = [];
+    let norm = '';
+    for (let i = 0; i < raw.length; i++) {
+      if (/\s/.test(raw[i])) continue;
+      map.push(i);
+      norm += raw[i];
+    }
+    for (const h of quotes) {
+      const nq = h.text.replace(/\s+/g, '');
+      if (!nq) continue;
+      const idx = norm.indexOf(nq);
+      if (idx < 0 || idx + nq.length > map.length) continue;
+      const a = map[idx];
+      const b = map[idx + nq.length - 1] + 1;
+      for (const { node, start } of nodes) {
+        const end = start + node.nodeValue.length;
+        if (end <= a || start >= b) continue;
+        const span = node.parentElement;
+        if (!span || !root.contains(span)) continue;
+        span.classList.add('rr-mark');
+        if (h.kind === 'excerpt') span.classList.add('ex');
+      }
+    }
+  }
+  setSelectMode(on) { this.selecting = !!on; if (!on) this.clearSelection(); }
+  selectAt(x, y) {
+    const el = document.elementFromPoint(x, y);
+    const span = el?.closest?.('.textLayer span');
+    if (!span || !this.textLayerEl?.contains(span)) return false;
+    const top = span.getBoundingClientRect().top;
+    const line = [...this.textLayerEl.querySelectorAll('span')].filter(s => Math.abs(s.getBoundingClientRect().top - top) < 5);
+    if (!line.length) return false;
+    const range = document.createRange();
+    range.setStartBefore(line[0]);
+    range.setEndAfter(line[line.length - 1]);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+    return true;
+  }
+  getSelection() {
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed || !sel.rangeCount || !this.textLayerEl?.contains(sel.anchorNode)) return null;
+    const text = normalizeQuote(sel.toString());
+    if (!text) return null;
+    return { text, pos: { page: this.page }, cfiRange: null, ch: null, page: this.page };
+  }
+  clearSelection() {
+    const sel = window.getSelection();
+    if (sel && this.textLayerEl?.contains(sel.anchorNode)) sel.removeAllRanges();
+  }
+  setHighlights(list) { this.highlights = list || []; this.paintMarks(); }
   current() { return { pos: { page: this.page }, progress: this.n > 1 ? (this.page - 1) / (this.n - 1) : 1, label: `第 ${this.page} / ${this.n} 页`, atEnd: this.page >= this.n }; }
   async snippet() { return `第 ${this.page} 页`; }
   hasLocations() { return true; }
@@ -202,7 +440,7 @@ export class PdfEngine {
   setZoom(z) { this.zoom = z; document.body.classList.toggle('pdf-zoom', z > 1); return this.render(); }
   applySettings() { return this.render(); }
   resize() { return this.render(); }
-  destroy() { document.body.classList.remove('pdf-zoom'); try { this.doc.destroy(); } catch {} this.el.innerHTML = ''; }
+  destroy() { document.body.classList.remove('pdf-zoom'); try { this.textTask?.cancel?.(); } catch {} try { this.doc.destroy(); } catch {} this.el.innerHTML = ''; }
 }
 
 /* ---------------- TXT（自动识别 UTF-8 / GBK）---------------- */
@@ -241,9 +479,11 @@ export function splitChapters(text) {
 function esc(s) { return s.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }
 
 export class TxtEngine {
-  constructor(el, rec, onRelocate) { this.el = el; this.rec = rec; this.onRelocate = onRelocate; }
+  constructor(el, rec, onRelocate) { this.el = el; this.rec = rec; this.onRelocate = onRelocate; this.highlights = []; this.selecting = false; }
   async open(blob) {
-    const { text, chapters } = splitChapters(decodeText(await blob.arrayBuffer()));
+    let raw = decodeText(await blob.arrayBuffer());
+    if (this.rec.type === 'html') raw = htmlToPlain(raw).text || raw;
+    const { text, chapters } = splitChapters(raw);
     this.text = text; this.chs = chapters; this.total = text.length || 1;
     this.page_ = document.createElement('div'); this.page_.className = 'txtpage';
     this.cols = document.createElement('div'); this.cols.className = 'txtcols';
@@ -273,8 +513,10 @@ export class TxtEngine {
     for (let line of lines) {
       line = line.replace(/^[ \t\u3000]+/, '').trimEnd();
       if (!line) continue;
-      if (first && c.heading) { html += `<h2>${esc(line)}</h2>`; first = false; continue; }
-      first = false; html += `<p>${esc(line)}</p>`;
+      const marks = (this.highlights || []).filter(h => h.kind !== 'copy' && h.text && (h.ch == null || h.ch === ch));
+      const marked = renderMarked(line, marks);
+      if (first && c.heading) { html += `<h2>${marked}</h2>`; first = false; continue; }
+      first = false; html += `<p>${marked}</p>`;
     }
     this.cols.innerHTML = html || '<p></p>';
     this.layout();
@@ -290,6 +532,44 @@ export class TxtEngine {
     return { pos: { ch: this.ch, frac }, progress: (c.start + frac * (c.end - c.start)) / this.total, label: c.title, atEnd: this.ch === this.chs.length - 1 && this.p === this.pages - 1 };
   }
   async snippet() { const c = this.chs[this.ch]; const off = Math.floor(c.start + (this.p / this.pages) * (c.end - c.start)); return this.text.slice(off, off + 40).replace(/\s+/g, ' ').trim(); }
+  setSelectMode(on) { this.selecting = !!on; if (!on) this.clearSelection(); }
+  selectAt(x, y) {
+    const el = document.elementFromPoint(x, y);
+    if (!el || !this.page_?.contains(el)) return false;
+    const block = el.closest('p, h1, h2') || el;
+    if (!block || block === this.page_ || block === this.cols) return false;
+    if (!(block.textContent || '').trim()) return false;
+    const range = document.createRange();
+    range.selectNodeContents(block);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+    return true;
+  }
+  getSelection() {
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed || !sel.rangeCount || !this.cols?.contains(sel.anchorNode)) return null;
+    const text = normalizeQuote(sel.toString());
+    if (!text) return null;
+    const cur = this.current();
+    let pos = cur?.pos || { ch: this.ch, frac: 0 };
+    const c = this.chs[this.ch];
+    const body = this.text.slice(c.start, c.end);
+    const probe = text.split('\n').map(s => s.trim()).find(Boolean) || '';
+    const at = probe ? body.indexOf(probe) : -1;
+    if (at >= 0) pos = { ch: this.ch, frac: at / Math.max(1, c.end - c.start) };
+    return { text, pos, cfiRange: null, ch: this.ch, page: null };
+  }
+  clearSelection() {
+    const sel = window.getSelection();
+    if (sel && this.cols?.contains(sel.anchorNode)) sel.removeAllRanges();
+  }
+  setHighlights(list) {
+    this.highlights = list || [];
+    if (!this.chs) return;
+    const frac = this.pages ? this.p / this.pages : 0;
+    this.show(this.ch, frac);
+  }
   hasLocations() { return true; }
   next() { if (this.p < this.pages - 1) { this.p++; this.paint(); } else if (this.ch < this.chs.length - 1) this.show(this.ch + 1, 0); }
   prev() { if (this.p > 0) { this.p--; this.paint(); } else if (this.ch > 0) this.show(this.ch - 1, 0, true); }

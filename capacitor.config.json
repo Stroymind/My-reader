@@ -1,0 +1,16 @@
+{
+  "appId": "io.github.stroymind.myreader",
+  "appName": "我的书房",
+  "webDir": "www",
+  "android": {
+    "path": "android",
+    "allowMixedContent": false,
+    "captureInput": true,
+    "webContentsDebuggingEnabled": false
+  },
+  "server": {
+    "androidScheme": "https",
+    "hostname": "localhost",
+    "cleartext": false
+  }
+}
