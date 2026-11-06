@@ -72,6 +72,30 @@ function renderMarked(line, marks) {
   return out + esc(line.slice(pos));
 }
 
+function textInView(rendition, viewEl) {
+  const box = viewEl.getBoundingClientRect();
+  const parts = [];
+  const seen = new Set();
+  let contents = [];
+  try { contents = rendition.getContents(); } catch { return ''; }
+  for (const c of contents) {
+    const doc = c.document;
+    if (!doc?.body) continue;
+    const frame = doc.defaultView?.frameElement?.getBoundingClientRect() || { left: 0, top: 0 };
+    const nodes = doc.querySelectorAll('p, h1, h2, h3, h4, li, blockquote');
+    for (const el of nodes) {
+      if (el.querySelector('p, h1, h2, h3, li, blockquote')) continue;
+      const r = el.getBoundingClientRect();
+      const left = r.left + frame.left, right = r.right + frame.left, top = r.top + frame.top, bottom = r.bottom + frame.top;
+      const overlap = Math.min(right, box.right) - Math.max(left, box.left);
+      if (overlap < 24 || bottom < box.top + 2 || top > box.bottom - 2) continue;
+      const t = (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
+      if (t && !seen.has(t)) { seen.add(t); parts.push(t); }
+    }
+  }
+  return parts.join('\n');
+}
+
 function flatToc(items, depth = 0, out = []) {
   for (const it of items || []) { out.push({ label: (it.label || '').trim(), target: it.href, depth }); flatToc(it.subitems, depth + 1, out); }
   return out;
@@ -291,6 +315,7 @@ export class EpubEngine {
     this.syncHighlights();
   }
   resize() { try { this.rendition.resize(); } catch {} }
+  pageText() { return textInView(this.rendition, this.el); }
   destroy() { this.dead = true; try { this.book.destroy(); } catch {} this.el.innerHTML = ''; }
 }
 
@@ -413,6 +438,22 @@ export class PdfEngine {
     if (sel && this.textLayerEl?.contains(sel.anchorNode)) sel.removeAllRanges();
   }
   setHighlights(list) { this.highlights = list || []; this.paintMarks(); }
+  pageText() {
+    const root = this.textLayerEl;
+    if (!root) return '';
+    const lines = [];
+    let line = '', lastTop = null;
+    for (const span of root.querySelectorAll('span')) {
+      const t = span.textContent || '';
+      if (!t.trim()) continue;
+      const top = span.getBoundingClientRect().top;
+      if (lastTop != null && Math.abs(top - lastTop) > 5) { if (line.trim()) lines.push(line.trim()); line = ''; }
+      line += t;
+      lastTop = top;
+    }
+    if (line.trim()) lines.push(line.trim());
+    return lines.join('\n');
+  }
   current() { return { pos: { page: this.page }, progress: this.n > 1 ? (this.page - 1) / (this.n - 1) : 1, label: `第 ${this.page} / ${this.n} 页`, atEnd: this.page >= this.n }; }
   async snippet() { return `第 ${this.page} 页`; }
   hasLocations() { return true; }
@@ -577,6 +618,19 @@ export class TxtEngine {
   goToFraction(f) { const [ch, fr] = this.locate(f * this.total); this.show(ch, fr); }
   toc() { return this.chs.map((c, i) => ({ label: c.title, target: i, depth: 0 })); }
   goToc(i) { this.show(i, 0); }
+  pageText() {
+    const box = this.page_?.getBoundingClientRect();
+    if (!box) return '';
+    const parts = [];
+    for (const el of this.cols.querySelectorAll('p, h2')) {
+      const r = el.getBoundingClientRect();
+      const overlap = Math.min(r.right, box.right) - Math.max(r.left, box.left);
+      if (overlap < 24 || r.bottom < box.top + 2 || r.top > box.bottom - 2) continue;
+      const t = (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
+      if (t) parts.push(t);
+    }
+    return parts.join('\n');
+  }
   applySettings() { const frac = this.p / this.pages; this.show(this.ch, frac); }
   resize() { this.applySettings(); }
   destroy() { this.el.innerHTML = ''; }

@@ -3,6 +3,7 @@ import { db } from './db.js';
 import { importFiles, parseManifest, applyManifestToLibrary } from './importer.js';
 import { EpubEngine, PdfEngine, TxtEngine } from './engines.js';
 import { settings, saveSettings, applyBodyTheme, FONTS, THEMES } from './settings.js';
+import { isMostlyCjk, translateVisible } from './bilingual.js';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = './vendor/pdf.worker.min.mjs';
 const $ = s => document.querySelector(s);
@@ -248,6 +249,7 @@ async function openBook(id) {
   engine.setHighlights?.(cur.highlights);
   if (rec.pending && engine.current()) { cur.pending = null; await db.update('books', id, r => { delete r.pending; return r; }); }
   updateBmIcon();
+  refreshBilingual();
   if (!localStorage.getItem('rr-hint-select')) {
     localStorage.setItem('rr-hint-select', '1');
     setTimeout(() => toast('长按文字可以高亮、复制或保存摘录', 3600), 700);
@@ -266,6 +268,8 @@ function onRelocate(state) {
   updateBmIcon();
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => persist(), 400);
+  clearTimeout(onRelocate.bi);
+  onRelocate.bi = setTimeout(() => refreshBilingual(), 180);
 }
 async function persist() {
   if (!cur) return;
@@ -307,6 +311,9 @@ function closeBook() {
     exitSelect();
     try { engine?.destroy(); } catch {}
     engine = null; cur = null; lastState = null;
+    biToken++;
+    document.body.classList.remove('bi');
+    $('#bilingual')?.classList.add('hidden');
     $('#panel').classList.add('hidden'); $('#note-mask').classList.add('hidden');
     showView('library');
     showShelfPage();
@@ -547,6 +554,47 @@ $('#btn-excerpt').onclick = () => {
   setTimeout(() => $('#note-text').focus(), 30);
 };
 $('#btn-select-done').onclick = () => exitSelect();
+$('#btn-bi-off').onclick = () => { settings.bilingual = false; saveSettings(); refreshBilingual(); };
+let biToken = 0;
+function renderPairs(pairs) {
+  const body = $('#bi-body');
+  body.replaceChildren();
+  if (!pairs.length) { body.appendChild(Object.assign(document.createElement('p'), { className: 'bi-miss', textContent: '这一页没有需要对照的英文。' })); return; }
+  for (const pair of pairs) {
+    const block = document.createElement('div');
+    block.className = 'bi-pair';
+    const en = document.createElement('p');
+    en.className = 'bi-en';
+    en.textContent = pair.en;
+    const zh = document.createElement('p');
+    zh.className = 'bi-zh';
+    zh.textContent = pair.zh || '这句暂时没有译出来。';
+    block.append(en, zh);
+    body.appendChild(block);
+  }
+}
+function refreshBilingual() {
+  const token = ++biToken;
+  const pane = $('#bilingual');
+  const on = settings.bilingual !== false;
+  const text = on && engine?.pageText ? (engine.pageText() || '') : '';
+  if (!on || !text.trim() || isMostlyCjk(text)) {
+    document.body.classList.remove('bi');
+    pane?.classList.add('hidden');
+    return;
+  }
+  document.body.classList.add('bi');
+  pane.classList.remove('hidden');
+  $('#bi-body').replaceChildren(Object.assign(document.createElement('p'), { className: 'bi-wait', textContent: '正在翻译这一页…' }));
+  translateVisible(text, () => token === biToken).then(res => {
+    if (token !== biToken) return;
+    if (res.chinese || !res.pairs.length) { document.body.classList.remove('bi'); pane.classList.add('hidden'); return; }
+    renderPairs(res.pairs);
+  }).catch(() => {
+    if (token !== biToken) return;
+    $('#bi-body').replaceChildren(Object.assign(document.createElement('p'), { className: 'bi-miss', textContent: '这一页暂时没有译出来。原文仍在上面。' }));
+  });
+}
 $('#btn-select').onclick = () => enterSelect(null, null);
 $('#note-cancel').onclick = () => { $('#note-mask').classList.add('hidden'); noteSel = null; };
 $('#note-dialog').onsubmit = async e => {
@@ -564,7 +612,8 @@ function buildSettings() {
   const s = $('#settings'); s.innerHTML = '';
   const row = (label, ...kids) => { const r = document.createElement('div'); r.className = 'srow'; const l = document.createElement('span'); l.className = 'slabel'; l.textContent = label; const g = document.createElement('div'); g.className = 'seg'; g.append(...kids); r.append(l, g); s.appendChild(r); };
   const btn = (txt, on, fn, cls = '') => { const b = document.createElement('button'); b.textContent = txt; b.className = (on ? 'on ' : '') + cls; b.onclick = fn; return b; };
-  const apply = async () => { saveSettings(); applyBodyTheme(); buildSettings(); await engine?.applySettings(); };
+  const apply = async () => { saveSettings(); applyBodyTheme(); buildSettings(); await engine?.applySettings(); refreshBilingual(); };
+  row('对照', btn('开', settings.bilingual !== false, () => { settings.bilingual = true; saveSettings(); buildSettings(); refreshBilingual(); }), btn('关', settings.bilingual === false, () => { settings.bilingual = false; saveSettings(); buildSettings(); refreshBilingual(); }));
   if (cur?.type === 'pdf') {
     row('缩放', btn('−', false, () => engine.setZoom(Math.max(1, engine.zoom - 0.25))), btn('适应', false, () => engine.setZoom(1)), btn('+', false, () => engine.setZoom(Math.min(4, engine.zoom + 0.25))));
   } else {

@@ -66,6 +66,16 @@ svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.6;stroke
 /* 阅读器 */
 #reader{position:fixed;inset:0;overflow:hidden;background:var(--bg)}
 #stage{position:absolute;inset:0;padding:calc(env(safe-area-inset-top) + 38px) 22px calc(env(safe-area-inset-bottom) + 36px)}
+body.bi #stage{bottom:46%}
+body.bi .run-bottom{bottom:calc(46% + 8px)}
+.bilingual{position:absolute;left:0;right:0;bottom:0;height:46%;z-index:4;display:flex;flex-direction:column;background:var(--bg);box-shadow:0 -1px 0 var(--line)}
+.bi-head{display:flex;align-items:center;justify-content:space-between;padding:8px 16px 2px;font-size:12px;color:var(--muted)}
+.bi-head button{font-size:13px;color:var(--accent);padding:6px 4px}
+#bi-body{flex:1;overflow:auto;-webkit-overflow-scrolling:touch;padding:4px 18px calc(env(safe-area-inset-bottom) + 12px)}
+.bi-pair{margin:0 0 14px}
+.bi-en{margin:0 0 4px;font-size:13px;line-height:1.55;color:var(--muted)}
+.bi-zh{margin:0;font-family:var(--serif);font-size:16.5px;line-height:1.75}
+.bi-wait,.bi-miss{margin:8px 0;font-size:14px;color:var(--muted);line-height:1.6}
 body[data-type=pdf] #stage{padding:calc(env(safe-area-inset-top) + 30px) 4px calc(env(safe-area-inset-bottom) + 28px)}
 #viewer{width:100%;height:100%;overflow:hidden;position:relative}
 #tap{position:absolute;inset:0;z-index:3;touch-action:pan-y pinch-zoom}
