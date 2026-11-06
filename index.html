@@ -31,8 +31,13 @@
     <p class="hint">点击右上角“导入”，可一次选择多个 EPUB、PDF、TXT、HTML 文件，或包含许多书的 ZIP 压缩包。导入后可离线阅读。</p>
   </div>
   <div class="sortbar"><input id="search" type="search" placeholder="搜索书名或作者"><select id="sort"><option value="recent">最近阅读</option><option value="added">最近导入</option><option value="title">书名</option></select></div>
+  <p id="manage-hint" class="manage-hint hidden">点一下要删的书，再点删除所选。没点到的书保持原样。</p>
   <div id="grid" class="grid"></div>
   <footer id="storage-info" class="foot"></footer>
+  <div id="manage-bar" class="manage-bar hidden">
+    <span id="manage-count"></span>
+    <button id="btn-delete-picked" type="button">删除所选</button>
+  </div>
 </section>
 
 <!-- 阅读器 -->

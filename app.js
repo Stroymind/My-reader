@@ -7,7 +7,6 @@ import { settings, saveSettings, applyBodyTheme, FONTS, THEMES } from './setting
 pdfjsLib.GlobalWorkerOptions.workerSrc = './vendor/pdf.worker.min.mjs';
 const $ = s => document.querySelector(s);
 const coverUrls = new Map();
-let editing = false;
 const KIND = { highlight: '高亮', excerpt: '摘录', copy: '复制' };
 
 function toast(msg, ms = 2200) { const t = $('#toast'); t.textContent = msg; t.classList.remove('hidden'); clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.add('hidden'), ms); }
@@ -35,36 +34,127 @@ async function copyText(text) {
 }
 
 /* ---------------- 书架 ---------------- */
+let editing = false;
+const picked = new Set();
+let viewGen = 0;
+
+function recentKey(b) { return b.lastOpened > 0 ? b.lastOpened : 0; }
+function sortBooks(list, sort) {
+  list.sort((a, b) => {
+    if (sort === 'title') return (a.title || '').localeCompare(b.title || '', 'zh');
+    if (sort === 'added') return (b.addedAt || 0) - (a.addedAt || 0);
+    const byRead = recentKey(b) - recentKey(a);
+    if (byRead) return byRead;
+    return (b.addedAt || 0) - (a.addedAt || 0);
+  });
+}
+function updateManageBar() {
+  const n = picked.size;
+  $('#manage-hint').classList.toggle('hidden', !editing);
+  const bar = $('#manage-bar');
+  bar.classList.toggle('hidden', !editing || n === 0);
+  $('#manage-count').textContent = n ? `已选 ${n} 本` : '';
+  document.body.classList.toggle('has-picked', editing && n > 0);
+}
+function exitManage() {
+  editing = false;
+  picked.clear();
+  document.body.classList.remove('managing');
+  $('#btn-edit').textContent = '管理';
+  updateManageBar();
+  renderLibrary();
+}
+async function deleteBooks(recs) {
+  if (!recs.length) return;
+  const msg = recs.length === 1
+    ? `删除《${recs[0].title}》吗？\n阅读进度、书签和摘录会一起去掉。`
+    : `删除这 ${recs.length} 本吗？\n阅读进度、书签和摘录会一起去掉。`;
+  if (!confirm(msg)) return;
+  for (const b of recs) {
+    await db.del('books', b.id);
+    await db.del('files', b.id);
+    picked.delete(b.id);
+  }
+  updateManageBar();
+  await renderLibrary();
+}
 async function renderLibrary() {
   const books = await db.all('books');
   const q = $('#search').value.trim().toLowerCase();
-  const sort = $('#sort').value;
+  const sort = $('#sort').value || 'recent';
   let list = books.filter(b => !q || (b.title + ' ' + b.author).toLowerCase().includes(q));
-  list.sort((a, b) => sort === 'title' ? a.title.localeCompare(b.title, 'zh') : sort === 'added' ? b.addedAt - a.addedAt : (b.lastOpened || b.addedAt / 1e3) - (a.lastOpened || a.addedAt / 1e3));
+  sortBooks(list, sort);
   $('#empty').classList.toggle('hidden', books.length > 0);
   $('.sortbar').classList.toggle('hidden', books.length === 0);
   const grid = $('#grid'); grid.replaceChildren();
   for (const b of list) {
-    const el = document.createElement('div'); el.className = 'book'; el.dataset.id = b.id;
+    const el = document.createElement('div');
+    el.className = 'book' + (picked.has(b.id) ? ' picked' : '');
+    el.dataset.id = b.id;
     let coverHtml;
     if (b.cover) { if (!coverUrls.has(b.id)) coverUrls.set(b.id, URL.createObjectURL(b.cover)); coverHtml = `<img alt="" loading="lazy" src="${coverUrls.get(b.id)}">`; }
     else coverHtml = `<div class="ph" style="background:${colorFor(b.title)}"></div>`;
-    el.innerHTML = `<div class="cover" style="${b.cover ? '' : 'background:' + colorFor(b.title)}">${coverHtml}</div><span class="type">${b.type.toUpperCase()}</span><div class="t"></div><div class="a"></div><div class="pbar"><i style="width:${Math.round((b.progress || 0) * 100)}%"></i></div><button class="del" aria-label="删除">×</button>`;
+    el.innerHTML = `<div class="cover" style="${b.cover ? '' : 'background:' + colorFor(b.title)}">${coverHtml}<span class="check" aria-hidden="true">✓</span></div><span class="type">${b.type.toUpperCase()}</span><div class="t"></div><div class="a"></div><div class="pbar"><i style="width:${Math.round((b.progress || 0) * 100)}%"></i></div>`;
     el.querySelector('.t').textContent = b.title;
     el.querySelector('.a').textContent = [b.author, b.progress ? fmtPct(b.progress) : ''].filter(Boolean).join(' · ');
     const ph = el.querySelector('.ph'); if (ph) ph.textContent = b.title;
-    el.querySelector('.del').onclick = async e => { e.stopPropagation(); if (confirm(`确定删除《${b.title}》吗？\n（阅读进度、书签和摘录也会一起删除）`)) { await db.del('books', b.id); await db.del('files', b.id); renderLibrary(); } };
-    el.onclick = () => { if (!editing) openBook(b.id); };
+    let hold = null, sx = 0, sy = 0, held = false;
+    const clearHold = () => { clearTimeout(hold); hold = null; };
+    el.addEventListener('pointerdown', e => {
+      if (e.button != null && e.button !== 0) return;
+      sx = e.clientX; sy = e.clientY; held = false;
+      clearHold();
+      hold = setTimeout(() => {
+        hold = null; held = true;
+        if (editing) {
+          if (picked.has(b.id)) picked.delete(b.id); else picked.add(b.id);
+          el.classList.toggle('picked', picked.has(b.id));
+          updateManageBar();
+          return;
+        }
+        deleteBooks([b]);
+      }, 520);
+    });
+    el.addEventListener('pointermove', e => {
+      if (Math.abs(e.clientX - sx) > 12 || Math.abs(e.clientY - sy) > 12) clearHold();
+    });
+    el.addEventListener('pointerup', clearHold);
+    el.addEventListener('pointercancel', clearHold);
+    el.addEventListener('contextmenu', e => e.preventDefault());
+    el.onclick = () => {
+      if (held) { held = false; return; }
+      if (editing) {
+        if (picked.has(b.id)) picked.delete(b.id); else picked.add(b.id);
+        el.classList.toggle('picked', picked.has(b.id));
+        updateManageBar();
+        return;
+      }
+      openBook(b.id);
+    };
     grid.appendChild(el);
   }
   if (navigator.storage?.estimate) {
     const e = await navigator.storage.estimate();
     $('#storage-info').textContent = `共 ${books.length} 本 · 已用空间 ${(e.usage / 1048576).toFixed(0)} MB`;
   }
+  updateManageBar();
 }
-$('#search').oninput = renderLibrary; $('#sort').onchange = () => { localStorage.setItem('rr-sort', $('#sort').value); renderLibrary(); };
+$('#search').oninput = renderLibrary;
+$('#sort').onchange = () => { localStorage.setItem('rr-sort', $('#sort').value); renderLibrary(); };
 $('#sort').value = localStorage.getItem('rr-sort') || 'recent';
-$('#btn-edit').onclick = () => { editing = !editing; document.body.classList.toggle('editing', editing); $('#btn-edit').textContent = editing ? '完成' : '管理'; };
+if (!$('#sort').value) $('#sort').value = 'recent';
+$('#btn-edit').onclick = () => {
+  if (editing) { exitManage(); return; }
+  editing = true;
+  picked.clear();
+  document.body.classList.add('managing');
+  $('#btn-edit').textContent = '完成';
+  renderLibrary();
+};
+$('#btn-delete-picked').onclick = async () => {
+  const books = await db.all('books');
+  await deleteBooks(books.filter(b => picked.has(b.id)));
+};
 
 $('#file-input').onchange = async e => {
   const files = Array.from(e.target.files || []); e.target.value = '';
@@ -92,18 +182,28 @@ let engine = null, cur = null, lastState = null, saveTimer = null, snap = null, 
 function showView(id) { document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.id === id)); }
 function setBars(show) { $('#bars').classList.toggle('hidden', !show); if (!show) { $('#settings').classList.add('hidden'); } }
 
+async function rememberReading(id) {
+  const now = Date.now();
+  if (cur?.id === id) cur.lastOpened = now;
+  await db.update('books', id, { lastOpened: now });
+}
 async function openBook(id) {
+  if (engine && cur?.id === id) return;
+  const gen = ++viewGen;
   if (engine) {
-    if (cur?.id === id) return;
     clearTimeout(saveTimer); await persist(); exitSelect();
     try { engine.destroy(); } catch {}
     engine = null;
   }
+  if (gen !== viewGen) return;
   const rec = await db.get('books', id); const file = await db.get('files', id);
   if (!rec || !file) return toast('找不到这本书的文件');
+  if (gen !== viewGen) return;
   cur = rec; lastState = null;
   cur.bookmarks = cur.bookmarks || [];
   cur.highlights = cur.highlights || [];
+  await rememberReading(id);
+  if (gen !== viewGen) return;
   showView('reader'); setBars(false); exitSelect(); $('#loading').classList.remove('hidden');
   $('#r-title').textContent = rec.title; $('#run-title').textContent = rec.title;
   if (history.state?.reader) history.replaceState({ reader: id }, ''); else history.pushState({ reader: id }, '');
@@ -117,11 +217,15 @@ async function openBook(id) {
   document.body.dataset.type = rec.type;
   engine.onLocationsReady = locs => db.update('books', id, { locations: locs });
   try { await engine.open(file.blob); }
-  catch (e) { console.error(e); toast('打开失败：' + (e.message || e), 4000); closeBook(); return; }
-  finally { $('#loading').classList.add('hidden'); }
+  catch (e) {
+    console.error(e);
+    if (gen === viewGen) { toast('打开失败：' + (e.message || e), 4000); closeBook(); }
+    return;
+  }
+  finally { if (gen === viewGen) $('#loading').classList.add('hidden'); }
+  if (gen !== viewGen) return;
   engine.setHighlights?.(cur.highlights);
   if (rec.pending && engine.current()) { cur.pending = null; await db.update('books', id, r => { delete r.pending; return r; }); }
-  db.update('books', id, { lastOpened: Date.now() });
   updateBmIcon();
   if (!localStorage.getItem('rr-hint-select')) {
     localStorage.setItem('rr-hint-select', '1');
@@ -143,9 +247,12 @@ function onRelocate(state) {
   saveTimer = setTimeout(() => persist(), 400);
 }
 async function persist() {
-  if (!cur || !lastState) return;
-  const patch = { pos: lastState.pos, lastOpened: Date.now() };
-  if (lastState.progress != null) patch.progress = lastState.progress;
+  if (!cur) return;
+  const patch = { lastOpened: Date.now() };
+  if (lastState) {
+    patch.pos = lastState.pos;
+    if (lastState.progress != null) patch.progress = lastState.progress;
+  }
   Object.assign(cur, patch);
   await db.update('books', cur.id, patch);
 }
@@ -169,11 +276,21 @@ function enterSelect(x, y) {
   snap = sel || null;
   $('#select-hint').textContent = sel?.text ? `已选中 ${sel.text.length} 个字` : '拖动选择文字，或长按一段';
 }
-async function closeBook() {
-  clearTimeout(saveTimer); await persist();
-  exitSelect();
-  engine?.destroy(); engine = null; cur = null;
-  $('#panel').classList.add('hidden'); $('#note-mask').classList.add('hidden'); showView('library'); renderLibrary();
+let closing = null;
+function closeBook() {
+  if (closing) return closing;
+  closing = (async () => {
+    viewGen++;
+    clearTimeout(saveTimer);
+    try { await persist(); } catch (e) { console.error(e); }
+    exitSelect();
+    try { engine?.destroy(); } catch {}
+    engine = null; cur = null; lastState = null;
+    $('#panel').classList.add('hidden'); $('#note-mask').classList.add('hidden');
+    showView('library');
+    await renderLibrary();
+  })();
+  return closing.finally(() => { closing = null; });
 }
 $('#btn-back').onclick = () => history.back();
 window.addEventListener('popstate', () => { if (engine) closeBook(); });
@@ -447,6 +564,7 @@ function handleBack() {
   if (!$('#panel').classList.contains('hidden')) { $('#panel').classList.add('hidden'); return true; }
   if (!$('#settings').classList.contains('hidden')) { $('#settings').classList.add('hidden'); return true; }
   if (!$('#lib-panel').classList.contains('hidden')) { $('#lib-panel').classList.add('hidden'); return true; }
+  if (editing) { exitManage(); return true; }
   if (engine) { history.back(); return true; }
   return false;
 }
