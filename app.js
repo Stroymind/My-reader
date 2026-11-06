@@ -325,14 +325,38 @@ $('#btn-back').onclick = () => history.back();
 window.addEventListener('popstate', () => { if (engine) closeBook(); });
 document.addEventListener('visibilitychange', () => { if (document.hidden) persist(); });
 
+// 双指放大改字号并重排，不缩放整页
+let pinchLock = false;
+async function bumpSize(delta) {
+  if (!engine || pinchLock) return;
+  const next = Math.max(12, Math.min(40, (settings.size || 19) + delta));
+  if (next === settings.size) return;
+  settings.size = next;
+  saveSettings();
+  pinchLock = true;
+  try {
+    if (engine.setReadingSize) await engine.setReadingSize();
+    else await engine.applySettings();
+  } finally { pinchLock = false; }
+  refreshBilingual();
+}
 // 点按 / 滑动翻页；长按进入选择
 (function gestures() {
   const tap = $('#tap'), viewer = $('#viewer');
   let sx = 0, sy = 0, st = 0, pid = null, timer = null, suppressUp = false, moved = false;
+  const pointers = new Map();
+  let pinchDist = 0;
+  const pinchSpan = () => {
+    const pts = [...pointers.values()];
+    if (pts.length < 2) return 0;
+    return Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+  };
   const clearTimer = () => { clearTimeout(timer); timer = null; };
   const down = e => {
     if (e.button != null && e.button !== 0) return;
     sx = e.clientX; sy = e.clientY; st = Date.now(); pid = e.pointerId; moved = false;
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointers.size >= 2) { pinchDist = pinchSpan(); moved = true; clearTimer(); return; }
     clearTimer();
     if (!engine) return;
     timer = setTimeout(() => {
@@ -343,10 +367,19 @@ document.addEventListener('visibilitychange', () => { if (document.hidden) persi
     }, 480);
   };
   const move = e => {
+    if (pointers.has(e.pointerId)) pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointers.size >= 2 && pinchDist) {
+      const d = pinchSpan();
+      if (d > pinchDist * 1.18) { pinchDist = d; suppressUp = true; bumpSize(2); }
+      else if (d < pinchDist * 0.84) { pinchDist = d; suppressUp = true; bumpSize(-2); }
+      return;
+    }
     if (pid !== e.pointerId) return;
     if (Math.abs(e.clientX - sx) > 12 || Math.abs(e.clientY - sy) > 12) { moved = true; clearTimer(); }
   };
   const up = e => {
+    pointers.delete(e.pointerId);
+    if (pointers.size < 2) pinchDist = 0;
     clearTimer();
     if (pid != null && pid !== e.pointerId) return;
     pid = null;
@@ -367,7 +400,7 @@ document.addEventListener('visibilitychange', () => { if (document.hidden) persi
     el.addEventListener('pointerdown', down);
     el.addEventListener('pointermove', move);
     el.addEventListener('pointerup', up);
-    el.addEventListener('pointercancel', () => { clearTimer(); pid = null; });
+    el.addEventListener('pointercancel', e => { pointers.delete(e.pointerId); pinchDist = 0; clearTimer(); pid = null; });
   }
   document.addEventListener('keydown', e => {
     if (!engine) return;
@@ -615,7 +648,7 @@ function buildSettings() {
   const apply = async () => { saveSettings(); applyBodyTheme(); buildSettings(); await engine?.applySettings(); refreshBilingual(); };
   row('对照', btn('开', settings.bilingual !== false, () => { settings.bilingual = true; saveSettings(); buildSettings(); refreshBilingual(); }), btn('关', settings.bilingual === false, () => { settings.bilingual = false; saveSettings(); buildSettings(); refreshBilingual(); }));
   if (cur?.type === 'pdf') {
-    row('缩放', btn('−', false, () => engine.setZoom(Math.max(1, engine.zoom - 0.25))), btn('适应', false, () => engine.setZoom(1)), btn('+', false, () => engine.setZoom(Math.min(4, engine.zoom + 0.25))));
+    row('字号', btn('A−', false, () => { settings.size = Math.max(12, settings.size - 1); engine.reflow = true; saveSettings(); engine.render(); apply(); }, 'small'), Object.assign(document.createElement('span'), { className: 'sval', textContent: settings.size }), btn('A+', false, () => { settings.size = Math.min(40, settings.size + 1); engine.reflow = true; saveSettings(); engine.render(); apply(); }, 'big'), btn('原页', !engine.reflow, () => { engine.reflow = false; saveSettings(); engine.render(); buildSettings(); refreshBilingual(); }));
   } else {
     row('字号', btn('A−', false, () => { settings.size = Math.max(12, settings.size - 1); apply(); }, 'small'), Object.assign(document.createElement('span'), { className: 'sval', textContent: settings.size }), btn('A+', false, () => { settings.size = Math.min(40, settings.size + 1); apply(); }, 'big'));
     row('字体', ...Object.entries(FONTS).filter(([k]) => cur?.type === 'epub' || k !== 'original').map(([k, f]) => btn(f.label, settings.font === k, () => { settings.font = k; apply(); }, 'font-' + k)));
