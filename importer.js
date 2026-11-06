@@ -1,17 +1,22 @@
-// 导入：EPUB / PDF / TXT / ZIP（可含 manifest JSON，用于迁移阅读进度）
+// 导入：EPUB / PDF / TXT / HTML / ZIP（可含 manifest JSON，用于迁移阅读进度）
 import { db } from './db.js';
+import { decodeText, htmlToPlain } from './engines.js';
 
-const BOOK_EXT = /\.(epub|pdf|txt)$/i;
+const BOOK_EXT = /\.(epub|pdf|txt|text|html|htm|xhtml)$/i;
 
 export function extOf(name) { const m = /\.([a-z0-9]+)$/i.exec(name || ''); return m ? m[1].toLowerCase() : ''; }
 export function baseName(p) { return (p || '').split('/').pop(); }
 
 async function sniffType(blob, name) {
   const e = extOf(name);
-  if (e === 'epub' || e === 'pdf' || e === 'txt') return e;
-  const head = new Uint8Array(await blob.slice(0, 5).arrayBuffer());
+  if (e === 'text') return 'txt';
+  if (e === 'htm' || e === 'xhtml') return 'html';
+  if (e === 'epub' || e === 'pdf' || e === 'txt' || e === 'html') return e;
+  const head = new Uint8Array(await blob.slice(0, 80).arrayBuffer());
   if (head[0] === 0x25 && head[1] === 0x50 && head[2] === 0x44 && head[3] === 0x46) return 'pdf';
   if (head[0] === 0x50 && head[1] === 0x4b) return e === 'zip' ? 'zip' : 'epub?';
+  const ascii = new TextDecoder('utf-8', { fatal: false }).decode(head).replace(/^\uFEFF/, '').trim().toLowerCase();
+  if (ascii.startsWith('<!doctype html') || ascii.startsWith('<html') || ascii.startsWith('<head') || ascii.startsWith('<body')) return 'html';
   return null;
 }
 
@@ -34,6 +39,9 @@ async function shrinkImage(blob, maxW = 360) {
 
 async function epubMeta(blob) {
   const book = ePub(await blob.arrayBuffer());
+  // 先接住打开过程里的拒绝，避免解析完元数据就 destroy 时留下未处理异常。
+  const opened = book.opened.catch(() => null);
+  const navigation = book.loaded.navigation.catch(() => null);
   try {
     const md = await book.loaded.metadata;
     let cover = null;
@@ -42,7 +50,10 @@ async function epubMeta(blob) {
       if (url) cover = await shrinkImage(await (await fetch(url)).blob());
     } catch {}
     return { title: md.title, author: md.creator, cover, lang: md.language };
-  } finally { try { book.destroy(); } catch {} }
+  } finally {
+    try { await navigation; await opened; } catch {}
+    try { book.destroy(); } catch {}
+  }
 }
 
 async function pdfMeta(blob, pdfjsLib) {
@@ -64,7 +75,7 @@ async function pdfMeta(blob, pdfjsLib) {
   } finally { doc.destroy(); }
 }
 
-function cleanTitle(name) { return baseName(name).replace(/\.(epub|pdf|txt)$/i, '').replace(/\s*\([0-9a-z]{26}\)\s*$/, '').trim(); }
+function cleanTitle(name) { return baseName(name).replace(/\.(epub|pdf|txt|text|html|htm|xhtml)$/i, '').replace(/\s*\([0-9a-z]{26}\)\s*$/, '').trim(); }
 
 // 导入单个文件。返回 {status:'added'|'dup'|'fail', title}
 export async function importBlob(blob, name, ctx) {
@@ -82,6 +93,11 @@ export async function importBlob(blob, name, ctx) {
   try {
     if (type === 'epub') meta = await epubMeta(blob);
     else if (type === 'pdf') meta = await pdfMeta(blob, ctx.pdfjsLib);
+    else if (type === 'html') {
+      const parsed = htmlToPlain(decodeText(await blob.arrayBuffer()));
+      if (!parsed.text.trim()) return { status: 'fail', title: cleanTitle(name), reason: 'HTML 里没有可读的正文' };
+      meta = { title: parsed.title, author: parsed.author };
+    }
   } catch (e) {
     if (type !== 'txt') return { status: 'fail', title: cleanTitle(name), reason: '无法解析：' + (e.message || e) };
   }
@@ -90,7 +106,7 @@ export async function importBlob(blob, name, ctx) {
     title: (m?.title || meta.title || cleanTitle(name)).trim(),
     author: (m?.author || meta.author || '').trim(),
     cover: meta.cover || null, pages: meta.pages,
-    addedAt: Date.now(), lastOpened: 0, progress: 0, pos: null, bookmarks: []
+    addedAt: Date.now(), lastOpened: 0, progress: 0, pos: null, bookmarks: [], highlights: []
   };
   if (m) fillPending(rec, m);
   await db.put('files', { id, blob: blob.type ? blob : new Blob([blob], { type: mime(type) }) });
@@ -98,7 +114,7 @@ export async function importBlob(blob, name, ctx) {
   return { status: 'added', title: rec.title };
 }
 
-function mime(t) { return t === 'epub' ? 'application/epub+zip' : t === 'pdf' ? 'application/pdf' : 'text/plain'; }
+function mime(t) { return t === 'epub' ? 'application/epub+zip' : t === 'pdf' ? 'application/pdf' : t === 'html' ? 'text/html' : 'text/plain'; }
 
 function fillPending(rec, m) {
   if (typeof m.progress === 'number' && m.progress > 0) {

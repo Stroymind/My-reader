@@ -29,10 +29,29 @@ jobs:
         with:
           enablement: true
 
+      - name: Stage site
+        run: |
+          mkdir -p _site
+          rsync -a \
+            --exclude '.git/' \
+            --exclude 'android/' \
+            --exclude 'node_modules/' \
+            --exclude 'www/' \
+            --exclude 'scripts/' \
+            --exclude 'package.json' \
+            --exclude 'package-lock.json' \
+            --exclude 'capacitor.config.json' \
+            ./ _site/
+          test -f _site/index.html
+          test -f _site/app.js
+          test -f _site/sw.js
+          test -f _site/tweet-to-text/index.html
+          test ! -e _site/android
+
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v5
         with:
-          path: .
+          path: _site
           include-hidden-files: true
 
       - name: Deploy to GitHub Pages

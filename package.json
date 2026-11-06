@@ -1,0 +1,20 @@
+{
+  "name": "my-reader",
+  "private": true,
+  "version": "1.0.0",
+  "description": "我的书房：离线电子书阅读器，网页版与 Android 安装包共用同一套界面。",
+  "scripts": {
+    "sync:www": "node scripts/sync-www.mjs",
+    "cap:sync": "npm run sync:www && cap sync android",
+    "android:release": "npm run cap:sync && cd android && ./gradlew assembleRelease --no-daemon",
+    "test:smoke": "node scripts/smoke.mjs"
+  },
+  "dependencies": {
+    "@capacitor/android": "8.6.0",
+    "@capacitor/core": "8.6.0"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "8.6.0",
+    "puppeteer-core": "24.15.0"
+  }
+}
