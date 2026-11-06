@@ -1,5 +1,6 @@
 package io.github.stroymind.myreader;
 
+import android.os.Build;
 import android.os.Bundle;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
@@ -16,6 +17,12 @@ public class MainActivity extends BridgeActivity {
             ws.setSupportZoom(false);
             ws.setBuiltInZoomControls(false);
             ws.setDisplayZoomControls(false);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                ws.setForceDark(WebSettings.FORCE_DARK_OFF);
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                ws.setAlgorithmicDarkeningAllowed(false);
+            }
         }
         getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
             @Override

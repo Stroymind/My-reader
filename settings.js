@@ -16,7 +16,10 @@ export const settings = Object.assign({}, DEFAULTS, JSON.parse(localStorage.getI
 export function saveSettings() { localStorage.setItem(KEY, JSON.stringify(settings)); }
 export function applyBodyTheme() {
   for (const k of Object.keys(THEMES)) document.body.classList.toggle('theme-' + k, settings.theme === k);
-  document.querySelector('meta[name=theme-color]')?.setAttribute('content', THEMES[settings.theme].bg);
+  const bg = THEMES[settings.theme].bg;
+  document.documentElement.style.background = bg;
+  document.body.style.background = bg;
+  document.querySelector('meta[name=theme-color]')?.setAttribute('content', bg);
 }
 // 注入到 EPUB iframe 的样式
 // 中文书：引号、破折号、省略号用中文字形（全角），西文仍用 Literata

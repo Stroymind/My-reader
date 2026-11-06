@@ -119,16 +119,17 @@ async function renderLibrary() {
   const grid = $('#grid'); grid.replaceChildren();
   const desk = $('#desk-list'); desk.replaceChildren();
   for (const b of list) {
-    const el = document.createElement('div');
+    const el = document.createElement('button');
+    el.type = 'button';
     el.className = 'book';
     el.dataset.id = b.id;
     let coverHtml;
-    if (b.cover) { if (!coverUrls.has(b.id)) coverUrls.set(b.id, URL.createObjectURL(b.cover)); coverHtml = `<img alt="" loading="lazy" src="${coverUrls.get(b.id)}">`; }
+    if (b.cover) { if (!coverUrls.has(b.id)) coverUrls.set(b.id, URL.createObjectURL(b.cover)); coverHtml = `<img alt="" src="${coverUrls.get(b.id)}">`; }
     else coverHtml = `<div class="ph" style="background:${colorFor(b.title)}"></div>`;
-    el.innerHTML = `<div class="cover" style="${b.cover ? '' : 'background:' + colorFor(b.title)}">${coverHtml}</div><span class="type">${b.type.toUpperCase()}</span><div class="t"></div><div class="a"></div><div class="pbar"><i style="width:${Math.round((b.progress || 0) * 100)}%"></i></div>`;
+    el.innerHTML = `<div class="thumb">${coverHtml}</div><div class="meta"><div class="t"></div><div class="a"></div><div class="pbar"><i style="width:${Math.round((b.progress || 0) * 100)}%"></i></div></div>`;
     el.querySelector('.t').textContent = b.title;
-    el.querySelector('.a').textContent = [b.author, b.progress ? fmtPct(b.progress) : ''].filter(Boolean).join(' · ');
-    const ph = el.querySelector('.ph'); if (ph) ph.textContent = b.title;
+    el.querySelector('.a').textContent = [b.type ? b.type.toUpperCase() : '', b.author, b.progress ? fmtPct(b.progress) : ''].filter(Boolean).join(' · ');
+    const ph = el.querySelector('.ph'); if (ph) ph.textContent = (b.title || '').slice(0, 4);
     bindShelfBook(el, b);
     grid.appendChild(el);
 
