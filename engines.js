@@ -1,4 +1,5 @@
 import { settings, epubCss, FONTS, fontStack } from './settings.js';
+import { repairEpub } from './epub-repair.js';
 
 function cleanWs(s) { return (s || '').replace(/\s+/g, ' ').trim(); }
 
@@ -105,7 +106,13 @@ function flatToc(items, depth = 0, out = []) {
 export class EpubEngine {
   constructor(el, rec, onRelocate) { this.el = el; this.rec = rec; this.onRelocate = onRelocate; this.loc = null; this.highlights = []; this.selecting = false; this._hlCfis = []; }
   async open(blob) {
-    this.book = ePub(await blob.arrayBuffer());
+    let data = await blob.arrayBuffer();
+    try { data = await repairEpub(data); }
+    catch (e) {
+      if (e.code === 'DRM') throw new Error('这本 EPUB 有数字版权保护（DRM），无法在这里打开。');
+      if (e.code === 'BAD_EPUB') throw e;
+    }
+    this.book = ePub(data);
     this.horiz = !!settings.horiz;
     this.book.opened.then(() => { this.origDir = this.book.package?.metadata?.direction; const md = this.book.package?.metadata || {}; this.cjk = /^(zh|ja|ko)/i.test(md.language || '') || /[\u3040-\u9fff]/.test(md.title || this.rec.title || ''); if (this.horiz && this.book.package?.metadata) this.book.package.metadata.direction = 'ltr'; });
     if (this.horiz) this.book.spine.hooks.content.register(doc => {
@@ -130,6 +137,9 @@ export class EpubEngine {
       await this.ensureLocations();
       await this.rendition.display(this.book.locations.cfiFromPercentage(p.progress));
     } else await this.rendition.display();
+    const doc = this.rendition.getContents?.()[0]?.document;
+    if (doc?.querySelector?.('parsererror')) throw new Error('这本 EPUB 的章节格式无法阅读。');
+    if (!this.el.querySelector('iframe')) throw new Error('这本 EPUB 找不到可显示的章节。');
     try { this.vertical = this.horiz || this.origDir === 'rtl' || this.rendition.getContents().some(c => c.writingMode().startsWith('vertical')); } catch {}
     if (!saved) this.locationsPromise = this.ensureLocations();
   }

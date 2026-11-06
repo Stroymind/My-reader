@@ -38,7 +38,7 @@ https://stroymind.github.io/My-reader/
 
 支持这些格式：
 
-- EPUB
+- EPUB（含 EPUB2 / EPUB3、子目录、不规范网页和国标编码。有数字版权保护的书会说明无法打开）
 - PDF
 - TXT（自动识别 UTF-8 和 GBK）
 - HTML、HTM、XHTML
