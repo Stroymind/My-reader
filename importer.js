@@ -1,6 +1,7 @@
 // 导入：EPUB / PDF / TXT / HTML / ZIP（可含 manifest JSON，用于迁移阅读进度）
 import { db } from './db.js';
 import { decodeText, htmlToPlain } from './engines.js';
+import { repairEpub } from './epub-repair.js';
 
 const BOOK_EXT = /\.(epub|pdf|txt|text|html|htm|xhtml)$/i;
 
@@ -38,7 +39,9 @@ async function shrinkImage(blob, maxW = 360) {
 }
 
 async function epubMeta(blob) {
-  const book = ePub(await blob.arrayBuffer());
+  let data = await blob.arrayBuffer();
+  try { data = await repairEpub(data); } catch (e) { if (e.code === 'DRM' || e.code === 'BAD_EPUB') throw e; }
+  const book = ePub(data);
   // 先接住打开过程里的拒绝，避免解析完元数据就 destroy 时留下未处理异常。
   const opened = book.opened.catch(() => null);
   const navigation = book.loaded.navigation.catch(() => null);

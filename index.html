@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#faf9f6">
 <title>我的书房</title>
 <link rel="manifest" href="manifest.webmanifest">
@@ -14,31 +14,75 @@
 <script src="vendor/epub.min.js"></script>
 </head>
 <body class="theme-day">
-<!-- 书架 -->
+<!-- 书架：第一页只看书，向左滑到整理 -->
 <section id="library" class="view active">
-  <header class="topbar">
-    <h1>我的书房</h1>
-    <div class="actions">
-      <button id="btn-excerpts" class="txt">摘录</button>
-      <button id="btn-edit" class="txt">管理</button>
-      <label class="btn primary" for="file-input" title="可一次选择多个 EPUB、PDF、TXT、HTML 或 ZIP">导入</label>
-      <input id="file-input" type="file" multiple hidden>
+  <div id="pager" class="pager">
+    <div class="sheet-page" id="shelf-page">
+      <div class="sheet-scroll" id="shelf-scroll">
+        <button id="search-chip" class="search-chip hidden" type="button"></button>
+        <div id="empty" class="empty hidden">
+          <p>书架还是空的</p>
+          <p class="hint">向左滑，可以导入 EPUB、PDF、TXT、HTML，或装着许多书的 ZIP。导入后可离线阅读。</p>
+        </div>
+        <div id="no-match" class="empty hidden"><p>没有匹配的书</p></div>
+        <div id="grid" class="feed"></div>
+      </div>
     </div>
-  </header>
-  <div id="import-status" class="status hidden"></div>
-  <div id="empty" class="empty hidden">
-    <p>书架还是空的</p>
-    <p class="hint">点击右上角“导入”，可一次选择多个 EPUB、PDF、TXT、HTML 文件，或包含许多书的 ZIP 压缩包。导入后可离线阅读。</p>
+    <div class="sheet-page" id="desk-page">
+      <div class="sheet-scroll">
+        <header class="topbar">
+          <h1>整理</h1>
+        </header>
+        <section class="desk-block">
+          <h2>搜索</h2>
+          <input id="search" type="search" placeholder="搜索书名或作者" enterkeyhint="search">
+        </section>
+        <section class="desk-block">
+          <h2>排序</h2>
+          <div id="sort-seg" class="sort-seg" role="radiogroup" aria-label="排序">
+            <button type="button" data-sort="recent" role="radio">最近阅读</button>
+            <button type="button" data-sort="added" role="radio">最近导入</button>
+            <button type="button" data-sort="title" role="radio">书名</button>
+          </div>
+        </section>
+        <section class="desk-block">
+          <h2>导入</h2>
+          <label class="btn primary desk-btn" for="file-input">导入书籍</label>
+          <input id="file-input" type="file" multiple hidden>
+          <p class="desk-note">可一次选择多个 EPUB、PDF、TXT、HTML，或 ZIP 压缩包。</p>
+          <div id="import-status" class="status hidden"></div>
+        </section>
+        <section class="desk-block">
+          <h2>摘录</h2>
+          <button id="btn-excerpts" class="desk-row" type="button">查看全部摘录</button>
+        </section>
+        <section class="desk-block">
+          <h2>删除</h2>
+          <p class="desk-note">点一下要删的书。没点到的书保持原样。在书架上长按封面，也可以直接删一本。</p>
+          <div id="desk-list" class="desk-list"></div>
+          <div id="manage-bar" class="manage-bar hidden">
+            <span id="manage-count"></span>
+            <button id="btn-delete-picked" type="button">删除所选</button>
+          </div>
+        </section>
+        <footer id="storage-info" class="foot"></footer>
+      </div>
+    </div>
   </div>
-  <div class="sortbar"><input id="search" type="search" placeholder="搜索书名或作者"><select id="sort"><option value="recent">最近阅读</option><option value="added">最近导入</option><option value="title">书名</option></select></div>
-  <div id="grid" class="grid"></div>
-  <footer id="storage-info" class="foot"></footer>
+  <div class="dots" aria-hidden="true">
+    <button class="dot on" type="button" data-page="0" aria-label="书架"></button>
+    <button class="dot" type="button" data-page="1" aria-label="整理"></button>
+  </div>
 </section>
 
 <!-- 阅读器 -->
 <section id="reader" class="view">
   <div class="run run-top" id="run-title"></div>
   <div id="stage"><div id="viewer"></div><div id="tap"></div></div>
+  <aside id="bilingual" class="bilingual hidden" aria-label="中英对照">
+    <div class="bi-head"><span>中英对照</span><button id="btn-bi-off" type="button">只看原文</button></div>
+    <div id="bi-body"></div>
+  </aside>
   <div class="run run-bottom" id="run-pct"></div>
   <div id="bars" class="hidden">
     <header class="rbar top">
