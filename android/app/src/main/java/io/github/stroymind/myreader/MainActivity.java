@@ -1,6 +1,8 @@
 package io.github.stroymind.myreader;
 
+import android.os.Build;
 import android.os.Bundle;
+import android.webkit.WebSettings;
 import android.webkit.WebView;
 import androidx.activity.OnBackPressedCallback;
 import com.getcapacitor.BridgeActivity;
@@ -9,6 +11,19 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        WebView web = getBridge() != null ? getBridge().getWebView() : null;
+        if (web != null) {
+            WebSettings ws = web.getSettings();
+            ws.setSupportZoom(false);
+            ws.setBuiltInZoomControls(false);
+            ws.setDisplayZoomControls(false);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                ws.setForceDark(WebSettings.FORCE_DARK_OFF);
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                ws.setAlgorithmicDarkeningAllowed(false);
+            }
+        }
         getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
             @Override
             public void handleOnBackPressed() {

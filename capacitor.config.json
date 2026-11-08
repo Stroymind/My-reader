@@ -6,7 +6,8 @@
     "path": "android",
     "allowMixedContent": false,
     "captureInput": true,
-    "webContentsDebuggingEnabled": false
+    "webContentsDebuggingEnabled": false,
+    "zoomEnabled": false
   },
   "server": {
     "androidScheme": "https",

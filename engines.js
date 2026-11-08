@@ -1,4 +1,5 @@
 import { settings, epubCss, FONTS, fontStack } from './settings.js';
+import { repairEpub } from './epub-repair.js';
 
 function cleanWs(s) { return (s || '').replace(/\s+/g, ' ').trim(); }
 
@@ -72,6 +73,30 @@ function renderMarked(line, marks) {
   return out + esc(line.slice(pos));
 }
 
+function textInView(rendition, viewEl) {
+  const box = viewEl.getBoundingClientRect();
+  const parts = [];
+  const seen = new Set();
+  let contents = [];
+  try { contents = rendition.getContents(); } catch { return ''; }
+  for (const c of contents) {
+    const doc = c.document;
+    if (!doc?.body) continue;
+    const frame = doc.defaultView?.frameElement?.getBoundingClientRect() || { left: 0, top: 0 };
+    const nodes = doc.querySelectorAll('p, h1, h2, h3, h4, li, blockquote');
+    for (const el of nodes) {
+      if (el.querySelector('p, h1, h2, h3, li, blockquote')) continue;
+      const r = el.getBoundingClientRect();
+      const left = r.left + frame.left, right = r.right + frame.left, top = r.top + frame.top, bottom = r.bottom + frame.top;
+      const overlap = Math.min(right, box.right) - Math.max(left, box.left);
+      if (overlap < 24 || bottom < box.top + 2 || top > box.bottom - 2) continue;
+      const t = (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
+      if (t && !seen.has(t)) { seen.add(t); parts.push(t); }
+    }
+  }
+  return parts.join('\n');
+}
+
 function flatToc(items, depth = 0, out = []) {
   for (const it of items || []) { out.push({ label: (it.label || '').trim(), target: it.href, depth }); flatToc(it.subitems, depth + 1, out); }
   return out;
@@ -81,7 +106,13 @@ function flatToc(items, depth = 0, out = []) {
 export class EpubEngine {
   constructor(el, rec, onRelocate) { this.el = el; this.rec = rec; this.onRelocate = onRelocate; this.loc = null; this.highlights = []; this.selecting = false; this._hlCfis = []; }
   async open(blob) {
-    this.book = ePub(await blob.arrayBuffer());
+    let data = await blob.arrayBuffer();
+    try { data = await repairEpub(data); }
+    catch (e) {
+      if (e.code === 'DRM') throw new Error('这本 EPUB 有数字版权保护（DRM），无法在这里打开。');
+      if (e.code === 'BAD_EPUB') throw e;
+    }
+    this.book = ePub(data);
     this.horiz = !!settings.horiz;
     this.book.opened.then(() => { this.origDir = this.book.package?.metadata?.direction; const md = this.book.package?.metadata || {}; this.cjk = /^(zh|ja|ko)/i.test(md.language || '') || /[\u3040-\u9fff]/.test(md.title || this.rec.title || ''); if (this.horiz && this.book.package?.metadata) this.book.package.metadata.direction = 'ltr'; });
     if (this.horiz) this.book.spine.hooks.content.register(doc => {
@@ -106,6 +137,9 @@ export class EpubEngine {
       await this.ensureLocations();
       await this.rendition.display(this.book.locations.cfiFromPercentage(p.progress));
     } else await this.rendition.display();
+    const doc = this.rendition.getContents?.()[0]?.document;
+    if (doc?.querySelector?.('parsererror')) throw new Error('这本 EPUB 的章节格式无法阅读。');
+    if (!this.el.querySelector('iframe')) throw new Error('这本 EPUB 找不到可显示的章节。');
     try { this.vertical = this.horiz || this.origDir === 'rtl' || this.rendition.getContents().some(c => c.writingMode().startsWith('vertical')); } catch {}
     if (!saved) this.locationsPromise = this.ensureLocations();
   }
@@ -287,10 +321,12 @@ export class EpubEngine {
     const cfi = this.loc?.start?.cfi;
     for (const c of this.rendition.getContents()) this.inject(c);
     this.rendition.themes.fontSize(settings.size + 'px'); // 触发重新分页
+    try { this.rendition.resize(this.el.clientWidth, this.el.clientHeight); } catch {}
     if (cfi) { await this.rendition.display(cfi); await this.settle(cfi); }
     this.syncHighlights();
   }
   resize() { try { this.rendition.resize(); } catch {} }
+  pageText() { return textInView(this.rendition, this.el); }
   destroy() { this.dead = true; try { this.book.destroy(); } catch {} this.el.innerHTML = ''; }
 }
 
@@ -312,9 +348,10 @@ export class PdfEngine {
     const token = (this.token = (this.token || 0) + 1);
     const page = await this.doc.getPage(this.page);
     if (token !== this.token) return;
+    if (this.reflow) return this.renderReflow(page, token);
     const vp1 = page.getViewport({ scale: 1 });
-    const W = this.el.clientWidth - 8, H = this.el.clientHeight - 4;
-    const fit = Math.min(W / vp1.width, H / vp1.height) * this.zoom;
+    const W = Math.max(1, this.el.clientWidth - 8), H = Math.max(1, this.el.clientHeight - 4);
+    const fit = Math.min(W / vp1.width, H / vp1.height);
     const dpr = Math.min(window.devicePixelRatio || 1, 3);
     const vp = page.getViewport({ scale: fit * dpr });
     const c = document.createElement('canvas');
@@ -333,8 +370,8 @@ export class PdfEngine {
     this.canvas = c;
     this.textLayerEl = textLayerEl;
     this.wrap.scrollTo(0, 0);
-    this.wrap.style.alignItems = this.zoom > 1 ? 'flex-start' : 'center';
-    this.wrap.style.justifyContent = this.zoom > 1 ? 'flex-start' : 'center';
+    this.wrap.style.alignItems = 'center';
+    this.wrap.style.justifyContent = 'center';
     const vpCss = page.getViewport({ scale: fit });
     try {
       textLayerEl.replaceChildren();
@@ -437,10 +474,73 @@ export class PdfEngine {
     return out;
   }
   goToc(page) { if (page) { this.page = page; return this.render(); } }
-  setZoom(z) { this.zoom = z; document.body.classList.toggle('pdf-zoom', z > 1); return this.render(); }
-  applySettings() { return this.render(); }
+  setReadingSize() { this.reflow = true; document.body.classList.remove('pdf-zoom'); return this.render(); }
+  async renderReflow(page, token) {
+    const content = await page.getTextContent();
+    if (token !== this.token) return;
+    const paras = pdfParagraphs(content.items || []);
+    const col = document.createElement('div');
+    col.className = 'pdfreflow';
+    col.style.fontSize = settings.size + 'px';
+    col.style.lineHeight = String(settings.lh);
+    col.style.fontFamily = fontStack(true) || '';
+    for (const para of paras) {
+      const p = document.createElement('p');
+      p.textContent = para;
+      col.appendChild(p);
+    }
+    if (!paras.length) { const p = document.createElement('p'); p.textContent = '这一页没有可重排的文字。'; col.appendChild(p); }
+    this.wrap.replaceChildren(col);
+    this.textLayerEl = null;
+    this.canvas = null;
+    this.onRelocate(this.current());
+  }
+  pageText() {
+    const col = this.wrap?.querySelector('.pdfreflow');
+    if (col) return [...col.querySelectorAll('p')].map(p => p.textContent.trim()).filter(Boolean).join('\n');
+    const root = this.textLayerEl;
+    if (!root) return '';
+    const lines = [];
+    let line = '', lastTop = null;
+    for (const span of root.querySelectorAll('span')) {
+      const t = span.textContent || '';
+      if (!t.trim()) continue;
+      const top = span.getBoundingClientRect().top;
+      if (lastTop != null && Math.abs(top - lastTop) > 5) { if (line.trim()) lines.push(line.trim()); line = ''; }
+      line += t;
+      lastTop = top;
+    }
+    if (line.trim()) lines.push(line.trim());
+    return lines.join('\n');
+  }
+  applySettings() { if (this.reflow) return this.render(); return this.render(); }
   resize() { return this.render(); }
   destroy() { document.body.classList.remove('pdf-zoom'); try { this.textTask?.cancel?.(); } catch {} try { this.doc.destroy(); } catch {} this.el.innerHTML = ''; }
+}
+
+function pdfParagraphs(items) {
+  const lines = [];
+  let line = '', lastY = null;
+  for (const it of items) {
+    const str = it?.str || '';
+    if (!str) continue;
+    const y = it.transform ? it.transform[5] : 0;
+    if (lastY != null && Math.abs(y - lastY) > 10) {
+      if (line.trim()) lines.push(line.trim());
+      line = '';
+    }
+    line += str;
+    lastY = y;
+  }
+  if (line.trim()) lines.push(line.trim());
+  const paras = [];
+  let buf = '';
+  for (const ln of lines) {
+    buf = buf ? buf + ' ' + ln : ln;
+    if (/[.!?。！？…"”]$/.test(ln) || ln.length > 80) { paras.push(buf); buf = ''; }
+  }
+  if (buf) paras.push(buf);
+  return paras.length ? paras : lines;
 }
 
 /* ---------------- TXT（自动识别 UTF-8 / GBK）---------------- */
@@ -577,6 +677,19 @@ export class TxtEngine {
   goToFraction(f) { const [ch, fr] = this.locate(f * this.total); this.show(ch, fr); }
   toc() { return this.chs.map((c, i) => ({ label: c.title, target: i, depth: 0 })); }
   goToc(i) { this.show(i, 0); }
+  pageText() {
+    const box = this.page_?.getBoundingClientRect();
+    if (!box) return '';
+    const parts = [];
+    for (const el of this.cols.querySelectorAll('p, h2')) {
+      const r = el.getBoundingClientRect();
+      const overlap = Math.min(r.right, box.right) - Math.max(r.left, box.left);
+      if (overlap < 24 || r.bottom < box.top + 2 || r.top > box.bottom - 2) continue;
+      const t = (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
+      if (t) parts.push(t);
+    }
+    return parts.join('\n');
+  }
   applySettings() { const frac = this.p / this.pages; this.show(this.ch, frac); }
   resize() { this.applySettings(); }
   destroy() { this.el.innerHTML = ''; }
