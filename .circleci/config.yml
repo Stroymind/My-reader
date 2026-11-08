@@ -1,0 +1,76 @@
+version: 2.1
+
+orbs:
+  browser-tools: circleci/browser-tools@2.4.2
+
+jobs:
+  web:
+    docker:
+      - image: cimg/node:22.23-browsers
+    steps:
+      - checkout
+      - restore_cache:
+          keys:
+            - npm-{{ checksum "package-lock.json" }}
+      - run:
+          name: Install
+          command: npm ci
+      - save_cache:
+          key: npm-{{ checksum "package-lock.json" }}
+          paths:
+            - node_modules
+      - run:
+          name: Build
+          command: npm run sync:www
+      - browser-tools/install_chrome
+      - run:
+          name: Prepare screenshot directory used by the smoke test
+          command: sudo mkdir -p /opt/cursor/artifacts
+      - run:
+          name: Test
+          command: circleci testsuite run "web smoke"
+      - store_test_results:
+          path: test-reports
+
+  android:
+    docker:
+      - image: cimg/android:2026.10-node
+    steps:
+      - checkout
+      - restore_cache:
+          keys:
+            - npm-{{ checksum "package-lock.json" }}
+      - restore_cache:
+          keys:
+            - gradle-{{ checksum "android/gradle/wrapper/gradle-wrapper.properties" }}
+      - run:
+          name: Install
+          command: npm ci
+      - save_cache:
+          key: npm-{{ checksum "package-lock.json" }}
+          paths:
+            - node_modules
+      - save_cache:
+          key: gradle-{{ checksum "android/gradle/wrapper/gradle-wrapper.properties" }}
+          paths:
+            - ~/.gradle/caches
+            - ~/.gradle/wrapper
+      - run:
+          name: Build
+          command: |
+            npm run cap:sync
+            ./android/gradlew -p android assembleRelease
+      - run:
+          name: Test
+          command: circleci testsuite run "android unit tests"
+      - store_test_results:
+          path: test-reports/android
+      - run:
+          name: Lint
+          command: ./android/gradlew -p android lintDebug
+
+workflows:
+  build:
+    jobs:
+      - web
+      - android

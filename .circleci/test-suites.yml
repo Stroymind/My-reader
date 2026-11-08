@@ -1,0 +1,19 @@
+---
+name: web smoke
+discover: echo scripts/smoke.mjs
+run: node .circleci/smoke-junit.mjs "<< outputs.junit >>" << test.atoms >>
+outputs:
+  junit: test-reports/junit.xml
+---
+name: android unit tests
+discover: find android/app/src/test -name '*Test.java' | sed -e 's|^android/app/src/test/java/||' -e 's|/|.|g' -e 's|\.java$||'
+run: |
+  set --
+  for atom in << test.atoms >>; do set -- "$@" --tests "$atom"; done
+  status=0
+  ./android/gradlew -p android testDebugUnitTest --continue "$@" || status=$?
+  mkdir -p "<< outputs.junit-directory >>"
+  cp android/app/build/test-results/testDebugUnitTest/*.xml "<< outputs.junit-directory >>/" || true
+  exit $status
+outputs:
+  junit-directory: test-reports/android
