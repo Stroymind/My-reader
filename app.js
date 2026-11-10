@@ -179,23 +179,40 @@ document.querySelectorAll('.dot').forEach(d => d.onclick = () => {
   pager.scrollTo({ left: Number(d.dataset.page) * pager.clientWidth, behavior: 'smooth' });
 });
 
+function showImportStatus(text) {
+  const st = $('#import-status');
+  st.classList.remove('hidden');
+  st.textContent = text;
+}
+function armImportFeedback() {
+  showImportStatus('请选择要导入的书');
+  toast('请选择要导入的书');
+}
+$('#btn-import').addEventListener('click', armImportFeedback);
+$('#empty-import').addEventListener('click', armImportFeedback);
 $('#file-input').onchange = async e => {
   const files = Array.from(e.target.files || []); e.target.value = '';
-  if (!files.length) return;
+  if (!files.length) {
+    showImportStatus('没有选中文件。可以再点一次「导入书籍」。');
+    toast('没有选中文件');
+    return;
+  }
   try { await navigator.storage?.persist?.(); } catch {}
-  const st = $('#import-status'); st.classList.remove('hidden');
   const onlyManifest = files.every(f => /\.json$/i.test(f.name));
   if (onlyManifest) {
     let n = 0; for (const f of files) { try { const m = parseManifest(JSON.parse(await f.text())); if (m) n += await applyManifestToLibrary(m); } catch {} }
-    st.textContent = `已为 ${n} 本书恢复阅读进度。`; renderLibrary(); return;
+    const msg = `已为 ${n} 本书恢复阅读进度。`;
+    showImportStatus(msg); toast(msg); renderLibrary(); return;
   }
-  const res = await importFiles(files, { pdfjsLib, onStatus: t => (st.textContent = t) });
+  showImportStatus('正在读取所选文件…');
+  const res = await importFiles(files, { pdfjsLib, onStatus: t => showImportStatus(t) });
   let msg = `导入完成：新增 ${res.added} 本`;
   if (res.dup) msg += `，已存在 ${res.dup} 本`;
   if (res.progressApplied) msg += `，恢复进度 ${res.progressApplied} 本`;
   if (res.skipped) msg += `，跳过 ${res.skipped} 个不支持的文件`;
   if (res.fail.length) msg += `\n失败 ${res.fail.length} 个：\n` + res.fail.map(f => `· ${f.title}：${f.reason}`).join('\n');
-  st.textContent = msg;
+  showImportStatus(msg);
+  toast(res.fail.length ? msg.split('\n')[0] + '。向左滑可看失败原因' : msg.split('\n')[0], 3600);
   renderLibrary();
 };
 
