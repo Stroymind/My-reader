@@ -35,7 +35,7 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Sync web assets into the Android project
+      - name: 同步网页资源并核对必需模块
         run: npm run cap:sync
 
       - name: Build release APK

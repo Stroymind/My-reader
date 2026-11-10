@@ -22,7 +22,8 @@
         <button id="search-chip" class="search-chip hidden" type="button"></button>
         <div id="empty" class="empty hidden">
           <p>书架还是空的</p>
-          <p class="hint">向左滑，可以导入 EPUB、PDF、TXT、HTML，或装着许多书的 ZIP。导入后可离线阅读。</p>
+          <p class="hint">书只保存在这台设备上。点下面导入 EPUB、PDF、TXT、HTML，或装着许多书的 ZIP，之后没有网络也能读。</p>
+          <label id="empty-import" class="btn primary" for="file-input">导入书籍</label>
         </div>
         <div id="no-match" class="empty hidden"><p>没有匹配的书</p></div>
         <div id="grid" class="feed"></div>
@@ -47,8 +48,8 @@
         </section>
         <section class="desk-block">
           <h2>导入</h2>
-          <label class="btn primary desk-btn" for="file-input">导入书籍</label>
-          <input id="file-input" type="file" multiple hidden>
+          <label id="btn-import" class="btn primary desk-btn" for="file-input">导入书籍</label>
+          <input id="file-input" class="file-proxy" type="file" multiple>
           <p class="desk-note">可一次选择多个 EPUB、PDF、TXT、HTML，或 ZIP 压缩包。</p>
           <div id="import-status" class="status hidden"></div>
         </section>
