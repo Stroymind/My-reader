@@ -1,5 +1,5 @@
 // 极简 IndexedDB 封装
-const DB_NAME = 'shufang', DB_VER = 2;
+const DB_NAME = 'shufang', DB_VER = 3;
 let dbp;
 function open() {
   if (!dbp) dbp = new Promise((res, rej) => {
@@ -10,6 +10,8 @@ function open() {
       if (!db.objectStoreNames.contains('files')) db.createObjectStore('files', { keyPath: 'id' });
       if (!db.objectStoreNames.contains('meta')) db.createObjectStore('meta', { keyPath: 'key' });
       if (!db.objectStoreNames.contains('xlate')) db.createObjectStore('xlate', { keyPath: 'key' });
+      if (!db.objectStoreNames.contains('notes')) db.createObjectStore('notes', { keyPath: 'id' });
+      if (!db.objectStoreNames.contains('links')) db.createObjectStore('links', { keyPath: 'id' });
     };
     r.onsuccess = () => res(r.result);
     r.onerror = () => rej(r.error);

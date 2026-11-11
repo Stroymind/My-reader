@@ -3,62 +3,109 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<meta name="theme-color" content="#faf9f6">
+<meta name="theme-color" content="#f5f5f7">
+<meta name="description" content="我的书房：从阅读到可积累、可理解、可应用的个人知识系统。">
+<meta name="google" content="notranslate">
 <title>我的书房</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icons/icon-192.png">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
+<script>
+(function () {
+  try {
+    var p = localStorage.getItem('rr-appearance') || 'system';
+    var dark = p === 'dark' || (p !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    if (dark) document.documentElement.classList.add('appearance-dark');
+    document.documentElement.dataset.appearance = p;
+  } catch (e) {}
+})();
+</script>
 <link rel="stylesheet" href="fonts/fonts.css">
 <link rel="stylesheet" href="app.css">
 <script src="vendor/jszip.min.js"></script>
 <script src="vendor/epub.min.js"></script>
 </head>
-<body class="theme-day">
-<!-- 书架：第一页只看书，向左滑到整理 -->
+<body class="theme-paper">
 <section id="library" class="view active">
-  <div id="pager" class="pager">
-    <div class="sheet-page" id="shelf-page">
-      <div class="sheet-scroll" id="shelf-scroll">
-        <button id="search-chip" class="search-chip hidden" type="button"></button>
-        <div id="empty" class="empty hidden">
-          <p>书架还是空的</p>
-          <p class="hint">向左滑，可以导入 EPUB、PDF、TXT、HTML，或装着许多书的 ZIP。导入后可离线阅读。</p>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="side-brand">
+        <span class="side-mark" aria-hidden="true">书</span>
+        <div>
+          <div class="side-name">我的书房</div>
+          <p>阅读，然后留下来。</p>
         </div>
-        <div id="no-match" class="empty hidden"><p>没有匹配的书</p></div>
-        <div id="grid" class="feed"></div>
       </div>
-    </div>
-    <div class="sheet-page" id="desk-page">
-      <div class="sheet-scroll">
-        <header class="topbar">
-          <h1>整理</h1>
-        </header>
-        <section class="desk-block">
-          <h2>搜索</h2>
-          <input id="search" type="search" placeholder="搜索书名或作者" enterkeyhint="search">
-        </section>
-        <section class="desk-block">
-          <h2>排序</h2>
+      <nav class="side-nav" aria-label="工作台">
+        <button type="button" data-pane="shelf" role="tab" class="on" aria-selected="true">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5.2A2.2 2.2 0 0 1 7.2 3H19v16H7.2A2.2 2.2 0 0 0 5 21.2z"/><path d="M5 5.2A2.2 2.2 0 0 1 7.2 7.4H19"/></svg>
+          <span>书库</span>
+        </button>
+        <button type="button" data-pane="knowledge" role="tab" aria-selected="false">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3.5h8l5 5V20a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4.5a1 1 0 0 1 1-1z"/><path d="M15 3.5V9h5"/><path d="M8.5 13h7M8.5 16.5h4.5"/></svg>
+          <span>知识</span>
+        </button>
+        <button type="button" data-pane="graph" role="tab" aria-selected="false">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="12" r="2.1"/><circle cx="17" cy="7" r="2.1"/><circle cx="16.5" cy="17" r="2.1"/><path d="M8 11.2 14.8 8.1M8.2 13.1l6.2 3"/></svg>
+          <span>图谱</span>
+        </button>
+      </nav>
+      <p class="side-foot">书、划线和笔记只在这台设备上。</p>
+    </aside>
+    <div class="maincol">
+      <header class="appbar">
+        <div class="brand-row">
+          <div class="brand-copy">
+            <h1>我的书房</h1>
+            <p class="tagline">从解耦的阅读，到可积累、可理解、可应用的个人知识系统</p>
+          </div>
+          <div class="app-actions">
+            <button id="btn-excerpts" class="ghost" type="button">摘录</button>
+            <button id="btn-appearance" class="ghost" type="button">外观</button>
+            <button id="btn-ai-settings" class="ghost" type="button">AI</button>
+            <label class="btn primary">导入<input id="file-input" type="file" multiple hidden></label>
+          </div>
+        </div>
+      </header>
+
+      <div id="pane-shelf" class="pane on" role="tabpanel">
+        <div class="pane-intro">
+          <ul class="pillars">
+            <li>沉浸阅读</li>
+            <li>知识积累</li>
+            <li>AI 理解</li>
+            <li>知识应用</li>
+          </ul>
+          <ol class="flow" aria-label="使用流程">
+            <li><b>阅读</b><span>EPUB · PDF · TXT</span></li>
+            <li><b>标注</b><span>划线 · 批注 · 摘录</span></li>
+            <li><b>积累</b><span>笔记与标签</span></li>
+            <li><b>关联</b><span>个人知识网络</span></li>
+            <li><b>理解</b><span>解释 · 问答</span></li>
+            <li><b>应用</b><span>大纲与判断</span></li>
+          </ol>
+        </div>
+        <div class="shelf-tools">
+          <input id="search" type="search" placeholder="搜索书名或作者" enterkeyhint="search" aria-label="搜索书名或作者">
           <div id="sort-seg" class="sort-seg" role="radiogroup" aria-label="排序">
             <button type="button" data-sort="recent" role="radio">最近阅读</button>
             <button type="button" data-sort="added" role="radio">最近导入</button>
             <button type="button" data-sort="title" role="radio">书名</button>
           </div>
-        </section>
-        <section class="desk-block">
-          <h2>导入</h2>
-          <label class="btn primary desk-btn" for="file-input">导入书籍</label>
-          <input id="file-input" type="file" multiple hidden>
-          <p class="desk-note">可一次选择多个 EPUB、PDF、TXT、HTML，或 ZIP 压缩包。</p>
-          <div id="import-status" class="status hidden"></div>
-        </section>
-        <section class="desk-block">
-          <h2>摘录</h2>
-          <button id="btn-excerpts" class="desk-row" type="button">查看全部摘录</button>
-        </section>
-        <section class="desk-block">
-          <h2>删除</h2>
-          <p class="desk-note">点一下要删的书。没点到的书保持原样。在书架上长按封面，也可以直接删一本。</p>
+        </div>
+        <button id="search-chip" class="search-chip hidden" type="button"></button>
+        <div id="import-status" class="status hidden"></div>
+        <div id="empty" class="empty hidden">
+          <div class="empty-mark" aria-hidden="true">书</div>
+          <p>书架还是空的</p>
+          <p class="hint">导入 EPUB、PDF、TXT、HTML，或装着许多书的 ZIP。读过的句子可以留下，变成你自己的笔记。</p>
+        </div>
+        <div id="no-match" class="empty hidden"><p>没有匹配的书</p></div>
+        <p id="shelf-sub" class="shelf-sub"></p>
+        <div id="grid" class="book-grid"></div>
+        <section id="desk-block" class="desk-block">
+          <h2>整理</h2>
+          <p class="desk-note">点一下要删的书。没点到的书保持原样。在封面上长按，也可以直接删一本。</p>
           <div id="desk-list" class="desk-list"></div>
           <div id="manage-bar" class="manage-bar hidden">
             <span id="manage-count"></span>
@@ -67,15 +114,70 @@
         </section>
         <footer id="storage-info" class="foot"></footer>
       </div>
+
+      <div id="pane-knowledge" class="pane" role="tabpanel">
+        <div class="pane-head">
+          <div>
+            <p class="kicker">知识库</p>
+            <h2>笔记与摘录</h2>
+          </div>
+          <div class="head-actions">
+            <button id="btn-export-notes" class="btn ghost" type="button">复制大纲</button>
+            <button id="btn-new-decision" class="btn ghost" type="button">写一次判断</button>
+            <button id="btn-new-note" class="btn primary" type="button">新建笔记</button>
+          </div>
+        </div>
+        <div class="k-tools">
+          <input id="note-search" type="search" placeholder="搜索笔记、摘录或标签" aria-label="搜索笔记">
+          <div id="tag-filters" class="chips"></div>
+        </div>
+        <div id="note-list" class="note-list"></div>
+        <div id="note-editor" class="editor hidden"></div>
+      </div>
+
+      <div id="pane-graph" class="pane" role="tabpanel">
+        <div class="pane-head">
+          <div>
+            <p class="kicker">知识图谱</p>
+            <h2 id="graph-title">个人知识网络</h2>
+          </div>
+          <div class="zoom-ctl" aria-label="缩放">
+            <button id="graph-out" type="button" aria-label="缩小">−</button>
+            <button id="graph-reset" type="button">适应</button>
+            <button id="graph-in" type="button" aria-label="放大">+</button>
+          </div>
+        </div>
+        <div class="graph-search-row">
+          <input id="graph-search" type="search" placeholder="找一个概念或笔记" aria-label="在图谱中查找">
+        </div>
+        <div id="graph-stage" class="graph-stage">
+          <div id="graph-world" class="graph-world"></div>
+          <div id="graph-empty" class="graph-empty">
+            <p>还没有可以铺开的笔记</p>
+            <p>做一次摘录，或写两条笔记并连起来。实线是你建立的关联，虚线是相同的标签。</p>
+          </div>
+          <div class="legend" aria-hidden="true"><span><i class="lg link"></i>关联</span><span><i class="lg tag"></i>相同标签</span></div>
+        </div>
+        <aside id="graph-card" class="graph-card hidden"></aside>
+      </div>
     </div>
   </div>
-  <div class="dots" aria-hidden="true">
-    <button class="dot on" type="button" data-page="0" aria-label="书架"></button>
-    <button class="dot" type="button" data-page="1" aria-label="整理"></button>
-  </div>
+  <nav class="tabbar" aria-label="工作台">
+    <button type="button" data-pane="shelf" role="tab" class="on" aria-selected="true">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5.2A2.2 2.2 0 0 1 7.2 3H19v16H7.2A2.2 2.2 0 0 0 5 21.2z"/><path d="M5 5.2A2.2 2.2 0 0 1 7.2 7.4H19"/></svg>
+      <span>书库</span>
+    </button>
+    <button type="button" data-pane="knowledge" role="tab" aria-selected="false">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3.5h8l5 5V20a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4.5a1 1 0 0 1 1-1z"/><path d="M15 3.5V9h5"/><path d="M8.5 13h7M8.5 16.5h4.5"/></svg>
+      <span>知识</span>
+    </button>
+    <button type="button" data-pane="graph" role="tab" aria-selected="false">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="12" r="2.1"/><circle cx="17" cy="7" r="2.1"/><circle cx="16.5" cy="17" r="2.1"/><path d="M8 11.2 14.8 8.1M8.2 13.1l6.2 3"/></svg>
+      <span>图谱</span>
+    </button>
+  </nav>
 </section>
 
-<!-- 阅读器 -->
 <section id="reader" class="view">
   <div class="run run-top" id="run-title"></div>
   <div id="stage"><div id="viewer"></div><div id="tap"></div></div>
@@ -86,18 +188,18 @@
   <div class="run run-bottom" id="run-pct"></div>
   <div id="bars" class="hidden">
     <header class="rbar top">
-      <button id="btn-back" class="icon" aria-label="返回书架"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></button>
+      <button id="btn-back" class="icon" type="button" aria-label="返回书架"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></button>
       <div id="r-title" class="rtitle"></div>
-      <button id="btn-select" class="icon" aria-label="选择文字"><svg viewBox="0 0 24 24"><path d="M4 20l3.2-.8L18.5 8a1.8 1.8 0 0 0-2.5-2.5L4.7 16.8 4 20z"/><path d="M13.5 6.5l4 4"/></svg></button>
-      <button id="btn-bm" class="icon star" aria-label="书签">☆</button>
+      <button id="btn-select" class="icon" type="button" aria-label="选择文字"><svg viewBox="0 0 24 24"><path d="M4 20l3.2-.8L18.5 8a1.8 1.8 0 0 0-2.5-2.5L4.7 16.8 4 20z"/><path d="M13.5 6.5l4 4"/></svg></button>
+      <button id="btn-bm" class="icon star" type="button" aria-label="书签">☆</button>
     </header>
     <footer class="rbar bottom">
       <div class="progress-row"><span id="r-pos"></span><input id="r-slider" type="range" min="0" max="1000" value="0"><span id="r-pct">0%</span></div>
       <div class="btn-row">
-        <button id="btn-toc"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg><span>目录</span></button>
-        <button id="btn-bms"><svg viewBox="0 0 24 24"><path d="M7 4h10v16l-5-4-5 4z"/></svg><span>书签</span></button>
-        <button id="btn-hls"><svg viewBox="0 0 24 24"><path d="M5 19l3.2-.7L18.2 8.3a1.6 1.6 0 0 0-2.3-2.3L5.9 16.1 5 19z"/><path d="M4 21h16"/></svg><span>划线</span></button>
-        <button id="btn-aa"><b class="aa">Aa</b><span>排版</span></button>
+        <button id="btn-toc" type="button"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg><span>目录</span></button>
+        <button id="btn-bms" type="button"><svg viewBox="0 0 24 24"><path d="M7 4h10v16l-5-3.2L7 20z"/></svg><span>书签</span></button>
+        <button id="btn-hls" type="button"><svg viewBox="0 0 24 24"><path d="M5 19l3.2-.7L18.2 8.3a1.6 1.6 0 0 0-2.3-2.3L5.9 16.1 5 19z"/><path d="M4 21h16"/></svg><span>划线</span></button>
+        <button id="btn-aa" type="button"><b class="aa">Aa</b><span>排版</span></button>
       </div>
     </footer>
     <div id="settings" class="sheet hidden"></div>
@@ -106,29 +208,64 @@
   <div id="select-bar" class="selectbar hidden">
     <p id="select-hint">拖动选择文字，或长按一段</p>
     <div class="select-actions">
-      <button id="btn-hl" type="button">高亮</button>
-      <button id="btn-copy" type="button">复制</button>
+      <button id="btn-hl" type="button">划线</button>
+      <button id="btn-annotate" type="button">批注</button>
       <button id="btn-excerpt" type="button">摘录</button>
+      <button id="btn-ai" type="button">AI解释</button>
+      <button id="btn-copy" type="button">复制</button>
       <button id="btn-select-done" type="button">完成</button>
     </div>
   </div>
   <div id="panel" class="panel hidden">
-    <div class="panel-head"><span id="panel-title"></span><button id="panel-close" class="icon" aria-label="关闭">×</button></div>
+    <div class="panel-head"><span id="panel-title"></span><button id="panel-close" class="icon" type="button" aria-label="关闭">×</button></div>
     <div id="panel-body"></div>
   </div>
 </section>
+
 <div id="lib-panel" class="lib-panel hidden">
-  <div class="panel-head"><span id="lib-title">摘录</span><button id="lib-close" class="icon" aria-label="关闭">×</button></div>
+  <div class="panel-head"><span id="lib-title">摘录</span><button id="lib-close" class="icon" type="button" aria-label="关闭">×</button></div>
   <div id="lib-body"></div>
 </div>
 <div id="note-mask" class="note-mask hidden">
   <form id="note-dialog" class="note-dialog">
-    <h3>保存摘录</h3>
+    <h3 id="note-heading">保存摘录</h3>
     <p id="note-quote" class="quote"></p>
     <textarea id="note-text" rows="3" placeholder="写一句笔记，也可以留空"></textarea>
+    <input id="note-tags" type="text" placeholder="标签，用空格分开，可以留空" autocomplete="off">
     <div class="note-actions">
       <button type="button" id="note-cancel">取消</button>
       <button type="submit" class="btn primary" id="note-save">保存</button>
+    </div>
+  </form>
+</div>
+<div id="ai-mask" class="note-mask hidden">
+  <div class="note-dialog ai-dialog" role="dialog" aria-labelledby="ai-title">
+    <h3 id="ai-title">AI 解释</h3>
+    <p id="ai-quote" class="quote"></p>
+    <div id="ai-body"></div>
+    <form id="ai-ask" class="ai-ask">
+      <input id="ai-q" type="text" placeholder="围绕这段文字提问" autocomplete="off">
+      <button class="btn primary" type="submit">提问</button>
+    </form>
+    <div class="note-actions">
+      <button type="button" id="ai-close">关闭</button>
+      <button type="button" id="ai-save" class="btn primary">存为笔记</button>
+    </div>
+  </div>
+</div>
+<div id="settings-mask" class="note-mask hidden">
+  <form id="ai-settings" class="note-dialog">
+    <h3>AI 设置</h3>
+    <p class="desk-note">使用兼容 OpenAI 的聊天接口。密钥只写在这台设备的本地存储里，不会进入代码仓库，书房本身也不保存它。</p>
+    <label class="field">接口地址<input id="ai-base" type="url" placeholder="https://api.openai.com/v1" autocomplete="off"></label>
+    <label class="field">模型<input id="ai-model" type="text" placeholder="gpt-4o-mini" autocomplete="off"></label>
+    <label class="field">密钥<input id="ai-key" type="password" autocomplete="off" placeholder="只保存在这台设备"></label>
+    <p id="ai-settings-status" class="desk-note"></p>
+    <div class="note-actions">
+      <button type="button" id="ai-settings-clear">清除密钥</button>
+      <button type="button" id="ai-settings-test">测试</button>
+      <button type="button" id="ai-settings-cancel">关闭</button>
+      <button type="submit" class="btn primary">保存</button>
     </div>
   </form>
 </div>

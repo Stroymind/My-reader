@@ -67,7 +67,8 @@ function renderMarked(line, marks) {
   for (const [a, b, kind] of merged) {
     if (a < pos) continue;
     out += esc(line.slice(pos, a));
-    out += `<mark class="${kind === 'excerpt' ? 'ex' : 'hl'}">${esc(line.slice(a, b))}</mark>`;
+    const mark = kind === 'excerpt' ? 'ex' : kind === 'annotation' ? 'an' : 'hl';
+    out += `<mark class="${mark}">${esc(line.slice(a, b))}</mark>`;
     pos = b;
   }
   return out + esc(line.slice(pos));
@@ -262,7 +263,9 @@ export class EpubEngine {
       if (!h.cfiRange || h.kind === 'copy') continue;
       const styles = h.kind === 'excerpt'
         ? { fill: night ? '#6ea894' : '#8fbfa8', 'fill-opacity': night ? '0.55' : '0.5', 'mix-blend-mode': 'multiply' }
-        : { fill: night ? '#d7b15a' : '#e2c15a', 'fill-opacity': night ? '0.5' : '0.55', 'mix-blend-mode': 'multiply' };
+        : h.kind === 'annotation'
+          ? { fill: night ? '#6aa8ff' : '#7eb6ff', 'fill-opacity': night ? '0.45' : '0.45', 'mix-blend-mode': 'multiply' }
+          : { fill: night ? '#d7b15a' : '#e2c15a', 'fill-opacity': night ? '0.5' : '0.55', 'mix-blend-mode': 'multiply' };
       try {
         this.rendition.annotations.highlight(h.cfiRange, { id: h.id }, null, 'rr-hl', styles);
         this._hlCfis.push(h.cfiRange);
@@ -419,6 +422,7 @@ export class PdfEngine {
         if (!span || !root.contains(span)) continue;
         span.classList.add('rr-mark');
         if (h.kind === 'excerpt') span.classList.add('ex');
+        else if (h.kind === 'annotation') span.classList.add('an');
       }
     }
   }

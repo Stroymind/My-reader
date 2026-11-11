@@ -8,18 +8,41 @@ export const THEMES = {
   paper: { label: '纸张', bg: '#faf9f6', fg: '#2b2a28', muted: '#8d8a84' },
   white: { label: '白色', bg: '#ffffff', fg: '#1f1f1f', muted: '#8a8a8a' },
   sepia: { label: '护眼', bg: '#f3ead7', fg: '#4f4130', muted: '#8f7d64' },
-  night: { label: '夜间', bg: '#17181a', fg: '#c8c6c2', muted: '#77746f' }
+  night: { label: '夜间', bg: '#1c1c1e', fg: '#f2f2f7', muted: '#98989d' }
 };
 const KEY = 'rr-settings';
 const DEFAULTS = { theme: 'paper', font: 'serif', size: 19, lh: 1.8, margin: 24 };
 export const settings = Object.assign({}, DEFAULTS, JSON.parse(localStorage.getItem(KEY) || '{}'));
 export function saveSettings() { localStorage.setItem(KEY, JSON.stringify(settings)); }
+export function appearancePref() {
+  const v = localStorage.getItem('rr-appearance') || 'system';
+  return v === 'light' || v === 'dark' ? v : 'system';
+}
+export function applyAppearance() {
+  const pref = appearancePref();
+  const systemDark = !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+  const dark = pref === 'dark' || (pref === 'system' && systemDark);
+  document.documentElement.classList.toggle('appearance-dark', dark);
+  document.documentElement.dataset.appearance = pref;
+  const reading = document.getElementById('reader')?.classList.contains('active');
+  const bg = reading ? (THEMES[settings.theme]?.bg || '#faf9f6') : (dark ? '#000000' : '#f5f5f7');
+  document.querySelector('meta[name=theme-color]')?.setAttribute('content', bg);
+  const btn = document.getElementById('btn-appearance');
+  if (btn) btn.textContent = pref === 'light' ? '浅色' : pref === 'dark' ? '深色' : '自动';
+}
+export function cycleAppearance() {
+  const order = ['light', 'dark', 'system'];
+  const next = order[(order.indexOf(appearancePref()) + 1) % order.length];
+  localStorage.setItem('rr-appearance', next);
+  applyAppearance();
+  return next;
+}
 export function applyBodyTheme() {
   for (const k of Object.keys(THEMES)) document.body.classList.toggle('theme-' + k, settings.theme === k);
-  const bg = THEMES[settings.theme].bg;
-  document.documentElement.style.background = bg;
-  document.body.style.background = bg;
-  document.querySelector('meta[name=theme-color]')?.setAttribute('content', bg);
+  applyAppearance();
+}
+if (window.matchMedia) {
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => applyAppearance());
 }
 // 注入到 EPUB iframe 的样式
 // 中文书：引号、破折号、省略号用中文字形（全角），西文仍用 Literata
