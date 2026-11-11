@@ -137,13 +137,30 @@ function relatedOf(id) {
   return out;
 }
 
-export async function openEditor(id) {
+function draftSnapshot() {
+  const draft = state.editing;
+  if (!draft) return null;
+  return { title: draft.title, body: draft.body, quote: draft.quote, tags: [...(draft.tags || [])], concept: !!draft.concept };
+}
+async function reopenKeeping(id) {
+  const keep = draftSnapshot();
+  await refreshWorkspace();
+  await openEditor(id, keep);
+}
+export async function openEditor(id, keep) {
   const host = $('#note-editor');
   if (!host) return;
   const note = id ? state.notes.find(n => n.id === id) : null;
   state.editing = note ? { ...note, tags: [...(note.tags || [])] } : {
     id: null, title: '', body: '', quote: '', tags: [], kind: 'note', concept: false, bookId: null, bookTitle: '', passageId: null
   };
+  if (keep) {
+    state.editing.title = keep.title ?? state.editing.title;
+    state.editing.body = keep.body ?? state.editing.body;
+    state.editing.quote = keep.quote ?? state.editing.quote;
+    state.editing.tags = Array.isArray(keep.tags) ? [...keep.tags] : state.editing.tags;
+    state.editing.concept = !!keep.concept;
+  }
   host.classList.remove('hidden');
   host.replaceChildren();
   const draft = state.editing;
@@ -247,7 +264,7 @@ export async function openEditor(id) {
     open.onclick = () => openEditor(item.note.id);
     const cut = h('button', 'texty danger', '断开');
     cut.type = 'button';
-    cut.onclick = async () => { await unlink(item.link.id); await refreshWorkspace(); openEditor(draft.id); };
+    cut.onclick = async () => { await unlink(item.link.id); await reopenKeeping(draft.id); };
     row.append(open, cut);
     host.appendChild(row);
   }
@@ -264,8 +281,7 @@ export async function openEditor(id) {
     add.onclick = async () => {
       if (!sel.value) return api.toast('先选择一条笔记');
       await linkNotes(draft.id, sel.value);
-      await refreshWorkspace();
-      openEditor(draft.id);
+      await reopenKeeping(draft.id);
       api.toast('已建立关联');
     };
     picker.append(sel, add);
@@ -402,6 +418,12 @@ function renderGraph(forceFit) {
     const focus = state.notes.find(n => n.id === state.focusId);
     title.textContent = focus ? '围绕「' + (focus.title || '未命名') + '」' : '个人知识网络';
   }
+  if (state.focusId && !model.nodes.some(n => n.id === state.focusId)) {
+    const outside = state.notes.some(n => n.id === state.focusId);
+    state.focusId = null;
+    $('#graph-card')?.classList.add('hidden');
+    if (outside) api.toast('这条笔记不在当前图谱里。图谱只画最近 120 条。');
+  }
   if (!model.nodes.length) {
     world.replaceChildren();
     empty?.classList.remove('hidden');
@@ -454,6 +476,7 @@ function neighborSet(id, edges) {
 function selectGraphNode(id) {
   state.focusId = id;
   renderGraph(false);
+  if (state.focusId !== id) return;
   const card = $('#graph-card');
   const note = state.notes.find(n => n.id === id);
   if (!card || !note) return;
@@ -571,6 +594,7 @@ export function openAssistant(opts) {
   $('#ai-q').value = '';
   $('#ai-ask')?.classList.remove('hidden');
   mask.classList.remove('hidden');
+  holdFocus(mask);
 }
 
 function openAiSettings() {
@@ -580,7 +604,35 @@ function openAiSettings() {
   $('#ai-key').value = '';
   $('#ai-key').placeholder = cfg.apiKey ? '已保存在这台设备，留空则不修改' : '只保存在这台设备';
   $('#ai-settings-status').textContent = cfg.apiKey ? '这台设备上已经有一把密钥。' : '还没有密钥。不填写也可以继续阅读，解释会使用本地要点。';
-  $('#settings-mask').classList.remove('hidden');
+  const sheet = $('#settings-mask');
+  sheet.classList.remove('hidden');
+  holdFocus(sheet);
+}
+
+const focusReturn = new WeakMap();
+function focusable(root) {
+  return [...root.querySelectorAll('button, input, textarea, select, a[href]')].filter(el => !el.disabled && !el.closest('.hidden'));
+}
+function holdFocus(mask) {
+  if (document.activeElement && !mask.contains(document.activeElement)) focusReturn.set(mask, document.activeElement);
+  mask.onkeydown = e => {
+    if (e.key !== 'Tab') return;
+    const list = focusable(mask);
+    if (!list.length) return;
+    const index = list.indexOf(document.activeElement);
+    const next = e.shiftKey ? (index <= 0 ? list.length - 1 : index - 1) : (index === list.length - 1 || index < 0 ? 0 : index + 1);
+    if (e.shiftKey ? index <= 0 : index === list.length - 1 || index < 0) {
+      e.preventDefault();
+      list[next].focus();
+    }
+  };
+  setTimeout(() => focusable(mask)[0]?.focus(), 30);
+}
+function releaseFocus(mask) {
+  if (!mask) return;
+  mask.onkeydown = null;
+  const prev = focusReturn.get(mask);
+  if (prev?.focus) prev.focus();
 }
 
 async function saveAssistantNote() {
@@ -683,7 +735,11 @@ export function initWorkspace(nextApi) {
   $('#note-search')?.addEventListener('input', e => { state.filter.q = e.target.value; renderNotes(); });
   $('#btn-appearance')?.addEventListener('click', () => nextApi.cycleAppearance?.());
   $('#btn-ai-settings')?.addEventListener('click', () => openAiSettings());
-  $('#ai-close')?.addEventListener('click', () => { aiToken++; $('#ai-mask').classList.add('hidden'); });
+  $('#ai-close')?.addEventListener('click', () => {
+    aiToken++;
+    $('#ai-mask').classList.add('hidden');
+    releaseFocus($('#ai-mask'));
+  });
   $('#ai-save')?.addEventListener('click', () => saveAssistantNote());
   $('#ai-ask')?.addEventListener('submit', async e => {
     e.preventDefault();
@@ -719,7 +775,10 @@ export function initWorkspace(nextApi) {
     $('#ai-settings-status').textContent = saved.hasKey ? '已保存。密钥只在这台设备上。' : '已保存接口和模型。还没有密钥。';
     api.toast('AI 设置已保存');
   });
-  $('#ai-settings-cancel')?.addEventListener('click', () => $('#settings-mask').classList.add('hidden'));
+  $('#ai-settings-cancel')?.addEventListener('click', () => {
+    $('#settings-mask').classList.add('hidden');
+    releaseFocus($('#settings-mask'));
+  });
   $('#ai-settings-clear')?.addEventListener('click', () => {
     clearAiKey();
     $('#ai-key').value = '';
@@ -729,15 +788,18 @@ export function initWorkspace(nextApi) {
   });
   $('#ai-settings-test')?.addEventListener('click', async () => {
     const status = $('#ai-settings-status');
-    if (!aiConfigured() && !$('#ai-key').value.trim()) { status.textContent = '请先填写密钥并保存。'; return; }
-    if ($('#ai-key').value.trim()) {
-      saveAiConfig({ baseUrl: $('#ai-base').value.trim(), model: $('#ai-model').value.trim(), apiKey: $('#ai-key').value.trim() });
-      $('#ai-key').value = '';
-    }
-    status.textContent = '正在测试…';
+    const typed = $('#ai-key').value.trim();
+    const saved = getAiConfig();
+    const trial = {
+      baseUrl: $('#ai-base').value.trim() || saved.baseUrl,
+      model: $('#ai-model').value.trim() || saved.model,
+      apiKey: typed || saved.apiKey
+    };
+    if (!trial.apiKey) { status.textContent = '请先填写密钥。测试不会把它保存下来。'; return; }
+    status.textContent = '正在测试…密钥不会因此保存。';
     try {
-      const text = await testAi();
-      status.textContent = '测试成功：' + text.slice(0, 40);
+      const text = await testAi(trial);
+      status.textContent = '测试成功：' + text.slice(0, 40) + (typed ? '。要留下这把密钥，请再点保存。' : '');
     } catch (err) {
       status.textContent = '测试没有成功：' + (err.message || err);
     }

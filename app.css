@@ -154,6 +154,10 @@ label.btn.primary input{display:none}
 
 /* 图谱 */
 #pane-graph{overflow:hidden}
+@media (max-height:720px){
+  #pane-graph{overflow:auto}
+  .graph-stage{min-height:240px}
+}
 .zoom-ctl{display:flex;gap:6px;align-items:center;flex:none}
 .zoom-ctl button{height:36px;min-width:36px;padding:0 12px;border-radius:12px;background:var(--app-fill);font-weight:650;white-space:nowrap}
 .graph-search-row{margin-bottom:10px}

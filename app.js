@@ -4,7 +4,7 @@ import { importFiles, parseManifest, applyManifestToLibrary } from './importer.j
 import { EpubEngine, PdfEngine, TxtEngine } from './engines.js';
 import { settings, saveSettings, applyBodyTheme, applyAppearance, cycleAppearance, FONTS, THEMES } from './settings.js';
 import { isMostlyCjk, translateVisible } from './bilingual.js';
-import { backfillFromBooks, forgetBook, parseTags, syncBook } from './knowledge.js';
+import { backfillFromBooks, deleteBookBundle, parseTags, syncBook } from './knowledge.js';
 import { initWorkspace, openAssistant, refreshWorkspace, showPane, workspaceHandleBack } from './workspace.js';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = './vendor/pdf.worker.min.mjs';
@@ -85,10 +85,13 @@ async function deleteBooks(recs) {
     : `删除这 ${recs.length} 本吗？\n阅读进度、书签、摘录和相关笔记会一起去掉。`;
   if (!confirm(msg)) return;
   for (const b of recs) {
-    await db.del('books', b.id);
-    await db.del('files', b.id);
-    try { await forgetBook(b.id); } catch (err) { console.warn(err); }
-    picked.delete(b.id);
+    try {
+      await deleteBookBundle(b.id);
+      picked.delete(b.id);
+    } catch (err) {
+      console.warn(err);
+      toast('《' + b.title + '》没有删掉。书和笔记都还在，可以再试一次。');
+    }
   }
   updateManageBar();
   await renderLibrary();

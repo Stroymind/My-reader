@@ -391,7 +391,7 @@ export class PdfEngine {
   paintMarks() {
     const root = this.textLayerEl;
     if (!root) return;
-    root.querySelectorAll('.rr-mark').forEach(el => el.classList.remove('rr-mark', 'ex'));
+    root.querySelectorAll('.rr-mark').forEach(el => el.classList.remove('rr-mark', 'ex', 'an'));
     const quotes = (this.highlights || []).filter(h => h.kind !== 'copy' && h.text && (h.page == null || h.page === this.page));
     if (!quotes.length) return;
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);

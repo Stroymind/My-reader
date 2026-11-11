@@ -28,7 +28,11 @@ export function applyAppearance() {
   const bg = reading ? (THEMES[settings.theme]?.bg || '#faf9f6') : (dark ? '#000000' : '#f5f5f7');
   document.querySelector('meta[name=theme-color]')?.setAttribute('content', bg);
   const btn = document.getElementById('btn-appearance');
-  if (btn) btn.textContent = pref === 'light' ? '浅色' : pref === 'dark' ? '深色' : '自动';
+  if (btn) {
+    const name = pref === 'light' ? '浅色' : pref === 'dark' ? '深色' : '自动';
+    btn.textContent = '外观 · ' + name;
+    btn.setAttribute('aria-label', '外观，当前是' + name);
+  }
 }
 export function cycleAppearance() {
   const order = ['light', 'dark', 'system'];

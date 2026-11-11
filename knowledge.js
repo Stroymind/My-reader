@@ -181,15 +181,19 @@ export async function deleteNote(id) {
   return note;
 }
 
-export async function upsertFromPassage(book, item) {
+async function projectPassage(book, item, existing) {
   if (!book || !item?.id || !item.text) return null;
-  const notes = await listNotes();
-  const existing = notes.find(n => n.passageId === item.id && n.bookId === book.id);
-  if (existing) {
-    existing.quote = item.text;
-    existing.bookTitle = book.title || existing.bookTitle || '';
-    existing.kind = item.kind || existing.kind;
-    await db.put('notes', existing);
+  if (existing?.id) {
+    await db.update('notes', existing.id, cur => {
+      const quote = item.text;
+      const bookTitle = book.title || cur.bookTitle || '';
+      const kind = item.kind || cur.kind;
+      if (cur.quote === quote && (cur.bookTitle || '') === bookTitle && cur.kind === kind) return null;
+      cur.quote = quote;
+      cur.bookTitle = bookTitle;
+      cur.kind = kind;
+      return cur;
+    });
     return existing;
   }
   return createNote({
@@ -205,6 +209,14 @@ export async function upsertFromPassage(book, item) {
   });
 }
 
+function passageMap(notes) {
+  const map = new Map();
+  for (const note of notes) {
+    if (note.bookId && note.passageId) map.set(note.bookId + '\0' + note.passageId, note);
+  }
+  return map;
+}
+
 export async function syncBook(book) {
   if (!book) return;
   const notes = await listNotes();
@@ -212,25 +224,42 @@ export async function syncBook(book) {
   for (const note of notes) {
     if (note.bookId === book.id && note.passageId && !alive.has(note.passageId)) await deleteNote(note.id);
   }
-  for (const item of book.highlights || []) await upsertFromPassage(book, item);
+  const known = passageMap(await listNotes());
+  for (const item of book.highlights || []) {
+    const key = book.id + '\0' + item.id;
+    const saved = await projectPassage(book, item, known.get(key));
+    if (saved) known.set(key, saved);
+  }
 }
 
-export async function forgetBook(bookId) {
-  const notes = await listNotes();
-  for (const note of notes) {
-    if (note.bookId !== bookId) continue;
-    note.passageId = null;
-    await db.del('notes', note.id);
-    const links = await listLinks();
-    for (const link of links) {
-      if (link.fromId === note.id || link.toId === note.id) await db.del('links', link.id);
-    }
-  }
+export function deleteBookBundle(bookId) {
+  return db.run(['books', 'files', 'notes', 'links'], t => {
+    const notes = t.objectStore('notes');
+    const got = notes.getAll();
+    got.onsuccess = () => {
+      const ids = new Set((got.result || []).filter(n => n.bookId === bookId).map(n => n.id));
+      for (const id of ids) notes.delete(id);
+      const links = t.objectStore('links');
+      const allLinks = links.getAll();
+      allLinks.onsuccess = () => {
+        for (const link of allLinks.result || []) {
+          if (ids.has(link.fromId) || ids.has(link.toId)) links.delete(link.id);
+        }
+        t.objectStore('books').delete(bookId);
+        t.objectStore('files').delete(bookId);
+      };
+    };
+  });
 }
 
 export async function backfillFromBooks() {
   const books = (await db.all('books')) || [];
+  const known = passageMap(await listNotes());
   for (const book of books) {
-    for (const item of book.highlights || []) await upsertFromPassage(book, item);
+    for (const item of book.highlights || []) {
+      const key = book.id + '\0' + item.id;
+      const saved = await projectPassage(book, item, known.get(key));
+      if (saved) known.set(key, saved);
+    }
   }
 }

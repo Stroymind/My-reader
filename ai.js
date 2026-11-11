@@ -27,8 +27,8 @@ export function clearAiKey() {
   localStorage.setItem(KEY, JSON.stringify(cur));
 }
 
-export async function complete(messages) {
-  const cfg = getAiConfig();
+export async function complete(messages, override) {
+  const cfg = Object.assign({}, getAiConfig(), override || {});
   if (!cfg.apiKey) {
     const err = new Error('尚未配置密钥');
     err.code = 'NO_KEY';
@@ -36,17 +36,24 @@ export async function complete(messages) {
   }
   const base = String(cfg.baseUrl || '').replace(/\/+$/, '');
   if (!/^https?:\/\//i.test(base)) throw new Error('接口地址需要以 http:// 或 https:// 开头');
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 25000);
   let res;
+  let data = {};
   try {
     res = await fetch(base + '/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + cfg.apiKey },
-      body: JSON.stringify({ model: cfg.model || DEFAULTS.model, temperature: 0.3, messages })
+      body: JSON.stringify({ model: cfg.model || DEFAULTS.model, temperature: 0.3, messages }),
+      signal: ctrl.signal
     });
-  } catch {
+    data = await res.json().catch(() => ({}));
+  } catch (err) {
+    if (err?.name === 'AbortError') throw new Error('模型太久没有回应。');
     throw new Error('网络请求没有发出去。请检查接口地址，或稍后再试。');
+  } finally {
+    clearTimeout(timer);
   }
-  const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data?.error?.message || ('请求失败（' + res.status + '）'));
   const text = data?.choices?.[0]?.message?.content;
   if (!text) throw new Error('模型没有返回文字');
@@ -67,6 +74,6 @@ export function askText(question, quote, context = '') {
   ]);
 }
 
-export function testAi() {
-  return complete([{ role: 'user', content: '只回复这四个字：已经连通' }]);
+export function testAi(override) {
+  return complete([{ role: 'user', content: '只回复这四个字：已经连通' }], override);
 }
