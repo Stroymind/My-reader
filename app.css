@@ -179,7 +179,10 @@ label.btn.primary input{display:none}
 .legend{position:absolute;left:12px;top:12px;display:flex;gap:10px;padding:6px 10px;border-radius:999px;background:color-mix(in srgb,var(--app-elev) 82%,transparent);font-size:11px;color:var(--app-muted);backdrop-filter:blur(10px)}
 .lg{display:inline-block;width:16px;height:0;border-top:2px solid color-mix(in srgb,var(--app-fg) 40%,transparent);margin-right:5px;vertical-align:middle}
 .lg.tag{border-top-style:dashed;border-top-color:var(--app-accent)}
-.graph-card{position:absolute;left:16px;right:16px;bottom:16px;z-index:4;padding:14px 16px;border-radius:18px;background:color-mix(in srgb,var(--app-elev) 88%,transparent);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);box-shadow:var(--app-shadow);animation:pop .36s var(--spring)}
+.graph-card{position:absolute;left:16px;right:16px;bottom:16px;z-index:22;padding:14px 16px;border-radius:18px;background:color-mix(in srgb,var(--app-elev) 88%,transparent);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);box-shadow:var(--app-shadow);animation:pop .36s var(--spring)}
+@media (max-width:959px){
+  .graph-card{bottom:calc(env(safe-area-inset-bottom) + 92px)}
+}
 .graph-card strong{display:block;margin:4px 0;font-size:16px}
 .graph-card p{margin:0 0 8px;font-size:13px;line-height:1.5;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
 

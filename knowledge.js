@@ -80,24 +80,37 @@ export async function listLinks() {
   return (await db.all('links')) || [];
 }
 
+export function planAutoLinks(noteId, wantIds, links) {
+  const want = new Set(wantIds);
+  const covered = new Set();
+  for (const link of links || []) {
+    const other = link.fromId === noteId ? link.toId : link.toId === noteId ? link.fromId : null;
+    if (other && !link.auto) covered.add(other);
+  }
+  const drop = [];
+  for (const link of links || []) {
+    if (!link.auto || link.fromId !== noteId) continue;
+    if (!want.has(link.toId) || covered.has(link.toId)) drop.push(link.id);
+    else want.delete(link.toId);
+  }
+  for (const id of covered) want.delete(id);
+  return { drop, add: [...want] };
+}
+
 async function syncAutoLinks(note) {
   const notes = await listNotes();
   const byTitle = new Map(notes.filter(n => n.id !== note.id && n.title).map(n => [n.title, n.id]));
-  const want = new Set();
+  const want = [];
   const re = /\[\[([^\]\n]{1,40})\]\]/g;
   const hay = `${note.title || ''}\n${note.body || ''}`;
   let match;
   while ((match = re.exec(hay))) {
     const id = byTitle.get(match[1].trim());
-    if (id) want.add(id);
+    if (id && !want.includes(id)) want.push(id);
   }
-  const links = await listLinks();
-  for (const link of links) {
-    if (!link.auto || link.fromId !== note.id) continue;
-    if (!want.has(link.toId)) await db.del('links', link.id);
-    else want.delete(link.toId);
-  }
-  for (const toId of want) {
+  const plan = planAutoLinks(note.id, want, await listLinks());
+  for (const id of plan.drop) await db.del('links', id);
+  for (const toId of plan.add) {
     await db.put('links', { id: uid(), fromId: note.id, toId, auto: true, createdAt: Date.now() });
   }
 }
@@ -136,7 +149,7 @@ function blankNote(partial = {}) {
 
 export async function createNote(partial = {}) {
   const note = blankNote(partial);
-  if (!partial.tags?.length) note.tags = suggestTags(`${note.title} ${note.quote} ${note.body}`);
+  if (!Array.isArray(partial.tags)) note.tags = suggestTags(`${note.title} ${note.quote} ${note.body}`);
   await db.put('notes', note);
   if (partial.linkTo) await linkNotes(note.id, partial.linkTo);
   await syncAutoLinks(note);

@@ -69,6 +69,11 @@ function updateManageBar() {
   $('#manage-count').textContent = n ? `已选 ${n} 本` : '';
 }
 function showShelfPage() { showPane('shelf'); }
+let returnPane = 'shelf';
+function currentPane() {
+  const on = document.querySelector('.pane.on');
+  return on?.id?.replace(/^pane-/, '') || 'shelf';
+}
 async function mirrorKnowledge(book) {
   try { await syncBook(book); await refreshWorkspace(); }
   catch (err) { console.warn(err); }
@@ -226,6 +231,7 @@ async function openBook(id) {
   cur.highlights = cur.highlights || [];
   await rememberReading(id);
   if (gen !== viewGen) return;
+  if ($('#library')?.classList.contains('active')) returnPane = currentPane();
   showView('reader'); setBars(false); exitSelect(); $('#loading').classList.remove('hidden');
   $('#r-title').textContent = rec.title; $('#run-title').textContent = rec.title;
   if (history.state?.reader) history.replaceState({ reader: id }, ''); else history.pushState({ reader: id }, '');
@@ -316,7 +322,7 @@ function closeBook() {
     $('#bilingual')?.classList.add('hidden');
     $('#panel').classList.add('hidden'); $('#note-mask').classList.add('hidden');
     showView('library');
-    showShelfPage();
+    showPane(returnPane || 'shelf');
     await renderLibrary();
   })();
   return closing.finally(() => { closing = null; });
@@ -403,7 +409,12 @@ async function bumpSize(delta) {
     el.addEventListener('pointercancel', e => { pointers.delete(e.pointerId); pinchDist = 0; clearTimer(); pid = null; });
   }
   document.addEventListener('keydown', e => {
-    if (e.key === 'Escape') { handleBack(); return; }
+    if (e.key === 'Escape') {
+      const field = e.target.closest?.('input, textarea, select');
+      if (field && field.closest('#note-editor, #search, #note-search, #graph-search')) { field.blur(); return; }
+      handleBack();
+      return;
+    }
     if (!engine) return;
     if (e.target.matches('input, textarea, select')) return;
     const maskOpen = ['#ai-mask', '#note-mask', '#settings-mask', '#lib-panel'].some(sel => {

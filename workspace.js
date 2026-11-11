@@ -126,9 +126,11 @@ function noteCard(note) {
 
 function relatedOf(id) {
   const out = [];
+  const seen = new Set();
   for (const link of state.links) {
     const otherId = link.fromId === id ? link.toId : link.toId === id ? link.fromId : null;
-    if (!otherId) continue;
+    if (!otherId || seen.has(otherId)) continue;
+    seen.add(otherId);
     const other = state.notes.find(n => n.id === otherId);
     if (other) out.push({ link, note: other });
   }
@@ -528,12 +530,14 @@ function readPx(name) {
   return parseFloat(raw) || 0;
 }
 
+let aiToken = 0;
 export function openAssistant(opts) {
   const mask = $('#ai-mask');
   if (!mask) return;
   const quote = String(opts?.quote || '').trim();
   if (!quote) { api.toast('没有可以解释的文字'); return; }
-  state.ai = { ...opts, quote, answer: '', points: extractKeyPoints(quote) };
+  const token = ++aiToken;
+  state.ai = { ...opts, quote, answer: '', points: extractKeyPoints(quote), token };
   $('#ai-title').textContent = 'AI 解释';
   $('#ai-quote').textContent = quote.length > 280 ? quote.slice(0, 280) + '…' : quote;
   const body = $('#ai-body');
@@ -550,11 +554,13 @@ export function openAssistant(opts) {
     const wait = h('p', 'ai-wait', '正在请模型解释…');
     body.append(wait);
     explainText(quote, opts.context || '').then(text => {
+      if (token !== aiToken) return;
       wait.remove();
       state.ai.answer = text;
       const ans = h('div', 'ai-answer', text);
       body.prepend(ans);
     }).catch(err => {
+      if (token !== aiToken) return;
       wait.textContent = '模型没有完成解释：' + (err.message || err) + '。下面仍是本地要点。';
     });
   }
@@ -666,6 +672,7 @@ export function initWorkspace(nextApi) {
     const note = await createNote({
       title: '一次判断',
       kind: 'note',
+      tags: [],
       body: '## 问题\n\n\n## 手里的材料\n\n\n## 判断\n\n'
     });
     await refreshWorkspace();
@@ -676,17 +683,19 @@ export function initWorkspace(nextApi) {
   $('#note-search')?.addEventListener('input', e => { state.filter.q = e.target.value; renderNotes(); });
   $('#btn-appearance')?.addEventListener('click', () => nextApi.cycleAppearance?.());
   $('#btn-ai-settings')?.addEventListener('click', () => openAiSettings());
-  $('#ai-close')?.addEventListener('click', () => $('#ai-mask').classList.add('hidden'));
+  $('#ai-close')?.addEventListener('click', () => { aiToken++; $('#ai-mask').classList.add('hidden'); });
   $('#ai-save')?.addEventListener('click', () => saveAssistantNote());
   $('#ai-ask')?.addEventListener('submit', async e => {
     e.preventDefault();
     const question = $('#ai-q').value.trim();
     if (!question) return;
     if (!aiConfigured()) { api.toast('先在 AI 设置里保存密钥'); openAiSettings(); return; }
+    const token = state.ai?.token;
     const slot = h('p', 'ai-wait', '正在回答…');
     $('#ai-body').prepend(slot);
     try {
       const text = await askText(question, state.ai?.quote || '', state.ai?.context || '');
+      if (token !== aiToken) { slot.remove(); return; }
       slot.remove();
       const block = h('div', 'ai-answer');
       block.append(h('strong', '', question), document.createElement('br'));
@@ -694,6 +703,7 @@ export function initWorkspace(nextApi) {
       $('#ai-body').prepend(block);
       state.ai.answer = (state.ai.answer ? state.ai.answer + '\n\n' : '') + question + '\n' + text;
     } catch (err) {
+      if (token !== aiToken) return;
       slot.textContent = '没有得到回答：' + (err.message || err);
     }
   });
