@@ -5,7 +5,7 @@ import { EpubEngine, PdfEngine, TxtEngine } from './engines.js';
 import { settings, saveSettings, applyBodyTheme, applyAppearance, cycleAppearance, FONTS, THEMES } from './settings.js';
 import { isMostlyCjk, translateVisible } from './bilingual.js';
 import { backfillFromBooks, deleteBookBundle, parseTags, syncBook } from './knowledge.js';
-import { initWorkspace, openAssistant, refreshWorkspace, showPane, workspaceHandleBack } from './workspace.js';
+import { dismissAssistant, initWorkspace, openAssistant, refreshWorkspace, showPane, workspaceHandleBack } from './workspace.js';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = './vendor/pdf.worker.min.mjs';
 const $ = s => document.querySelector(s);
@@ -318,6 +318,7 @@ function closeBook() {
     clearTimeout(saveTimer);
     try { await persist(); } catch (e) { console.error(e); }
     exitSelect();
+    dismissAssistant();
     try { engine?.destroy(); } catch {}
     engine = null; cur = null; lastState = null;
     biToken++;
@@ -713,8 +714,7 @@ $('#btn-aa').onclick = () => { const s = $('#settings'); const show = s.classLis
 let rz; window.addEventListener('resize', () => { clearTimeout(rz); rz = setTimeout(() => engine?.resize(), 250); });
 
 function handleBack() {
-  if ($('#ai-mask') && !$('#ai-mask').classList.contains('hidden')) { $('#ai-mask').classList.add('hidden'); return true; }
-  if ($('#settings-mask') && !$('#settings-mask').classList.contains('hidden')) { $('#settings-mask').classList.add('hidden'); return true; }
+  if (dismissAssistant()) return true;
   if (!$('#note-mask').classList.contains('hidden')) { $('#note-mask').classList.add('hidden'); noteSel = null; return true; }
   if (document.body.classList.contains('selecting')) { exitSelect(); return true; }
   if (!$('#panel').classList.contains('hidden')) { $('#panel').classList.add('hidden'); return true; }

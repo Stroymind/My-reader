@@ -85,13 +85,18 @@ export function planAutoLinks(noteId, wantIds, links) {
   const covered = new Set();
   for (const link of links || []) {
     const other = link.fromId === noteId ? link.toId : link.toId === noteId ? link.fromId : null;
-    if (other && !link.auto) covered.add(other);
+    if (!other) continue;
+    const outgoingAuto = !!(link.auto && link.fromId === noteId);
+    if (!outgoingAuto) covered.add(other);
   }
   const drop = [];
   for (const link of links || []) {
     if (!link.auto || link.fromId !== noteId) continue;
     if (!want.has(link.toId) || covered.has(link.toId)) drop.push(link.id);
-    else want.delete(link.toId);
+    else {
+      want.delete(link.toId);
+      covered.add(link.toId);
+    }
   }
   for (const id of covered) want.delete(id);
   return { drop, add: [...want] };
@@ -127,6 +132,14 @@ export async function linkNotes(fromId, toId) {
 
 export async function unlink(id) {
   if (id) await db.del('links', id);
+}
+
+export async function unlinkPair(a, b) {
+  if (!a || !b || a === b) return;
+  const links = await listLinks();
+  for (const link of links) {
+    if ((link.fromId === a && link.toId === b) || (link.fromId === b && link.toId === a)) await db.del('links', link.id);
+  }
 }
 
 function blankNote(partial = {}) {

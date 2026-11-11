@@ -2,7 +2,7 @@
 import { aiConfigured, askText, clearAiKey, explainText, getAiConfig, saveAiConfig, testAi } from './ai.js';
 import {
   createNote, deleteNote, extractKeyPoints, linkNotes, listLinks, listNotes,
-  makeTitle, parseTags, saveNote, suggestTags, unlink
+  makeTitle, parseTags, saveNote, suggestTags, unlinkPair
 } from './knowledge.js';
 
 const $ = s => document.querySelector(s);
@@ -264,7 +264,7 @@ export async function openEditor(id, keep) {
     open.onclick = () => openEditor(item.note.id);
     const cut = h('button', 'texty danger', '断开');
     cut.type = 'button';
-    cut.onclick = async () => { await unlink(item.link.id); await reopenKeeping(draft.id); };
+    cut.onclick = async () => { await unlinkPair(draft.id, item.note.id); await reopenKeeping(draft.id); };
     row.append(open, cut);
     host.appendChild(row);
   }
@@ -634,6 +634,22 @@ function releaseFocus(mask) {
   const prev = focusReturn.get(mask);
   if (prev?.focus) prev.focus();
 }
+export function dismissAssistant() {
+  const settings = $('#settings-mask');
+  if (settings && !settings.classList.contains('hidden')) {
+    settings.classList.add('hidden');
+    releaseFocus(settings);
+    return true;
+  }
+  const ai = $('#ai-mask');
+  if (ai && !ai.classList.contains('hidden')) {
+    aiToken++;
+    ai.classList.add('hidden');
+    releaseFocus(ai);
+    return true;
+  }
+  return false;
+}
 
 async function saveAssistantNote() {
   const ai = state.ai;
@@ -735,11 +751,7 @@ export function initWorkspace(nextApi) {
   $('#note-search')?.addEventListener('input', e => { state.filter.q = e.target.value; renderNotes(); });
   $('#btn-appearance')?.addEventListener('click', () => nextApi.cycleAppearance?.());
   $('#btn-ai-settings')?.addEventListener('click', () => openAiSettings());
-  $('#ai-close')?.addEventListener('click', () => {
-    aiToken++;
-    $('#ai-mask').classList.add('hidden');
-    releaseFocus($('#ai-mask'));
-  });
+  $('#ai-close')?.addEventListener('click', () => dismissAssistant());
   $('#ai-save')?.addEventListener('click', () => saveAssistantNote());
   $('#ai-ask')?.addEventListener('submit', async e => {
     e.preventDefault();
@@ -775,10 +787,7 @@ export function initWorkspace(nextApi) {
     $('#ai-settings-status').textContent = saved.hasKey ? '已保存。密钥只在这台设备上。' : '已保存接口和模型。还没有密钥。';
     api.toast('AI 设置已保存');
   });
-  $('#ai-settings-cancel')?.addEventListener('click', () => {
-    $('#settings-mask').classList.add('hidden');
-    releaseFocus($('#settings-mask'));
-  });
+  $('#ai-settings-cancel')?.addEventListener('click', () => dismissAssistant());
   $('#ai-settings-clear')?.addEventListener('click', () => {
     clearAiKey();
     $('#ai-key').value = '';
