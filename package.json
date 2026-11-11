@@ -2,7 +2,7 @@
   "name": "my-reader",
   "private": true,
   "version": "1.0.0",
-  "description": "我的书房：离线电子书阅读器，网页版与 Android 安装包共用同一套界面。",
+  "description": "我的书房：离线电子书阅读，以及可积累、可理解的个人知识工作台。",
   "scripts": {
     "sync:www": "node scripts/sync-www.mjs",
     "cap:sync": "npm run sync:www && cap sync android",
