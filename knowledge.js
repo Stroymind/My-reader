@@ -1,5 +1,6 @@
 // 知识库：笔记、标签、笔记之间的关联。划线仍记在书上，这里做一份可编辑的投影。
 import { db } from './db.js';
+import { removeFromStacks } from './stacks.js';
 
 const STOP = new Set(('的 了 和 与 或 在 是 我 你 他 她 它 这 那 就 也 都 而 及 被 把 从 对 以 并 其 等 不 没 很 又 还 但 却 吧 吗 呢 啊 着 过 地 得 一个 我们 他们 她们 没有 不是 可以 这个 那个 因为 所以 如果 但是 然后 已经 还是 什么 怎么 自己 以及 或者 一些 进行 通过 这样 那种 一种 这些 那些 它们 就是 不是 不会 不能 这个 这里 那里 时候 开始 出来 起来 下去 the and that with from this have were been your into about there their which would could should').split(/\s+/));
 
@@ -262,7 +263,7 @@ export function deleteBookBundle(bookId) {
         t.objectStore('files').delete(bookId);
       };
     };
-  });
+  }).then(() => { removeFromStacks([bookId]); });
 }
 
 export async function backfillFromBooks() {

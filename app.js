@@ -5,6 +5,7 @@ import { EpubEngine, PdfEngine, TxtEngine } from './engines.js';
 import { settings, saveSettings, applyBodyTheme, applyAppearance, cycleAppearance, FONTS, THEMES } from './settings.js';
 import { isMostlyCjk, translateVisible } from './bilingual.js';
 import { backfillFromBooks, deleteBookBundle, parseTags, syncBook } from './knowledge.js';
+import { addToStack, createStack, defaultStackName, dissolveStack, getStack, listStacks, reconcileStacks, removeFromStacks, renameStack, setStackCollapsed } from './stacks.js';
 import { dismissAssistant, initWorkspace, openAssistant, refreshWorkspace, showPane, workspaceHandleBack } from './workspace.js';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = './vendor/pdf.worker.min.mjs';
@@ -36,10 +37,16 @@ async function copyText(text) {
   } catch { return false; }
 }
 
-/* ---------------- 书架 ---------------- */
+/* ---------------- 书架：整宽列表 + 手动卡片堆 ---------------- */
 const picked = new Set();
 let viewGen = 0;
 const SORTS = ['recent', 'added', 'title'];
+// 搜索时临时展开 / 收起的卡片堆；清空搜索后丢弃，不改保存的收起状态。
+const searchOpen = new Map();
+let lastQuery = '';
+let shelfOrder = [];
+let shelfMemory = null;
+let stackDialog = null;
 
 function recentKey(b) { return b.lastOpened > 0 ? b.lastOpened : 0; }
 function currentSort() {
@@ -48,11 +55,11 @@ function currentSort() {
 }
 function sortBooks(list, sort) {
   list.sort((a, b) => {
-    if (sort === 'title') return (a.title || '').localeCompare(b.title || '', 'zh');
-    if (sort === 'added') return (b.addedAt || 0) - (a.addedAt || 0);
-    const byRead = recentKey(b) - recentKey(a);
-    if (byRead) return byRead;
-    return (b.addedAt || 0) - (a.addedAt || 0);
+    let d;
+    if (sort === 'title') d = (a.title || '').localeCompare(b.title || '', 'zh');
+    else if (sort === 'added') d = (b.addedAt || 0) - (a.addedAt || 0);
+    else d = (recentKey(b) - recentKey(a)) || ((b.addedAt || 0) - (a.addedAt || 0));
+    return d || String(a.id).localeCompare(String(b.id));
   });
 }
 function paintSort() {
@@ -67,6 +74,8 @@ function updateManageBar() {
   const n = picked.size;
   $('#manage-bar').classList.toggle('hidden', n === 0);
   $('#manage-count').textContent = n ? `已选 ${n} 本` : '';
+  const stacked = n > 0 && listStacks().some(s => s.bookIds.some(id => picked.has(id)));
+  $('#btn-unstack-picked').classList.toggle('hidden', !stacked);
 }
 function showShelfPage() { showPane('shelf'); }
 let returnPane = 'shelf';
@@ -114,70 +123,348 @@ function bindShelfBook(el, b) {
   el.addEventListener('contextmenu', e => e.preventDefault());
   el.onclick = () => { if (held) { held = false; return; } openBook(b.id); };
 }
-async function renderLibrary() {
+
+function shelfQuery() { return $('#search').value.trim().toLowerCase(); }
+function bookMatches(b, q) { return (`${b.title || ''} ${b.author || ''}`).toLowerCase().includes(q); }
+function monogram(title) {
+  const ch = Array.from(String(title || '').trim())[0] || '书';
+  return ch.toLocaleUpperCase();
+}
+function node(tag, cls, text) {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text != null) n.textContent = text;
+  return n;
+}
+function coverNode(b, cls) {
+  const t = node('span', cls);
+  t.setAttribute('aria-hidden', 'true');
+  if (b.cover) {
+    if (!coverUrls.has(b.id)) coverUrls.set(b.id, URL.createObjectURL(b.cover));
+    const img = document.createElement('img');
+    img.alt = ''; img.src = coverUrls.get(b.id);
+    t.appendChild(img);
+  } else {
+    const ph = node('span', 'ph', monogram(b.title));
+    ph.style.background = colorFor(b.title || '');
+    t.appendChild(ph);
+  }
+  return t;
+}
+function focusKey() { return document.activeElement?.closest?.('#pane-shelf [data-focus]')?.dataset.focus || null; }
+function findKeyed(attr, key) {
+  if (!key) return null;
+  return [...document.querySelectorAll(`#pane-shelf [${attr}]`)].find(n => n.getAttribute(attr) === key) || null;
+}
+function restoreFocus(key) {
+  const el = findKeyed('data-focus', key);
+  if (el && el.getClientRects().length) el.focus({ preventScroll: true });
+  return el;
+}
+function paneOffset(el) {
+  return el.getBoundingClientRect().top - $('#pane-shelf').getBoundingClientRect().top;
+}
+
+function bookRow(b, stack) {
+  const wrap = node('div', 'row-wrap');
+  wrap.setAttribute('role', 'listitem');
+  wrap.dataset.anchor = 'book:' + b.id;
+  const el = node('button', 'book');
+  el.type = 'button';
+  el.dataset.id = b.id;
+  el.dataset.focus = 'book:' + b.id;
+  const meta = node('span', 'meta');
+  const line = node('span', 'a');
+  if (b.type) line.appendChild(node('span', 'type', String(b.type).toUpperCase()));
+  if (b.author) line.appendChild(node('span', 'by', b.author));
+  const bar = node('span', 'pbar');
+  const fill = document.createElement('i');
+  fill.style.width = Math.round(Math.min(1, Math.max(0, b.progress || 0)) * 100) + '%';
+  bar.appendChild(fill);
+  meta.append(node('span', 't', b.title || '未命名'), line, bar);
+  el.append(coverNode(b, 'thumb'), meta, node('span', 'pct', b.progress ? fmtPct(b.progress) : '未读'));
+  bindShelfBook(el, b);
+  wrap.appendChild(el);
+  if (stack) {
+    const out = node('button', 'row-out', '移出');
+    out.type = 'button';
+    out.dataset.focus = 'out:' + b.id;
+    out.setAttribute('aria-label', `把《${b.title || '未命名'}》移出「${stack.name}」，书不会删除`);
+    out.onclick = () => {
+      removeFromStacks([b.id]);
+      const still = getStack(stack.id);
+      toast(still ? `已移出「${stack.name}」，书还在` : `「${stack.name}」只剩一本，已解散，书都还在`);
+      renderLibrary(still ? { anchor: 'stack:' + stack.id, focus: 'stack:' + stack.id } : { anchor: 'book:' + b.id, focus: 'book:' + b.id });
+    };
+    wrap.appendChild(out);
+  }
+  return wrap;
+}
+
+function stackBlock(s, members, shown, open, q) {
+  const sec = node('section', 'stack ' + (open ? 'is-open' : 'is-collapsed'));
+  sec.setAttribute('role', 'listitem');
+  sec.dataset.stack = s.id;
+  sec.dataset.anchor = 'stack:' + s.id;
+  const card = node('div', 'stack-card');
+  const head = node('button', 'stack-head');
+  head.type = 'button';
+  head.id = 'stack-head-' + s.id;
+  head.dataset.focus = 'stack:' + s.id;
+  head.setAttribute('aria-expanded', open ? 'true' : 'false');
+  head.setAttribute('aria-controls', 'stack-items-' + s.id);
+  head.setAttribute('aria-describedby', 'stack-preview-' + s.id);
+  const covers = node('span', 'stack-covers');
+  covers.setAttribute('aria-hidden', 'true');
+  for (const m of members.slice(0, 3)) covers.appendChild(coverNode(m, 'mini'));
+  const text = node('span', 'stack-text');
+  const partial = q && shown.length < members.length;
+  text.appendChild(node('span', 'stack-kicker', partial ? `卡片堆 · ${shown.length} 本匹配` : '卡片堆'));
+  text.appendChild(node('span', 'stack-name', s.name));
+  const titles = shown.slice(0, 3).map(m => m.title || '未命名');
+  const preview = node('span', 'stack-preview', titles.join(' · ') + (shown.length > 3 ? ` 等 ${shown.length} 本` : ''));
+  preview.id = 'stack-preview-' + s.id;
+  text.appendChild(preview);
+  const side = node('span', 'stack-side');
+  const count = node('span', 'stack-count', String(members.length));
+  count.setAttribute('aria-hidden', 'true');
+  side.appendChild(count);
+  side.insertAdjacentHTML('beforeend', '<svg class="stack-chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg>');
+  head.append(covers, text, side);
+  head.setAttribute('aria-label', `卡片堆「${s.name}」，${members.length} 本`);
+  head.onclick = () => toggleStack(s.id, !open);
+  card.appendChild(head);
+
+  const items = node('div', 'stack-items');
+  items.id = 'stack-items-' + s.id;
+  items.setAttribute('role', 'list');
+  items.setAttribute('aria-labelledby', head.id);
+  items.hidden = !open;
+  if (open) {
+    const tools = node('div', 'stack-tools');
+    tools.setAttribute('role', 'group');
+    tools.setAttribute('aria-label', `「${s.name}」的操作`);
+    const tool = (label, key, fn, cls = '') => {
+      const b = node('button', cls, label);
+      b.type = 'button';
+      b.dataset.focus = key + ':' + s.id;
+      b.onclick = fn;
+      tools.appendChild(b);
+      return b;
+    };
+    const collapse = tool('收起', 'collapse', () => toggleStack(s.id, false), 'stack-collapse');
+    collapse.setAttribute('aria-controls', items.id);
+    tool('重命名', 'rename', () => openStackDialog({ mode: 'rename', stackId: s.id, returnFocus: 'rename:' + s.id }), 'stack-rename');
+    tool('解散', 'ungroup', () => {
+      dissolveStack(s.id);
+      toast(`已解散「${s.name}」，${members.length} 本书都还在`);
+      const first = members[0]?.id;
+      renderLibrary({ anchor: first ? 'book:' + first : null, focus: first ? 'book:' + first : null });
+    }, 'stack-ungroup danger');
+    card.appendChild(tools);
+    for (const m of shown) items.appendChild(bookRow(m, s));
+    if (partial) items.appendChild(node('p', 'stack-more', `另有 ${members.length - shown.length} 本不匹配当前搜索`));
+  }
+  sec.append(card, items);
+  return sec;
+}
+
+function toggleStack(id, open) {
+  if (shelfQuery()) searchOpen.set(id, open);
+  else setStackCollapsed(id, !open);
+  return renderLibrary({ anchor: 'stack:' + id, focus: 'stack:' + id });
+}
+
+async function renderLibrary(opts = {}) {
+  if (!opts || opts instanceof Event) opts = {};
   const books = await db.all('books');
-  const q = $('#search').value.trim().toLowerCase();
+  const live = new Set(books.map(b => b.id));
+  for (const id of [...picked]) if (!live.has(id)) picked.delete(id);
+  const stacks = reconcileStacks(live);
+  const raw = $('#search').value.trim();
+  const q = raw.toLowerCase();
+  if (q !== lastQuery) { searchOpen.clear(); lastQuery = q; }
   const sort = currentSort();
-  const list = books.filter(b => !q || (b.title + ' ' + b.author).toLowerCase().includes(q));
-  sortBooks(list, sort);
+  const sorted = books.slice();
+  sortBooks(sorted, sort);
+  shelfOrder = sorted.map(b => b.id);
+  const stackByBook = new Map();
+  for (const s of stacks) for (const id of s.bookIds) stackByBook.set(id, s);
+
+  const pane = $('#pane-shelf');
+  const focus = opts.focus !== undefined ? opts.focus : focusKey();
+  const anchorEl = findKeyed('data-anchor', opts.anchor);
+  const anchorTop = anchorEl ? paneOffset(anchorEl) : null;
+
+  const frag = document.createDocumentFragment();
+  const seen = new Set();
+  let shownCount = 0;
+  for (const b of sorted) {
+    const s = stackByBook.get(b.id);
+    if (!s) {
+      if (q && !bookMatches(b, q)) continue;
+      frag.appendChild(bookRow(b, null));
+      shownCount++;
+      continue;
+    }
+    if (seen.has(s.id)) continue;
+    seen.add(s.id);
+    const members = sorted.filter(x => stackByBook.get(x.id) === s);
+    const nameHit = q && s.name.toLowerCase().includes(q);
+    const shown = !q || nameHit ? members : members.filter(m => bookMatches(m, q));
+    if (!shown.length) continue;
+    const open = q ? (searchOpen.has(s.id) ? searchOpen.get(s.id) : true) : !s.collapsed;
+    frag.appendChild(stackBlock(s, members, shown, open, q));
+    shownCount += shown.length;
+  }
+  $('#grid').replaceChildren(frag);
+
   $('#empty').classList.toggle('hidden', books.length > 0);
-  $('#no-match').classList.toggle('hidden', !q || list.length > 0 || books.length === 0);
+  $('#no-match').classList.toggle('hidden', !q || shownCount > 0 || books.length === 0);
   const chip = $('#search-chip');
   chip.classList.toggle('hidden', !q);
-  chip.textContent = q ? `搜索「${$('#search').value.trim()}」 · 清除` : '';
-  const grid = $('#grid'); grid.replaceChildren();
-  const desk = $('#desk-list'); desk.replaceChildren();
-  for (const b of list) {
-    const el = document.createElement('button');
-    el.type = 'button';
-    el.className = 'book';
-    el.dataset.id = b.id;
-    let coverHtml;
-    if (b.cover) { if (!coverUrls.has(b.id)) coverUrls.set(b.id, URL.createObjectURL(b.cover)); coverHtml = `<img alt="" src="${coverUrls.get(b.id)}">`; }
-    else coverHtml = `<div class="ph" style="background:${colorFor(b.title)}"></div>`;
-    el.innerHTML = `<div class="thumb">${coverHtml}</div><div class="meta"><div class="t"></div><div class="a"></div><span class="type"></span><div class="pbar"><i style="width:${Math.round((b.progress || 0) * 100)}%"></i></div></div>`;
-    el.querySelector('.t').textContent = b.title;
-    el.querySelector('.a').textContent = [b.author, b.progress ? fmtPct(b.progress) : ''].filter(Boolean).join(' · ');
-    el.querySelector('.type').textContent = (b.type || '').toUpperCase();
-    const ph = el.querySelector('.ph'); if (ph) ph.textContent = (b.title || '').slice(0, 4);
-    bindShelfBook(el, b);
-    grid.appendChild(el);
+  chip.textContent = q ? `搜索「${raw}」 · 清除` : '';
 
-    const row = document.createElement('button');
+  const desk = $('#desk-list');
+  const deskFrag = document.createDocumentFragment();
+  for (const b of sorted) {
+    const s = stackByBook.get(b.id);
+    if (q && !bookMatches(b, q) && !(s?.name || '').toLowerCase().includes(q)) continue;
+    const row = node('button', 'desk-book' + (picked.has(b.id) ? ' picked' : ''));
     row.type = 'button';
-    row.className = 'desk-book' + (picked.has(b.id) ? ' picked' : '');
-    row.innerHTML = `<span class="tick">✓</span><span class="nm"><b></b><small></small></span>`;
+    row.dataset.focus = 'pick:' + b.id;
+    row.dataset.id = b.id;
+    row.setAttribute('aria-pressed', picked.has(b.id) ? 'true' : 'false');
+    row.innerHTML = `<span class="tick" aria-hidden="true">✓</span><span class="nm"><b></b><small></small></span>`;
     row.querySelector('b').textContent = b.title;
-    row.querySelector('small').textContent = [b.author, b.progress ? fmtPct(b.progress) : ''].filter(Boolean).join(' · ');
+    row.querySelector('small').textContent = [b.author, b.progress ? fmtPct(b.progress) : '', s ? `卡片堆「${s.name}」` : ''].filter(Boolean).join(' · ');
     row.onclick = () => {
       if (picked.has(b.id)) picked.delete(b.id); else picked.add(b.id);
       row.classList.toggle('picked', picked.has(b.id));
+      row.setAttribute('aria-pressed', picked.has(b.id) ? 'true' : 'false');
       updateManageBar();
     };
-    desk.appendChild(row);
+    deskFrag.appendChild(row);
   }
-  if (!list.length && q) desk.appendChild(Object.assign(document.createElement('p'), { className: 'desk-note', textContent: '没有匹配的书' }));
-  if (navigator.storage?.estimate) {
-    const e = await navigator.storage.estimate();
-    $('#storage-info').textContent = books.length ? `共 ${books.length} 本 · 已用空间 ${(e.usage / 1048576).toFixed(0)} MB` : '';
+  if (!deskFrag.childNodes.length && q) deskFrag.appendChild(node('p', 'desk-note', '没有匹配的书'));
+  desk.replaceChildren(deskFrag);
+
+  if (opts.restore) {
+    pane.scrollTop = opts.restore.scroll || 0;
+    restoreFocus(opts.restore.focus);
+  } else {
+    if (anchorTop != null) {
+      const now = findKeyed('data-anchor', opts.anchor);
+      if (now) pane.scrollTop += paneOffset(now) - anchorTop;
+    }
+    const el = restoreFocus(focus);
+    if (opts.reveal && el) el.scrollIntoView({ block: 'nearest', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
   }
+
   const sub = $('#shelf-sub');
-  if (sub) sub.textContent = books.length ? `共 ${books.length} 本 · 只保存在这台设备` : '';
+  if (sub) sub.textContent = books.length ? [`共 ${books.length} 本`, stacks.length ? `${stacks.length} 个卡片堆` : '', '只保存在这台设备'].filter(Boolean).join(' · ') : '';
   $('#desk-block')?.classList.toggle('hidden', books.length === 0);
   updateManageBar();
   paintSort();
+  if (navigator.storage?.estimate) {
+    try {
+      const e = await navigator.storage.estimate();
+      $('#storage-info').textContent = books.length ? `共 ${books.length} 本 · 已用空间 ${(e.usage / 1048576).toFixed(0)} MB` : '';
+    } catch {}
+  }
   if (books.length && !localStorage.getItem('rr-hint-panes') && !$('#reader').classList.contains('active')) {
     localStorage.setItem('rr-hint-panes', '1');
     setTimeout(() => toast('划线和摘录会进入「知识」，并可在「图谱」里串起来', 3600), 600);
   }
 }
-$('#search').oninput = renderLibrary;
+
+function pickedInOrder() { return shelfOrder.filter(id => picked.has(id)); }
+function syncStackDialog() {
+  const pick = stackDialog?.mode === 'pick';
+  const target = pick ? $('#stack-target').value : '';
+  $('#stack-name-field').classList.toggle('hidden', !!target);
+  const n = stackDialog?.ids?.length || 0;
+  $('#stack-save').textContent = pick ? (target ? '加进去' : '组成卡片堆') : '保存';
+  $('#stack-desc').textContent = !pick ? '只改名字，里面的书不变。'
+    : target ? `把所选的 ${n} 本加进这个卡片堆。原来所在的卡片堆会去掉它们。`
+      : `用所选的 ${n} 本组成一个卡片堆。书不会被复制或改动。`;
+}
+function openStackDialog(opts) {
+  const stacks = listStacks();
+  const pick = opts.mode === 'pick';
+  if (pick && opts.ids.length < 2 && !stacks.length) { toast('至少选两本，才能组成卡片堆'); return; }
+  stackDialog = { ...opts, returnFocus: opts.returnFocus || focusKey() };
+  $('#stack-heading').textContent = pick ? '放进卡片堆' : '重命名卡片堆';
+  const sel = $('#stack-target');
+  sel.replaceChildren();
+  $('#stack-target-field').classList.toggle('hidden', !pick || !stacks.length);
+  if (pick) {
+    if (opts.ids.length >= 2) sel.append(new Option('新建卡片堆', ''));
+    for (const s of stacks) sel.append(new Option(`${s.name}（${s.bookIds.length} 本）`, s.id));
+    sel.selectedIndex = 0;
+  }
+  $('#stack-name').value = pick ? defaultStackName(stacks) : (getStack(opts.stackId)?.name || '');
+  syncStackDialog();
+  $('#stack-mask').classList.remove('hidden');
+  setTimeout(() => {
+    const field = $('#stack-name-field').classList.contains('hidden') ? sel : $('#stack-name');
+    field.focus();
+    field.select?.();
+  }, 30);
+}
+function closeStackDialog(refocus = true) {
+  if ($('#stack-mask').classList.contains('hidden')) return false;
+  const back = stackDialog?.returnFocus;
+  $('#stack-mask').classList.add('hidden');
+  stackDialog = null;
+  if (refocus && back) restoreFocus(back);
+  return true;
+}
+$('#stack-target').onchange = syncStackDialog;
+$('#stack-cancel').onclick = () => closeStackDialog();
+$('#stack-mask').addEventListener('click', e => { if (e.target === e.currentTarget) closeStackDialog(); });
+$('#stack-dialog').onsubmit = async e => {
+  e.preventDefault();
+  const d = stackDialog;
+  if (!d) return;
+  if (d.mode === 'rename') {
+    const s = renameStack(d.stackId, $('#stack-name').value);
+    if (!s) { toast('名字不能为空'); return; }
+    closeStackDialog(false);
+    toast(`已改名为「${s.name}」`);
+    await renderLibrary({ anchor: 'stack:' + s.id, focus: 'stack:' + s.id });
+    return;
+  }
+  const target = $('#stack-target').value;
+  let s;
+  if (target) s = addToStack(target, d.ids);
+  else if (d.ids.length < 2) { toast('至少选两本，才能组成卡片堆'); return; }
+  else s = createStack($('#stack-name').value, d.ids);
+  if (!s) { toast('没有放进去，请再试一次'); return; }
+  for (const id of d.ids) picked.delete(id);
+  closeStackDialog(false);
+  toast(target ? `已加进「${s.name}」，共 ${s.bookIds.length} 本` : `已组成「${s.name}」，共 ${s.bookIds.length} 本`);
+  await renderLibrary({ focus: 'stack:' + s.id, reveal: true });
+};
+
+$('#search').oninput = () => renderLibrary();
 $('#search-chip').onclick = () => { $('#search').value = ''; renderLibrary(); };
 document.querySelectorAll('#sort-seg button').forEach(b => b.onclick = () => {
   localStorage.setItem('rr-sort', b.dataset.sort);
   renderLibrary();
 });
 paintSort();
+$('#btn-stack-picked').onclick = () => {
+  const ids = pickedInOrder();
+  openStackDialog({ mode: 'pick', ids, returnFocus: ids.length ? 'pick:' + ids[0] : null });
+};
+$('#btn-unstack-picked').onclick = () => {
+  const ids = pickedInOrder();
+  removeFromStacks(ids);
+  toast(`已把 ${ids.length} 本移出卡片堆，书都还在`);
+  renderLibrary();
+};
+$('#btn-clear-picked').onclick = () => { picked.clear(); renderLibrary(); };
 $('#btn-delete-picked').onclick = async () => {
   const books = await db.all('books');
   await deleteBooks(books.filter(b => picked.has(b.id)));
@@ -234,7 +521,10 @@ async function openBook(id) {
   cur.highlights = cur.highlights || [];
   await rememberReading(id);
   if (gen !== viewGen) return;
-  if ($('#library')?.classList.contains('active')) returnPane = currentPane();
+  if ($('#library')?.classList.contains('active')) {
+    returnPane = currentPane();
+    shelfMemory = { scroll: $('#pane-shelf').scrollTop, focus: focusKey() || 'book:' + id };
+  }
   showView('reader'); setBars(false); exitSelect(); $('#loading').classList.remove('hidden');
   $('#r-title').textContent = rec.title; $('#run-title').textContent = rec.title;
   if (history.state?.reader) history.replaceState({ reader: id }, ''); else history.pushState({ reader: id }, '');
@@ -327,7 +617,8 @@ function closeBook() {
     $('#panel').classList.add('hidden'); $('#note-mask').classList.add('hidden');
     showView('library');
     showPane(returnPane || 'shelf');
-    await renderLibrary();
+    const memory = shelfMemory; shelfMemory = null;
+    await renderLibrary(memory ? { restore: memory } : {});
   })();
   return closing.finally(() => { closing = null; });
 }
@@ -421,7 +712,7 @@ async function bumpSize(delta) {
     }
     if (!engine) return;
     if (e.target.matches('input, textarea, select')) return;
-    const maskOpen = ['#ai-mask', '#note-mask', '#settings-mask', '#lib-panel'].some(sel => {
+    const maskOpen = ['#ai-mask', '#note-mask', '#settings-mask', '#stack-mask', '#lib-panel'].some(sel => {
       const el = document.querySelector(sel);
       return el && !el.classList.contains('hidden');
     });
@@ -715,6 +1006,7 @@ let rz; window.addEventListener('resize', () => { clearTimeout(rz); rz = setTime
 
 function handleBack() {
   if (dismissAssistant()) return true;
+  if (closeStackDialog()) return true;
   if (!$('#note-mask').classList.contains('hidden')) { $('#note-mask').classList.add('hidden'); noteSel = null; return true; }
   if (document.body.classList.contains('selecting')) { exitSelect(); return true; }
   if (!$('#panel').classList.contains('hidden')) { $('#panel').classList.add('hidden'); return true; }
@@ -749,4 +1041,4 @@ if (nativeApp && 'serviceWorker' in navigator) {
   navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadCtrl && !reloaded) { reloaded = true; location.reload(); } });
   navigator.serviceWorker.register('sw.js').catch(() => {});
 }
-window.__app = { db, openBook, closeBook, importFiles, handleBack, get engine() { return engine; }, renderLibrary };
+window.__app = { db, openBook, closeBook, importFiles, handleBack, get engine() { return engine; }, renderLibrary, stacks: { list: listStacks } };

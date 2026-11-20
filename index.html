@@ -102,14 +102,19 @@
         </div>
         <div id="no-match" class="empty hidden"><p>没有匹配的书</p></div>
         <p id="shelf-sub" class="shelf-sub"></p>
-        <div id="grid" class="book-grid"></div>
+        <div id="grid" class="book-list" role="list" aria-label="书库"></div>
         <section id="desk-block" class="desk-block">
           <h2>整理</h2>
-          <p class="desk-note">点一下要删的书。没点到的书保持原样。在封面上长按，也可以直接删一本。</p>
+          <p class="desk-note">点选几本书：两本以上可以放进一个卡片堆，也可以删除所选。卡片堆只是分组，解散或移出都不会删书。在书上长按，也可以直接删一本。</p>
           <div id="desk-list" class="desk-list"></div>
           <div id="manage-bar" class="manage-bar hidden">
-            <span id="manage-count"></span>
-            <button id="btn-delete-picked" type="button">删除所选</button>
+            <span id="manage-count" aria-live="polite"></span>
+            <div class="manage-actions">
+              <button id="btn-stack-picked" class="ghost" type="button">放进卡片堆</button>
+              <button id="btn-unstack-picked" class="ghost hidden" type="button">移出卡片堆</button>
+              <button id="btn-clear-picked" class="ghost" type="button">取消选择</button>
+              <button id="btn-delete-picked" class="danger-btn" type="button">删除所选</button>
+            </div>
           </div>
         </section>
         <footer id="storage-info" class="foot"></footer>
@@ -269,7 +274,19 @@
     </div>
   </form>
 </div>
-<div id="toast" class="toast hidden"></div>
+<div id="stack-mask" class="note-mask hidden">
+  <form id="stack-dialog" class="note-dialog" role="dialog" aria-modal="true" aria-labelledby="stack-heading">
+    <h3 id="stack-heading">放进卡片堆</h3>
+    <p id="stack-desc" class="desk-note"></p>
+    <label id="stack-target-field" class="field">放到<select id="stack-target"></select></label>
+    <label id="stack-name-field" class="field">卡片堆名称<input id="stack-name" type="text" maxlength="40" autocomplete="off" enterkeyhint="done"></label>
+    <div class="note-actions">
+      <button type="button" id="stack-cancel">取消</button>
+      <button type="submit" class="btn primary" id="stack-save">完成</button>
+    </div>
+  </form>
+</div>
+<div id="toast" class="toast hidden" role="status"></div>
 <script type="module" src="app.js"></script>
 </body>
 </html>

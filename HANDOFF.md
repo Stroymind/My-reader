@@ -6,7 +6,7 @@ Updated 2026-11-20. Start here before changing code. Product name: **Zone**, cap
 
 Zone is a **personal knowledge management system**. Reading is an input capability within it, not the whole product. The user explicitly corrected the earlier reader-only positioning. Preserve the existing knowledge workspace instead of restoring the older bookshelf application.
 
-Current authorized work: prepare a complete AI handoff, rename the product to Zone, and submit updates to GitHub. Earlier requests also asked for a usable Android APK. The next visual direction is a full-width, message-list-like content layout with overlapping cards that expand when tapped. The layout is specified below but is NOT implemented by this handoff/branding change.
+Current authorized work: prepare a complete AI handoff, rename the product to Zone, and submit updates to GitHub. Earlier requests also asked for a usable Android APK. The next visual direction is a full-width, message-list-like content layout with overlapping cards that expand when tapped. On 2026-11-20 that layout was implemented for the library pane only (full-width rows plus manual named stacks); see section 3.
 
 The user liked a prior Apple-inspired redesign and recalled it as a Grok bot change. Git history attributes the matching implementation to Cursor Agent; preserve the user's design preference without inventing authorship. The matching commit is `4d1011f` ("Turn the reader into an Apple-style reading and knowledge workspace"). Its subsequent fixes end at `0c0b11b` on `cursor/ai-knowledge-workspace-f314`.
 
@@ -54,7 +54,15 @@ Recommended prototype behavior (a proposal, not existing functionality):
 4. Preserve scroll anchor, selection, search/filter state and focus across expansion and returning from an item.
 5. Use keyboard-operable buttons, `aria-expanded` and reduced-motion behavior. Do not make hover the only way to access controls.
 
-Still undecided: stack membership rules, manual grouping versus automatic grouping, naming, expansion persistence, item types in a shared list, and desktop content maximum width. Use reversible sample data for a prototype; resolve grouping before persisting a new data model.
+Implemented on 2026-11-20 (library pane `#pane-shelf` only):
+
+- `#grid.book-list` is a single-column list of full-width rows (cover or monogram, unclipped title, type/author, progress). Long-press delete and the 整理 selection flow still work.
+- Grouping is **manual**: select books in 整理, then 放进卡片堆 (new named stack or add to an existing one); 移出卡片堆, per-row 移出, 重命名, 解散 and 收起 never delete books. One book belongs to at most one stack; a stack left with fewer than two books dissolves itself.
+- Stacks live in localStorage `rr-stacks` (`{v:1,stacks:[{id,name,bookIds,collapsed,createdAt}]}`) via `stacks.js`. IndexedDB `shufang` v3 and book records are untouched. `deleteBookBundle` removes the deleted id after its transaction; `renderLibrary` also reconciles against live book ids.
+- Collapsed/expanded state is saved per stack. While searching, matching stacks open temporarily (only matching members shown); clearing search restores the saved state.
+- Notes and excerpts are not mixed into this list. Desktop width is not capped.
+
+Still undecided: automatic grouping, whether notes/excerpts join a shared feed, and a desktop maximum width.
 
 Current Apple-inspired tokens are real source references, not a claim to reproduce Apple's proprietary UI: system font stack; light shell background `#f5f5f7`; dark shell `#000`; accents `#007aff` / `#0a84ff`; translucent cards/toolbars; subtle borders; radius and shadow hierarchy; motion curve `cubic-bezier(.22,.8,.24,1)`. See `app.css` root variables and `.appearance-dark`. Shell light/dark/system appearance is separate from reading paper/white/sepia/night themes; preserve that separation.
 
@@ -83,7 +91,7 @@ Source inspection confirms these implementations; do not confuse inspection with
 - Separate application appearance and reading theme; responsive workspace navigation.
 - Bilingual page translation and local translation cache.
 
-Not complete according to code/README: full writing/decision workspace, streaming AI output, multiple provider presets, robust semantic concept extraction, cloud sync and graph scaling for large datasets. The new overlapping-card interaction is pending. Continuous cross-chapter scrolling and the older local reader test results require a separate integration pass.
+Not complete according to code/README: full writing/decision workspace, streaming AI output, multiple provider presets, robust semantic concept extraction, cloud sync and graph scaling for large datasets. The overlapping-card list exists for the library pane only (section 3). Continuous cross-chapter scrolling and the older local reader test results require a separate integration pass.
 
 ## 5. Architecture map
 
@@ -105,6 +113,7 @@ Vanilla JavaScript ES modules + HTML/CSS, offline PWA, Capacitor 8.6.0 Android w
 | `importer.js` | File/ZIP import, format detection, deduplication, metadata and migration manifests |
 | `db.js` | IndexedDB version 3, transaction wrappers and cross-store `run` |
 | `settings.js` | Reading settings plus shell appearance |
+| `stacks.js` | Manual library stacks in localStorage `rr-stacks`; create/rename/add/remove/dissolve/reconcile |
 | `sw.js` | Offline shell version and precached modules |
 | `scripts/sync-www.mjs` | Explicit files/directories copied to generated `www/` |
 | `scripts/smoke.mjs` | Inherited reader smoke script; environment limitations below |
@@ -125,9 +134,9 @@ Notes: `id`, `title`, `body`, `quote`, `tags`, nullable `bookId`/`passageId`, `b
 - `deleteNote` removes its linked source highlight when applicable and cleans adjacent links.
 - `deleteBookBundle` coordinates book-related deletion. Preserve its cross-store transaction instead of separate partial deletes.
 - Use `db.update` for concurrent-safe record patches and `db.run` where cross-store transactions are needed.
-- Do not overwrite book records to store list-only expansion state. Define grouping and migration before changing the schema.
+- Do not overwrite book records to store list-only expansion state. Library stacks and their expansion state live in `rr-stacks` (see section 3).
 
-Local settings: `rr-settings` (reading), `rr-appearance` (light/dark/system), `rr-ai` (provider base URL/model/key). Inspect other keys in source before changing them. API keys are stored locally in plain localStorage, not encrypted. Never print real user keys in tests, logs, screenshots or commits.
+Local settings: `rr-settings` (reading), `rr-appearance` (light/dark/system), `rr-ai` (provider base URL/model/key), `rr-stacks` (manual library stacks), `rr-sort` (library sort). Inspect other keys in source before changing them. API keys are stored locally in plain localStorage, not encrypted. Never print real user keys in tests, logs, screenshots or commits.
 
 EPUB uses CFI-style locations; PDF uses page positions; text uses its engine-specific chapter/page coordinates. Preserve these contracts for bookmarks, highlights and source navigation. Font/mode changes require passage-preservation tests, not just screenshots.
 
@@ -163,13 +172,15 @@ Linux/macOS: `./gradlew`. APK output: `android/app/build/outputs/apk/release/app
 
 Identity remains `io.github.stroymind.myreader`, minimum API 24. Preserve the existing sideload signing certificate to allow upgrades retaining data. The repository key is public and is not a private app-store signing identity. Verify version, label, signature, non-debuggable flag and packaged assets before delivery.
 
-`scripts/sync-www.mjs` includes `bilingual.js`, `epub-repair.js`, `knowledge.js`, `ai.js`, `workspace.js`. Keep both sync and service-worker lists current when adding modules. Missing modules can produce an APK that installs but opens blank.
+`scripts/sync-www.mjs` includes `bilingual.js`, `epub-repair.js`, `knowledge.js`, `ai.js`, `workspace.js`, `stacks.js` (also precached by `sw.js`, cache `zone-1.3.0-list1`). Keep both sync and service-worker lists current when adding modules. Missing modules can produce an APK that installs but opens blank.
 
 CI uploads `zone-android` containing `zone.apk`. The release job checks for tags, but the inherited workflow does not declare tag push triggers. Do not claim a main push automatically creates a GitHub Release.
 
 Inherited test limitation: `npm run test:smoke` uses Linux Chrome/Python assumptions and `/opt/cursor/artifacts` screenshots and predates parts of the workspace UI. It is not a complete Zone acceptance suite. There is no `npm test` script on the knowledge baseline. Port affected checks deliberately; do not copy the older reader suite and claim coverage of notes/graph/AI.
 
 This handoff adds `npm run test:zone` using `scripts/zone-smoke.mjs` and `scripts/browser-support.mjs`. It discovers a local Chrome/Edge executable (or `CHROME_PATH`), serves an isolated local origin and blocks external requests. Run it after `npm ci`; it writes ignored `test-results/zone-verification.json` and a screenshot. It passed on Windows / Chrome 157.0.8103.79: startup branding, note/tag reload, automatic links, pair deduplication/unlink/deletion, list/graph rendering, AI settings closure, no horizontal overflow at 390/1100 px and offline shell reload. No live model call or physical Android interaction was tested.
+
+On 2026-11-20 `test:zone` was extended (16 checks, passed on Windows / Chrome 157.0.8103.79, zero page errors, zero external requests) with synthetic books: full-width single-column rows with unclipped mixed-language titles; creating a named stack through 整理; collapsed `aria-expanded=false` with non-colliding front card and offset layers; tap to expand in place (`aria-expanded=true`) with independent row hit areas, kept focus and header anchor; rename, per-row 移出, 收起; search showing a member of a collapsed stack without changing its saved state; opening a TXT from an expanded stack and returning with search/expansion/focus kept; deletion via 整理 and `deleteBookBundle` cleaning stack membership; ungroup keeping books; no horizontal overflow at 390/1100 px in both states. Not tested: real EPUB covers, very long lists, large system text, screen readers, physical Android gestures and APK rebuild.
 
 Required verification for future changes:
 
