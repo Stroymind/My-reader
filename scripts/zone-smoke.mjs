@@ -43,6 +43,28 @@ try {
   assert.equal(chrome.shelfWords, false); assert.equal(chrome.findHidden, true);
   report.checks.push('Full-screen shell: no marketing chrome, no 整理 block, header has only search and + controls, nav reads 流 · 知识 · 星海');
 
+  const canvasInk = sel => page.evaluate(s => {
+    const c = document.querySelector(s);
+    const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+    let lit = 0;
+    for (let i = 3; i < d.length; i += 4) if (d[i] > 20 && d[i - 3] + d[i - 2] + d[i - 1] > 150) lit++;
+    return lit;
+  }, sel);
+  await page.evaluate(async () => { const w = await import('./workspace.js'); w.showPane('graph'); });
+  await page.waitForFunction(() => document.querySelector('#library').classList.contains('cosmos-on') && !document.querySelector('#graph-empty').classList.contains('hidden'));
+  await sleep(500);
+  const emptySky = await page.evaluate(() => ({
+    text: document.querySelector('#graph-empty p').textContent,
+    stats: document.querySelector('#cosmos-stats').textContent,
+    appbar: getComputedStyle(document.querySelector('.appbar')).display
+  }));
+  assert.deepEqual(emptySky, { text: '星海尚未点亮', stats: '0 星体 · 0 航线 · 0 星域', appbar: 'none' });
+  assert.ok(await canvasInk('#graph-map') > 10, 'empty cosmos still draws a single beacon');
+  assert.ok(await canvasInk('#graph-sky') > 20, 'empty cosmos still draws the starfield');
+  await page.evaluate(async () => { const w = await import('./workspace.js'); w.showPane('shelf'); });
+  assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('.appbar')).display), 'block');
+  report.checks.push('Empty 星海 renders the starfield, one gentle beacon and 星海尚未点亮; header returns on other panes');
+
   const ids = await page.evaluate(async () => {
     const k = await import('./knowledge.js');
     const a = await k.createNote({ title: 'Zone test A', body: 'Synthetic local note.', tags: ['test'] });
@@ -454,6 +476,169 @@ try {
     }
   }
   report.checks.push('Stream and stacks (collapsed and expanded) have no horizontal overflow at 390 px; desktop 1100 px uses a centered ~760 px measure aligned with the title');
+  await page.setViewport({ width: 390, height: 844, isMobile: true, hasTouch: true });
+
+  // ---- 星海 deep-space knowledge atlas ----
+  const cosmosIds = await page.evaluate(async () => {
+    const k = await import('./knowledge.js');
+    const mk = (title, tags, extra = {}) => k.createNote({ title, body: `${title}：只在本机测试里使用的合成笔记。`, tags, ...extra });
+    const a = await mk('注意力是稀缺资源', ['认知']);
+    const b = await mk('元认知', ['认知'], { concept: true });
+    const c = await mk('深度工作的节奏', ['认知']);
+    const d = await mk('卡片写作 Zettelkasten', ['写作']);
+    const e = await mk('每天写三百字', ['写作'], { body: '## 问题\n\n## 手里的材料\n\n## 判断\n坚持比灵感更可靠。', bookId: 'z-x', passageId: 'p-x', bookTitle: '合成样书' });
+    const f = await mk('反馈回路', ['系统']);
+    const g = await mk('杠杆点', ['系统']);
+    const lone = await mk('一个还没连接的念头', []);
+    await k.linkNotes(a.id, b.id); await k.linkNotes(b.id, c.id); await k.linkNotes(a.id, d.id); await k.linkNotes(f.id, g.id);
+    const w = await import('./workspace.js');
+    await w.refreshWorkspace();
+    w.showPane('graph');
+    return { a: a.id, b: b.id, d: d.id, e: e.id, lone: lone.id };
+  });
+  await page.waitForFunction(() => document.querySelectorAll('#graph-world .gnode').length === 9);
+  await sleep(900);
+  const atlas = await page.evaluate(() => {
+    const stage = document.querySelector('#graph-stage').getBoundingClientRect();
+    const pills = [...document.querySelectorAll('.cosmos-hud .hud-pill')].map(p => p.getBoundingClientRect());
+    return {
+      stats: document.querySelector('#cosmos-stats').textContent,
+      appbar: getComputedStyle(document.querySelector('.appbar')).display,
+      fullBleed: stage.top <= 1 && stage.left <= 1 && Math.abs(stage.width - innerWidth) < 1 && Math.abs(stage.height - innerHeight) < 2,
+      beacons: document.querySelectorAll('#graph-world .gnode.mag-beacon').length,
+      faint: document.querySelectorAll('#graph-world .gnode.mag-faint').length,
+      emptyHidden: document.querySelector('#graph-empty').classList.contains('hidden'),
+      buttons: [...document.querySelectorAll('#graph-world .gnode')].every(b => b.tagName === 'BUTTON' && b.getAttribute('aria-label')),
+      hudInView: pills.every(r => r.left >= 0 && r.right <= innerWidth && r.top >= 0),
+      hudApart: pills[0].right <= pills[1].left || pills[0].bottom <= pills[1].top,
+      lod: [...document.querySelector('#graph-stage').classList].find(c => c.startsWith('lod-'))
+    };
+  });
+  assert.equal(atlas.stats, '9 星体 · 4 航线 · 3 星域');
+  assert.equal(atlas.appbar, 'none'); assert.equal(atlas.fullBleed, true);
+  assert.ok(atlas.beacons >= 2, 'linked/concept notes become primary stars'); assert.equal(atlas.faint, 2);
+  assert.equal(atlas.emptyHidden, true); assert.equal(atlas.buttons, true);
+  assert.equal(atlas.hudInView, true); assert.equal(atlas.hudApart, true); assert.ok(atlas.lod);
+  assert.ok(await canvasInk('#graph-map') > 300, 'nebulae, lanes and stars are painted');
+  assert.ok(await canvasInk('#graph-sky') > 40, 'starfield is painted');
+  const stable = await page.evaluate(async () => {
+    const { layoutCosmos } = await import('./cosmos.js');
+    const k = await import('./knowledge.js');
+    const notes = await k.listNotes(), links = await k.listLinks();
+    const pos = m => m.stars.map(s => `${s.id}@${s.x},${s.y}:${s.sector}`).sort().join('|');
+    const one = layoutCosmos(notes, links), two = layoutCosmos(notes.slice().reverse(), links.slice().reverse());
+    return { same: pos(one) === pos(two), sectors: one.sectors.map(s => s.name).sort() };
+  });
+  assert.equal(stable.same, true, 'star positions are deterministic');
+  assert.deepEqual(stable.sectors, ['写作', '未测绘暗域', '认知', '系统'].sort());
+  await page.screenshot({ path: path.resolve(root, 'test-results/zone-cosmos-mobile.png') });
+  report.checks.push('星海 full-bleed atlas: 9 stars in 3 deterministic sectors + 未测绘暗域, beacons and frontier stars, painted nebulae/lanes/starfield, floating HUD without header');
+
+  await page.click(`#graph-world .gnode[data-id="${cosmosIds.a}"] .gdot`);
+  await page.waitForFunction(() => !document.querySelector('#graph-card').classList.contains('hidden'));
+  await sleep(700);
+  const card = await page.evaluate(() => {
+    const c = document.querySelector('#graph-card'), tab = document.querySelector('.tabbar').getBoundingClientRect();
+    return {
+      cls: c.querySelector('.gc-class').textContent, title: c.querySelector('.gc-title').textContent,
+      actions: [...c.querySelectorAll('.gc-actions button')].map(b => b.textContent),
+      close: !!c.querySelector('.gc-close'), links: c.querySelector('.gc-links').textContent,
+      on: document.querySelector('#graph-world .gnode.on')?.dataset.id,
+      dim: document.querySelectorAll('#graph-world .gnode.dim').length,
+      above: c.getBoundingClientRect().bottom <= tab.top + 0.5,
+      inView: c.getBoundingClientRect().left >= 0 && c.getBoundingClientRect().right <= innerWidth
+    };
+  });
+  assert.ok(card.cls.startsWith('主星') && card.cls.includes('认知'), JSON.stringify(card));
+  assert.equal(card.title, '注意力是稀缺资源'); assert.deepEqual(card.actions, ['编辑', '聚焦邻域', '问 AI']);
+  assert.equal(card.close, true); assert.equal(card.links, '2 条航线'); assert.equal(card.on, cosmosIds.a);
+  assert.equal(card.dim, 5); assert.equal(card.above, true); assert.equal(card.inView, true);
+  await page.click('#graph-card .gc-actions button:nth-child(2)');
+  await sleep(800);
+  await page.click('#graph-card .gc-actions button:nth-child(3)');
+  await page.waitForFunction(() => !document.querySelector('#ai-mask').classList.contains('hidden'));
+  await page.click('#ai-close');
+  await page.waitForFunction(() => document.querySelector('#ai-mask').classList.contains('hidden'));
+  report.checks.push('Tapping a star opens the dark-glass telemetry card (class, sector, links, 编辑/聚焦邻域/问 AI/关闭) above the nav; neighbourhood ignites, others recede');
+
+  await page.click('#graph-search-toggle');
+  assert.equal(await page.$eval('#graph-search-row', el => !el.hidden), true);
+  await page.type('#graph-search', 'Zettel');
+  await page.waitForFunction(() => document.querySelector('#graph-card .gc-title')?.textContent === '卡片写作 Zettelkasten');
+  await page.$eval('#graph-search', el => { el.value = '每天'; el.dispatchEvent(new Event('input', { bubbles: true })); });
+  await page.waitForFunction(() => document.querySelector('#graph-card .gc-title')?.textContent === '每天写三百字');
+  assert.deepEqual(await page.$$eval('#graph-card .gc-actions button', bs => bs.map(b => b.textContent)), ['编辑', '跃迁原文', '聚焦邻域', '问 AI']);
+  await page.$eval('#graph-search', el => { el.value = ''; el.dispatchEvent(new Event('input', { bubbles: true })); });
+  await page.waitForFunction(() => document.querySelector('#graph-card').classList.contains('hidden'));
+  await page.click('#graph-search-toggle');
+  assert.equal(await page.$eval('#graph-search-row', el => el.hidden), true);
+  report.checks.push('星海 search reveals on demand, flies to matching stars (title) and offers 跃迁原文 for sourced notes');
+
+  await page.click('#graph-reset');
+  await sleep(900);
+  const sample = () => page.$eval(`#graph-world .gnode[data-id="${cosmosIds.lone}"]`, el => el.style.transform);
+  const t0 = await sample();
+  const spot = await page.evaluate(() => {
+    for (const [x, y] of [[40, 420], [350, 420], [195, 160], [60, 600], [330, 640], [195, 520]]) {
+      const el = document.elementFromPoint(x, y);
+      if (el && el.closest('#graph-stage') && !el.closest('.gnode')) return { x, y };
+    }
+    return null;
+  });
+  assert.ok(spot, 'found empty space to drag');
+  await page.mouse.move(spot.x, spot.y); await page.mouse.down(); await page.mouse.move(spot.x + 60, spot.y + 40, { steps: 6 }); await page.mouse.up();
+  assert.notEqual(await sample(), t0, 'single-pointer drag pans the map');
+  await page.mouse.move(195, 420);
+  await page.mouse.wheel({ deltaY: -700 });
+  await page.waitForFunction(() => document.querySelector('#graph-stage').classList.contains('lod-near'));
+  assert.equal(await page.$$eval('#graph-world .gnode .gk', ks => ks.some(k => getComputedStyle(k).display === 'block')), true);
+  await page.click('#graph-out'); await page.click('#graph-in');
+  await page.click('#graph-reset');
+  await sleep(900);
+  report.checks.push('Drag pans, wheel zoom reaches near LOD (star kinds appear), −/+/适应 controls work');
+
+  await page.click('#graph-tilt');
+  await sleep(1200);
+  const tilt = await page.evaluate(() => {
+    const stage = document.querySelector('#graph-stage');
+    const beacon = document.querySelector('#graph-world .gnode.mag-beacon .gstem');
+    return {
+      on: stage.classList.contains('tilt'), pressed: document.querySelector('#graph-tilt').getAttribute('aria-pressed'),
+      plane: getComputedStyle(document.querySelector('#graph-plane')).transform,
+      stem: beacon.getBoundingClientRect().height
+    };
+  });
+  assert.equal(tilt.on, true); assert.equal(tilt.pressed, 'true');
+  assert.ok(tilt.plane.startsWith('matrix3d'), 'plane is tilted in 3D'); assert.ok(tilt.stem > 20, 'beacons rise on light stems');
+  const bp = await page.$eval(`#graph-world .gnode[data-id="${cosmosIds.b}"] .gdot`, el => { const r = el.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2, hit: document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2) === el }; });
+  assert.equal(bp.hit, true, '3D hit-testing reaches the tilted star');
+  await page.mouse.click(bp.x, bp.y);
+  await page.waitForFunction(() => document.querySelector('#graph-card .gc-title')?.textContent === '元认知');
+  assert.ok((await page.$eval('#graph-card .gc-class', el => el.textContent)).startsWith('主星'));
+  await sleep(900);
+  await page.screenshot({ path: path.resolve(root, 'test-results/zone-cosmos-25d.png') });
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => document.querySelector('#graph-card').classList.contains('hidden'));
+  await page.click('#graph-tilt');
+  await sleep(1100);
+  assert.equal(await page.$eval('#graph-stage', el => el.classList.contains('tilt')), false);
+  report.checks.push('2.5D toggle tilts the map plane in CSS 3D with beacon light-stems; tapping a star in 2.5D still opens its card; Escape closes it');
+
+  await page.setViewport({ width: 1100, height: 844 });
+  await page.waitForFunction(() => window.__app);
+  await page.evaluate(async () => { const w = await import('./workspace.js'); await w.refreshWorkspace(); w.showPane('graph'); });
+  await page.waitForFunction(() => document.querySelectorAll('#graph-world .gnode').length === 9 && document.querySelector('#pane-graph').classList.contains('on'));
+  await sleep(300);
+  await page.click('#graph-reset');
+  await sleep(1100);
+  const wide = await page.evaluate(() => ({
+    doc: document.documentElement.scrollWidth > innerWidth,
+    stage: Math.abs(document.querySelector('#graph-stage').getBoundingClientRect().width - innerWidth) < 1,
+    inView: [...document.querySelectorAll('#graph-world .gnode .gdot')].every(d => { const r = d.getBoundingClientRect(); return r.left >= -1 && r.right <= innerWidth + 1 && r.top >= -1 && r.bottom <= innerHeight + 1; })
+  }));
+  assert.deepEqual(wide, { doc: false, stage: true, inView: true });
+  await page.screenshot({ path: path.resolve(root, 'test-results/zone-cosmos-desktop.png') });
+  report.checks.push('Desktop 1100 px panorama: edge-to-edge cosmos, every star in view after 适应, no overflow');
   await page.setViewport({ width: 390, height: 844, isMobile: true, hasTouch: true });
 
   for (const width of [390, 1100]) {

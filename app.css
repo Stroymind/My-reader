@@ -249,48 +249,101 @@ html.appearance-dark .avatar.mono{background:linear-gradient(150deg,hsl(var(--h)
 .desk-note,.editor-hint{margin:8px 0 0;color:var(--app-muted);font-size:13px;line-height:1.6}
 #stack-desc:empty{display:none}
 
-/* 图谱 */
-#pane-graph{overflow:hidden}
-@media (max-height:720px){
-  #pane-graph{overflow:auto}
-  .graph-stage{min-height:240px}
-}
-.zoom-ctl{display:flex;gap:6px;align-items:center;flex:none}
-.zoom-ctl button{height:36px;min-width:36px;padding:0 12px;border-radius:12px;background:var(--app-fill);font-weight:650;white-space:nowrap}
-.graph-search-row{margin-bottom:10px}
-.graph-stage{position:relative;flex:1;min-height:420px;overflow:hidden;border-radius:22px;background-color:color-mix(in srgb,var(--app-elev) 70%,transparent);background-image:radial-gradient(color-mix(in srgb,var(--app-fg) 16%,transparent) 1.1px,transparent 1.1px);background-size:22px 22px;box-shadow:inset 0 0 0 .5px var(--app-line);touch-action:none;--gk:.72;--gx:0px;--gy:0px}
-.graph-world{position:absolute;left:50%;top:50%;width:1000px;height:680px;transform:translate(calc(-50% + var(--gx)),calc(-50% + var(--gy))) scale(var(--gk));transition:transform .55s var(--spring);transform-origin:center center}
-.graph-stage.panning .graph-world{transition:none}
-.graph-edges{position:absolute;inset:0;width:1000px;height:680px;overflow:visible}
-.edge{stroke:color-mix(in srgb,var(--app-fg) 28%,transparent);stroke-width:1.6}
-.edge.tag{stroke-dasharray:5 7;stroke:color-mix(in srgb,var(--app-accent) 55%,transparent)}
-.edge.dim{opacity:.12}
-.gnode{position:absolute;transform:translate(-50%,-50%);z-index:1;max-width:180px;padding:8px 14px;border-radius:999px;background:var(--app-elev);color:var(--app-fg);box-shadow:0 8px 24px rgba(0,0,0,.08),0 0 0 .5px var(--app-line);font-size:13px;font-weight:680;white-space:nowrap}
-.gnode.kind-highlight{box-shadow:0 8px 24px rgba(0,0,0,.08),inset 0 0 0 1.5px #e2c15a}
-.gnode.kind-excerpt{box-shadow:0 8px 24px rgba(0,0,0,.08),inset 0 0 0 1.5px #7dbaa4}
-.gnode.kind-annotation{box-shadow:0 8px 24px rgba(0,0,0,.08),inset 0 0 0 1.5px var(--app-accent)}
-.gnode.kind-concept{box-shadow:0 8px 24px rgba(0,0,0,.08),inset 0 0 0 1.5px #bf5af2}
-.gnode.on{z-index:2;transform:translate(-50%,-50%) scale(1.06)}
-.gnode.dim{opacity:.28}
-.gnode:active{transform:translate(-50%,-50%) scale(.96)}
-@media (hover:hover){.gnode:hover{transform:translate(-50%,-50%) scale(1.05)}}
-.graph-empty{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:24px;pointer-events:none}
-.graph-empty p{margin:0;font-size:20px;font-weight:700}
-.graph-empty p+p{margin-top:8px;max-width:28em;color:var(--app-muted);font-size:14px;font-weight:450;line-height:1.6}
-.legend{position:absolute;left:12px;top:12px;display:flex;gap:10px;padding:6px 10px;border-radius:999px;background:color-mix(in srgb,var(--app-elev) 82%,transparent);font-size:11px;color:var(--app-muted);backdrop-filter:blur(10px)}
-.lg{display:inline-block;width:16px;height:0;border-top:2px solid color-mix(in srgb,var(--app-fg) 40%,transparent);margin-right:5px;vertical-align:middle}
-.lg.tag{border-top-style:dashed;border-top-color:var(--app-accent)}
-.graph-card{position:absolute;left:16px;right:16px;bottom:16px;z-index:22;padding:14px 16px;border-radius:18px;background:color-mix(in srgb,var(--app-elev) 88%,transparent);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);box-shadow:var(--app-shadow);animation:pop .36s var(--spring)}
-.graph-card{bottom:calc(env(safe-area-inset-bottom) + 80px)}
-.graph-card strong{display:block;margin:4px 0;font-size:16px}
-.graph-card p{margin:0 0 8px;font-size:13px;line-height:1.5;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+/* 星海：全屏深空知识地图。星海永远是夜色，与外观设置无关。 */
+#library.cosmos-on .appbar{display:none}
+#pane-graph{padding:0;overflow:hidden;background:#03040c;color:#e8ecff;color-scheme:dark}
+#pane-graph.on{animation:fadeIn .5s var(--spring)}
+@keyframes fadeIn{from{opacity:0}}
+.graph-stage{position:absolute;inset:0;overflow:hidden;touch-action:none;perspective:1100px;perspective-origin:50% 34%;cursor:grab;background:#03040c;outline:none;user-select:none;-webkit-user-select:none}
+.graph-stage:focus-visible{box-shadow:inset 0 0 0 2px color-mix(in srgb,var(--app-accent) 70%,transparent)}
+.graph-stage.panning{cursor:grabbing}
+.graph-sky{position:absolute;inset:0;width:100%;height:100%;display:block}
+.graph-plane{position:absolute;inset:-12% -18%;transform-style:preserve-3d;transform-origin:50% 50%;transform:rotateX(0deg);transition:transform .95s var(--spring)}
+.graph-stage.tilt .graph-plane{transform:rotateX(34deg)}
+.graph-map{position:absolute;inset:0;width:100%;height:100%;display:block;pointer-events:none}
+.graph-stage.tilt .graph-map{-webkit-mask-image:linear-gradient(to bottom,transparent 4%,#000 34%);mask-image:linear-gradient(to bottom,transparent 4%,#000 34%)}
+.graph-stage::after{content:"";position:absolute;inset:0;pointer-events:none;opacity:0;transition:opacity .9s;background:radial-gradient(120% 60% at 50% 0,rgba(110,130,255,.16),transparent 60%),linear-gradient(to bottom,rgba(3,4,12,.55),transparent 22%)}
+.graph-stage.tilt::after{opacity:1}
+.graph-world{position:absolute;left:0;top:0;width:0;height:0;transform-style:preserve-3d}
+
+/* 星体：按钮本身透明，星光画在画布上；标签按缩放层级浮现 */
+.gnode{position:absolute;left:0;top:0;pointer-events:none;display:flex;align-items:center;gap:4px;padding:0;border-radius:999px;background:none;color:#eef1ff;transform-origin:0 0;white-space:nowrap;transition:opacity .45s;will-change:transform;-webkit-tap-highlight-color:transparent}
+.graph-stage.tilting .gnode{transition:transform .95s var(--spring),opacity .45s}
+.gdot{flex:none;width:28px;height:28px;border-radius:50%;pointer-events:auto;cursor:pointer}
+.gstem{display:none}
+.gtext{display:block;min-width:0;pointer-events:auto;cursor:pointer;transition:opacity .4s,transform .45s var(--spring)}
+.gl{display:block;max-width:168px;overflow:hidden;text-overflow:ellipsis;font-size:12.5px;font-weight:600;letter-spacing:.01em;line-height:1.3;color:rgba(236,240,255,.92);text-shadow:0 0 2px rgba(0,0,0,.9),0 1px 10px rgba(0,0,0,.85)}
+.gk{display:none;margin-top:1px;font-size:10px;font-weight:600;letter-spacing:.04em;color:hsla(var(--h),70%,82%,.72);text-shadow:0 1px 6px rgba(0,0,0,.9)}
+.lod-near .gk,.gnode.on .gk{display:block}
+.gnode.mag-beacon .gl{max-width:196px;font-size:14px;font-weight:700;color:#fff;text-shadow:0 0 2px rgba(0,0,0,.9),0 0 18px hsla(var(--h),90%,55%,.55)}
+.gnode.mag-faint .gl{font-weight:500;color:rgba(196,206,232,.62)}
+.gnode.quiet .gtext{opacity:0;transform:translateX(-4px);pointer-events:none}
+.gnode.dim{opacity:.3}
+.gnode.on .gl{color:#fff}
+.gnode:focus-visible{outline:none}
+.gnode:focus-visible .gdot{box-shadow:0 0 0 2px #fff,0 0 0 5px color-mix(in srgb,var(--app-accent) 80%,transparent)}
+.gnode:focus-visible .gtext{opacity:1;transform:none}
+@media (hover:hover){.gnode:hover .gtext{opacity:1;transform:none}}
+.tilt .gnode{flex-direction:column-reverse;gap:0}
+.tilt .gstem{display:block;width:1.5px;height:18px;background:linear-gradient(to top,hsla(var(--h),95%,82%,.95),hsla(var(--h),95%,80%,0))}
+.tilt .gnode.mag-beacon .gstem{width:2px;height:46px;box-shadow:0 0 10px hsla(var(--h),95%,66%,.85)}
+.tilt .gnode.mag-faint .gstem{height:8px;opacity:.4}
+.tilt .gtext{padding:4px 9px 5px;border-radius:10px;background:rgba(8,10,26,.62);box-shadow:0 0 0 .5px hsla(var(--h),80%,80%,.28),0 6px 18px rgba(0,0,0,.4);text-align:center}
+.tilt .gnode.mag-beacon .gtext{padding:5px 11px 6px;background:linear-gradient(180deg,hsla(var(--h),60%,26%,.78),rgba(8,10,26,.78));box-shadow:0 0 0 .5px hsla(var(--h),90%,80%,.5),0 0 22px hsla(var(--h),90%,55%,.35)}
+.tilt .gnode.quiet .gtext{transform:translateY(4px)}
+
+/* 悬浮 HUD：左上读数，右上视图控制 */
+.cosmos-hud{position:absolute;left:0;right:0;top:calc(env(safe-area-inset-top) + 12px);z-index:6;display:flex;justify-content:space-between;align-items:flex-start;gap:8px;padding:0 12px;pointer-events:none}
+.cosmos-hud>*{pointer-events:auto}
+.hud-left{display:flex;flex-direction:column;align-items:flex-start;gap:8px;min-width:0}
+.hud-pill{display:flex;align-items:center;gap:2px;height:38px;padding:0 4px;border-radius:999px;background:rgba(12,14,30,.5);backdrop-filter:saturate(160%) blur(20px);-webkit-backdrop-filter:saturate(160%) blur(20px);box-shadow:0 0 0 .5px rgba(255,255,255,.14),0 10px 28px rgba(0,0,0,.4);color:rgba(228,233,255,.86);white-space:nowrap}
+.telemetry{padding-left:14px;font-size:12px;font-weight:600;letter-spacing:.03em;font-variant-numeric:tabular-nums}
+.hud-pill button{display:grid;place-items:center;height:30px;min-width:30px;padding:0 8px;border-radius:999px;color:rgba(236,240,255,.9);font-size:12.5px;font-weight:650;letter-spacing:.02em}
+.hud-pill button svg{width:16px;height:16px;stroke-width:1.9}
+@media (hover:hover){.hud-pill button:hover{background:rgba(255,255,255,.1)}}
+.hud-pill button[aria-pressed="true"],.hud-pill button.on{background:rgba(130,170,255,.24);color:#fff;box-shadow:inset 0 0 0 .5px rgba(170,200,255,.5)}
+.hud-search{display:flex;align-items:center;gap:8px;width:min(300px,calc(100vw - 24px));height:40px;padding:0 12px;border-radius:14px;background:rgba(12,14,30,.62);backdrop-filter:saturate(160%) blur(20px);-webkit-backdrop-filter:saturate(160%) blur(20px);box-shadow:0 0 0 .5px rgba(255,255,255,.16),0 10px 28px rgba(0,0,0,.4);color:rgba(220,226,255,.7);animation:drop .36s var(--spring)}
+.hud-search[hidden]{display:none}
+.hud-search:focus-within{box-shadow:0 0 0 1.5px rgba(140,180,255,.7),0 10px 28px rgba(0,0,0,.4)}
+.hud-search svg{flex:none;width:16px;height:16px}
+.hud-search input{flex:1;min-width:0;height:100%;border:0;background:transparent;outline:none;color:#eef1ff;font-size:16px}
+.hud-search input::placeholder{color:rgba(200,208,240,.45)}
+.hud-search input::-webkit-search-cancel-button{display:none}
+
+/* 空星海 */
+.graph-empty{position:absolute;left:0;right:0;top:calc(50% + 72px);padding:0 32px;text-align:center;pointer-events:none}
+.graph-empty p{margin:0;font-size:19px;font-weight:650;letter-spacing:.06em;color:rgba(236,240,255,.92)}
+.graph-empty p+p{margin-top:8px;font-size:13.5px;font-weight:450;letter-spacing:.02em;color:rgba(200,210,240,.58)}
+
+/* 星体读数卡：深色磨砂玻璃，浮在导航胶囊上方 */
+.graph-card{--h:220;position:absolute;left:12px;right:12px;bottom:calc(env(safe-area-inset-bottom) + 80px);z-index:22;max-width:460px;margin:0 auto;padding:14px 14px 14px 18px;border-radius:24px;background:linear-gradient(160deg,hsla(var(--h),60%,22%,.5),rgba(10,12,28,.72) 46%);backdrop-filter:saturate(170%) blur(26px);-webkit-backdrop-filter:saturate(170%) blur(26px);box-shadow:0 0 0 .5px hsla(var(--h),80%,80%,.26),0 24px 60px rgba(0,0,0,.55);color:#eef1ff;animation:cardUp .52s var(--spring)}
+@keyframes cardUp{from{opacity:0;transform:translateY(26px) scale(.97)}}
+.gc-top{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.gc-class{display:inline-flex;align-items:center;gap:7px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11.5px;font-weight:700;letter-spacing:.06em;color:hsla(var(--h),85%,80%,.95)}
+.gc-class::before{content:"";flex:none;width:8px;height:8px;border-radius:50%;background:hsla(var(--h),95%,80%,1);box-shadow:0 0 10px 2px hsla(var(--h),95%,65%,.7)}
+.gc-class.mag-faint{color:rgba(200,210,235,.7)}
+.gc-class.mag-faint::before{background:rgba(200,210,235,.6);box-shadow:none}
+.gc-close{flex:none;display:grid;place-items:center;width:32px;height:32px;padding:0;border-radius:50%;color:rgba(230,234,255,.7);background:rgba(255,255,255,.08)}
+.gc-close svg{width:16px;height:16px;stroke-width:2}
+.gc-title{display:block;margin:4px 0 0;font-size:19px;font-weight:700;letter-spacing:-.01em;line-height:1.3;overflow-wrap:anywhere}
+.gc-preview{margin:6px 0 0;font-size:13.5px;line-height:1.55;color:rgba(214,220,245,.72);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}
+.gc-meta{display:flex;flex-wrap:wrap;gap:6px 10px;margin-top:10px;font-size:12px;color:rgba(205,213,240,.64)}
+.gc-tag{color:hsla(var(--h),80%,82%,.85)}
+.gc-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px}
+.gc-actions button{height:34px;padding:0 13px;border-radius:999px;background:rgba(255,255,255,.09);box-shadow:inset 0 0 0 .5px rgba(255,255,255,.14);color:#eef1ff;font-size:13px;font-weight:600}
+.gc-actions .gc-primary{background:hsla(var(--h),85%,62%,.9);color:#050714;box-shadow:0 0 18px hsla(var(--h),90%,60%,.35)}
+@media (hover:hover){.gc-actions button:hover{background:rgba(255,255,255,.16)}.gc-actions .gc-primary:hover{background:hsla(var(--h),90%,70%,1)}}
+
+/* 星海里的导航胶囊换成深色玻璃 */
+#library.cosmos-on .tabbar{background:rgba(14,16,32,.56);box-shadow:0 0 0 .5px rgba(255,255,255,.14),0 12px 32px rgba(0,0,0,.5)}
+#library.cosmos-on .tabbar button{color:rgba(214,222,255,.6)}
+#library.cosmos-on .tabbar button.on{color:#fff;background:rgba(255,255,255,.14);box-shadow:inset 0 0 0 .5px rgba(255,255,255,.18)}
 
 /* 宽屏：同一套胶囊导航，内容居中成一栏 */
 @media (min-width:960px){
   .appbar{padding-left:28px;padding-right:28px}
   .pane{padding-left:28px;padding-right:28px}
   .appbar h1{font-size:32px}
-  .graph-card{left:auto;right:28px;width:380px}
 }
 @media (max-width:380px){
   .tabbar button{padding:0 13px}

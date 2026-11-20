@@ -4,6 +4,7 @@ import {
   createNote, deleteNote, extractKeyPoints, linkNotes, listLinks, listNotes,
   makeTitle, parseTags, saveNote, suggestTags, unlinkPair
 } from './knowledge.js';
+import { Cosmos, layoutCosmos, magLabel } from './cosmos.js';
 
 const $ = s => document.querySelector(s);
 const state = { notes: [], links: [], filter: { q: '', kind: 'all', tag: '' }, editing: null, focusId: null, ai: null };
@@ -35,7 +36,9 @@ export function showPane(name) {
     btn.classList.toggle('on', on);
     if (btn.getAttribute('role') === 'tab') btn.setAttribute('aria-selected', on ? 'true' : 'false');
   });
+  document.querySelector('#library')?.classList.toggle('cosmos-on', name === 'graph');
   if (name === 'graph') requestAnimationFrame(() => renderGraph(false));
+  else cosmos?.setActive(false);
 }
 
 export async function refreshWorkspace() {
@@ -314,235 +317,136 @@ async function commitEditor() {
   api.toast('已保存到知识库');
 }
 
-function hash(text) {
-  let hsh = 2166136261;
-  for (const ch of String(text)) hsh = Math.imul(hsh ^ ch.codePointAt(0), 16777619);
-  return hsh >>> 0;
-}
-function mulberry32(seed) {
-  let a = seed >>> 0;
-  return () => {
-    a |= 0; a = a + 0x6D2B79F5 | 0;
-    let t = Math.imul(a ^ a >>> 15, 1 | a);
-    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
-    return ((t ^ t >>> 14) >>> 0) / 4294967296;
-  };
-}
-
-function graphModel() {
-  const notes = state.notes.slice().sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)).slice(0, 120);
-  const ids = new Set(notes.map(n => n.id));
-  const edges = [];
-  const seen = new Set();
-  const add = (a, b, kind) => {
-    if (!a || !b || a === b || !ids.has(a) || !ids.has(b)) return;
-    const key = [a, b].sort().join('~') + kind;
-    if (seen.has(key)) return;
-    seen.add(key);
-    edges.push({ a, b, kind });
-  };
-  for (const link of state.links) add(link.fromId, link.toId, 'link');
-  const byTag = new Map();
-  for (const note of notes) for (const tag of note.tags || []) {
-    if (!byTag.has(tag)) byTag.set(tag, []);
-    byTag.get(tag).push(note);
-  }
-  for (const members of byTag.values()) {
-    if (members.length < 2) continue;
-    const group = members.slice(0, 8);
-    if (group.length > 6) {
-      for (const note of group.slice(1)) add(group[0].id, note.id, 'tag');
-    } else {
-      for (let i = 0; i < group.length; i++) for (let j = i + 1; j < group.length; j++) add(group[i].id, group[j].id, 'tag');
-    }
-  }
-  const rnd = mulberry32(hash(notes.map(n => n.id).join('|')));
-  const rad = Math.min(300, 120 + notes.length * 28);
-  const nodes = notes.map((note, i) => {
-    const ang = notes.length ? (i / notes.length) * Math.PI * 2 : 0;
-    return {
-      id: note.id, title: note.title || '未命名', kind: kindOf(note),
-      x: 500 + Math.cos(ang) * rad + (rnd() - 0.5) * 24,
-      y: 340 + Math.sin(ang) * rad * 0.72 + (rnd() - 0.5) * 24
-    };
-  });
-  const byId = new Map(nodes.map(n => [n.id, n]));
-  if (nodes.length === 1) { nodes[0].x = 500; nodes[0].y = 340; }
-  else {
-    for (let step = 0; step < 160; step++) {
-      for (const n of nodes) { n.vx = (n.vx || 0) + (500 - n.x) * 0.012; n.vy = (n.vy || 0) + (340 - n.y) * 0.012; }
-      for (let i = 0; i < nodes.length; i++) for (let j = i + 1; j < nodes.length; j++) {
-        let dx = nodes[j].x - nodes[i].x, dy = nodes[j].y - nodes[i].y;
-        const dist = Math.hypot(dx, dy) || 1;
-        const force = 9800 / (dist * dist) + (dist < 190 ? (190 - dist) * 0.08 : 0);
-        const fx = force * dx / dist, fy = force * dy / dist;
-        nodes[i].vx = (nodes[i].vx || 0) - fx; nodes[i].vy = (nodes[i].vy || 0) - fy;
-        nodes[j].vx = (nodes[j].vx || 0) + fx; nodes[j].vy = (nodes[j].vy || 0) + fy;
-      }
-      for (const edge of edges) {
-        const a = byId.get(edge.a), b = byId.get(edge.b);
-        if (!a || !b) continue;
-        const dx = b.x - a.x, dy = b.y - a.y, dist = Math.hypot(dx, dy) || 1;
-        const force = (dist - (edge.kind === 'link' ? 230 : 280)) * 0.015;
-        a.vx = (a.vx || 0) + dx / dist * force; a.vy = (a.vy || 0) + dy / dist * force;
-        b.vx = (b.vx || 0) - dx / dist * force; b.vy = (b.vy || 0) - dy / dist * force;
-      }
-      for (const n of nodes) {
-        n.vx = (n.vx || 0) * 0.78; n.vy = (n.vy || 0) * 0.78;
-        n.x = Math.max(70, Math.min(930, n.x + n.vx));
-        n.y = Math.max(50, Math.min(630, n.y + n.vy));
-      }
-    }
-  }
-  return { nodes, edges, truncated: state.notes.length > notes.length };
-}
-
+/* ---------- 星海：深空知识地图 ---------- */
+const GRAPH_LIMIT = 160;
+let cosmos = null;
+let cosmosModel = null;
 let graphSig = '';
-function renderGraph(forceFit) {
+
+function ensureCosmos() {
+  if (cosmos) return cosmos;
   const stage = $('#graph-stage');
-  const world = $('#graph-world');
-  const empty = $('#graph-empty');
-  const title = $('#graph-title');
-  if (!stage || !world) return;
-  const model = graphModel();
-  const sig = model.nodes.map(n => n.id + n.kind).join(',') + '|' + model.edges.map(e => e.a + e.b + e.kind).join(',');
-  if (title) {
-    const focus = state.notes.find(n => n.id === state.focusId);
-    title.textContent = focus ? '围绕「' + (focus.title || '未命名') + '」' : '星海';
+  if (!stage || !$('#graph-map')) return null;
+  cosmos = new Cosmos({
+    stage, plane: $('#graph-plane'), world: $('#graph-world'), sky: $('#graph-sky'), map: $('#graph-map'),
+    onSelect: id => selectGraphNode(id),
+    onBackground: () => { if (state.focusId) clearGraphFocus(); }
+  });
+  return cosmos;
+}
+
+function graphNotes() {
+  return state.notes.slice().sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)).slice(0, GRAPH_LIMIT);
+}
+
+function renderGraph(forceFit) {
+  const c = ensureCosmos();
+  if (!c) return;
+  const notes = graphNotes();
+  const sig = notes.map(n => [n.id, n.title, (n.tags || []).join(','), kindOf(n), (n.body || '').length > 360 || /##\s*判断/.test(n.body || '')].join(':')).sort().join('|')
+    + '#' + state.links.map(l => l.fromId + '>' + l.toId).sort().join(',');
+  const changed = sig !== graphSig || !cosmosModel;
+  if (changed) {
+    graphSig = sig;
+    cosmosModel = layoutCosmos(notes, state.links, kindOf);
+    c.setModel(cosmosModel);
   }
-  if (state.focusId && !model.nodes.some(n => n.id === state.focusId)) {
+  const s = cosmosModel.stats;
+  const stats = $('#cosmos-stats');
+  if (stats) stats.textContent = `${s.stars} 星体 · ${s.lanes} 航线 · ${s.sectors} 星域`;
+  $('#graph-empty')?.classList.toggle('hidden', s.stars > 0);
+  if (state.focusId && !cosmosModel.stars.some(st => st.id === state.focusId)) {
     const outside = state.notes.some(n => n.id === state.focusId);
-    state.focusId = null;
-    $('#graph-card')?.classList.add('hidden');
-    if (outside) api.toast('这条笔记不在当前图谱里。图谱只画最近 120 条。');
+    clearGraphFocus();
+    if (outside) api.toast(`这条笔记不在星海里。星海只点亮最近 ${GRAPH_LIMIT} 条。`);
+  } else if (state.focusId && !$('#graph-card')?.classList.contains('hidden')) {
+    fillGraphCard(state.focusId);
   }
-  if (!model.nodes.length) {
-    world.replaceChildren();
-    empty?.classList.remove('hidden');
-    $('#graph-card')?.classList.add('hidden');
-    return;
-  }
-  empty?.classList.add('hidden');
-  const near = neighborSet(state.focusId, model.edges);
-  world.replaceChildren();
-  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  svg.setAttribute('class', 'graph-edges');
-  svg.setAttribute('viewBox', '0 0 1000 680');
-  for (const edge of model.edges) {
-    const a = model.nodes.find(n => n.id === edge.a);
-    const b = model.nodes.find(n => n.id === edge.b);
-    if (!a || !b) continue;
-    const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-    line.setAttribute('x1', a.x); line.setAttribute('y1', a.y);
-    line.setAttribute('x2', b.x); line.setAttribute('y2', b.y);
-    const dim = state.focusId && !(near.has(edge.a) && near.has(edge.b));
-    line.setAttribute('class', 'edge ' + edge.kind + (dim ? ' dim' : ''));
-    svg.appendChild(line);
-  }
-  world.appendChild(svg);
-  for (const node of model.nodes) {
-    const btn = h('button', 'gnode kind-' + node.kind + (node.id === state.focusId ? ' on' : '') + (state.focusId && !near.has(node.id) ? ' dim' : ''));
-    btn.type = 'button';
-    btn.style.left = node.x + 'px';
-    btn.style.top = node.y + 'px';
-    btn.textContent = node.title.length > 12 ? node.title.slice(0, 12) + '…' : node.title;
-    btn.onclick = e => { e.stopPropagation(); selectGraphNode(node.id); };
-    world.appendChild(btn);
-  }
-  const changed = sig !== graphSig;
-  graphSig = sig;
-  if (forceFit || (changed && stage.dataset.fit !== '1')) requestAnimationFrame(fitGraph);
-  if (model.truncated) stage.dataset.more = '1';
+  c.setFocus(state.focusId);
+  c.setActive(!!$('#pane-graph')?.classList.contains('on'));
+  if (forceFit || (changed && !c.userMoved)) c.fit(!changed);
 }
 
-function neighborSet(id, edges) {
-  const set = new Set(id ? [id] : []);
-  if (!id) return set;
-  for (const edge of edges) {
-    if (edge.a === id) set.add(edge.b);
-    if (edge.b === id) set.add(edge.a);
-  }
-  return set;
+function clearGraphFocus() {
+  state.focusId = null;
+  cosmos?.setFocus(null);
+  $('#graph-card')?.classList.add('hidden');
 }
 
-function selectGraphNode(id) {
+function selectGraphNode(id, center = false) {
+  const c = ensureCosmos();
+  if (!c) return;
+  if (!cosmosModel?.stars.some(s => s.id === id)) renderGraph(false);
   state.focusId = id;
-  renderGraph(false);
-  if (state.focusId !== id) return;
+  c.setFocus(id);
+  if (!fillGraphCard(id)) return;
+  c.reveal(id, center);
+}
+
+function fillGraphCard(id) {
   const card = $('#graph-card');
   const note = state.notes.find(n => n.id === id);
-  if (!card || !note) return;
+  const star = cosmosModel?.stars.find(s => s.id === id);
+  if (!card || !note || !star) return false;
+  const fresh = card.classList.contains('hidden');
   card.classList.remove('hidden');
+  if (fresh) { card.style.animation = 'none'; void card.offsetWidth; card.style.animation = ''; }
+  card.style.setProperty('--h', star.hue);
   card.replaceChildren();
-  card.append(h('span', 'kind', kindLabel(note)), h('strong', '', note.title || '未命名'));
+  const top = h('div', 'gc-top');
+  const cls = h('span', 'gc-class mag-' + star.mag, `${magLabel(star.mag)} · ${star.frontier ? '未测绘暗域' : star.sector + ' 星域'}`);
+  const close = h('button', 'gc-close');
+  close.type = 'button';
+  close.setAttribute('aria-label', '关闭');
+  close.title = '关闭';
+  close.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.5 7.5l9 9M16.5 7.5l-9 9"/></svg>';
+  close.onclick = () => {
+    const btn = [...document.querySelectorAll('#graph-world .gnode')].find(b => b.dataset.id === id);
+    clearGraphFocus();
+    btn?.focus({ preventScroll: true });
+  };
+  top.append(cls, close);
+  card.append(top, h('strong', 'gc-title', note.title || '未命名'));
   const preview = (note.quote || note.body || '').replace(/\s+/g, ' ').trim();
-  if (preview) card.append(h('p', '', preview.slice(0, 140)));
-  const row = h('div', 'card-actions');
-  const open = h('button', 'btn primary', '打开笔记');
-  open.type = 'button';
-  open.onclick = () => { showPane('knowledge'); openEditor(note.id); };
-  const center = h('button', 'btn ghost', '查看全部');
-  center.type = 'button';
-  center.onclick = () => { state.focusId = null; card.classList.add('hidden'); renderGraph(false); };
-  row.append(open, center);
-  if (note.bookId && note.passageId) {
-    const back = h('button', 'btn ghost', '回到原文');
-    back.type = 'button';
-    back.onclick = () => api.openPassage(note.bookId, note.passageId);
-    row.appendChild(back);
-  }
-  card.appendChild(row);
+  if (preview) card.append(h('p', 'gc-preview', preview.slice(0, 160)));
+  const meta = h('div', 'gc-meta');
+  for (const tag of (note.tags || []).slice(0, 4)) meta.append(h('span', 'gc-tag', '#' + tag));
+  meta.append(h('span', 'gc-links', star.links ? `${star.links} 条航线` : '尚无航线'));
+  if (note.bookTitle) meta.append(h('span', 'gc-src', '《' + note.bookTitle + '》'));
+  card.append(meta);
+  const row = h('div', 'gc-actions');
+  const act = (label, cls, fn) => { const b = h('button', cls, label); b.type = 'button'; b.onclick = fn; row.append(b); return b; };
+  act('编辑', 'gc-primary', () => { showPane('knowledge'); openEditor(note.id); });
+  if (note.bookId && note.passageId) act('跃迁原文', '', () => api.openPassage(note.bookId, note.passageId));
+  act('聚焦邻域', '', () => cosmos?.focusNeighborhood(note.id));
+  act('问 AI', '', () => openAssistant({
+    title: '问 AI',
+    quote: (note.quote || note.body || note.title || '').trim(),
+    context: `星海 · ${star.frontier ? '未测绘暗域' : star.sector + ' 星域'} · 「${note.title || '未命名'}」`,
+    bookId: note.bookId || null,
+    bookTitle: note.bookTitle || ''
+  }));
+  card.append(row);
+  return true;
 }
 
 export function fitGraph() {
-  const stage = $('#graph-stage');
-  if (!stage) return;
-  const rect = stage.getBoundingClientRect();
-  if (rect.width < 40 || rect.height < 40) return;
-  const nodes = [...stage.querySelectorAll('.gnode')];
-  if (!nodes.length) {
-    stage.style.setProperty('--gk', '0.8');
-    stage.style.setProperty('--gx', '0px');
-    stage.style.setProperty('--gy', '0px');
-    stage.dataset.fit = '1';
-    return;
-  }
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  for (const node of nodes) {
-    const x = parseFloat(node.style.left) || 0;
-    const y = parseFloat(node.style.top) || 0;
-    minX = Math.min(minX, x - 100);
-    maxX = Math.max(maxX, x + 100);
-    minY = Math.min(minY, y - 36);
-    maxY = Math.max(maxY, y + 36);
-  }
-  const bw = Math.max(220, maxX - minX);
-  const bh = Math.max(140, maxY - minY);
-  const k = Math.min((rect.width - 72) / bw, (rect.height - 72) / bh, 1.65);
-  const cx = (minX + maxX) / 2;
-  const cy = (minY + maxY) / 2;
-  stage.style.setProperty('--gk', String(Math.max(0.45, k)));
-  stage.style.setProperty('--gx', ((500 - cx) * k) + 'px');
-  stage.style.setProperty('--gy', ((340 - cy) * k) + 'px');
-  stage.dataset.fit = '1';
+  const c = ensureCosmos();
+  if (!c) return;
+  c.resize();
+  c.fit(false);
 }
 
-function zoomBy(factor) {
-  const stage = $('#graph-stage');
-  if (!stage) return;
-  const cur = parseFloat(stage.style.getPropertyValue('--gk')) || parseFloat(getComputedStyle(stage).getPropertyValue('--gk')) || 1;
-  const next = Math.min(2.5, Math.max(0.4, cur * factor));
-  const ratio = next / cur;
-  stage.style.setProperty('--gk', String(next));
-  stage.style.setProperty('--gx', (readPx('--gx') * ratio) + 'px');
-  stage.style.setProperty('--gy', (readPx('--gy') * ratio) + 'px');
-  stage.dataset.fit = '1';
-}
+function zoomBy(factor) { ensureCosmos()?.zoomBy(factor); }
 
-function readPx(name) {
-  const stage = $('#graph-stage');
-  const raw = stage?.style.getPropertyValue(name) || '0';
-  return parseFloat(raw) || 0;
+function setGraphSearch(open) {
+  const row = $('#graph-search-row');
+  const btn = $('#graph-search-toggle');
+  if (!row || !btn) return;
+  row.hidden = !open;
+  btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  btn.classList.toggle('on', open);
+  if (open) $('#graph-search').focus({ preventScroll: true });
 }
 
 let aiToken = 0;
@@ -668,42 +572,17 @@ async function saveAssistantNote() {
   api.toast('已存入知识库');
 }
 
-function bindGraphPointer() {
-  const stage = $('#graph-stage');
-  if (!stage) return;
-  let pan = null;
-  stage.addEventListener('pointerdown', e => {
-    if (e.button != null && e.button !== 0) return;
-    if (e.target.closest('.gnode, .graph-card, .legend, button')) return;
-    stage.classList.add('panning');
-    pan = { x: e.clientX, y: e.clientY, gx: readPx('--gx'), gy: readPx('--gy'), id: e.pointerId };
-    stage.setPointerCapture(e.pointerId);
-  });
-  stage.addEventListener('pointermove', e => {
-    if (!pan || pan.id !== e.pointerId) return;
-    stage.style.setProperty('--gx', (pan.gx + e.clientX - pan.x) + 'px');
-    stage.style.setProperty('--gy', (pan.gy + e.clientY - pan.y) + 'px');
-  });
-  const end = e => {
-    if (!pan || (e && pan.id !== e.pointerId)) return;
-    pan = null;
-    stage.classList.remove('panning');
-  };
-  stage.addEventListener('pointerup', end);
-  stage.addEventListener('pointercancel', end);
-  stage.addEventListener('wheel', e => {
-    e.preventDefault();
-    zoomBy(e.deltaY < 0 ? 1.08 : 0.92);
-  }, { passive: false });
-}
-
 export function workspaceHandleBack() {
   if (!$('#library')?.classList.contains('active')) return false;
   if ($('#note-editor') && !$('#note-editor').classList.contains('hidden')) { closeEditor(); return true; }
   if ($('#graph-card') && !$('#graph-card').classList.contains('hidden')) {
-    state.focusId = null;
-    $('#graph-card').classList.add('hidden');
-    renderGraph(false);
+    clearGraphFocus();
+    return true;
+  }
+  if ($('#pane-graph')?.classList.contains('on') && $('#graph-search-row') && !$('#graph-search-row').hidden) {
+    $('#graph-search').value = '';
+    setGraphSearch(false);
+    $('#graph-search-toggle')?.focus();
     return true;
   }
   const onShelf = $('#pane-shelf')?.classList.contains('on');
@@ -807,16 +686,27 @@ export function initWorkspace(nextApi) {
   });
   $('#graph-in')?.addEventListener('click', () => zoomBy(1.16));
   $('#graph-out')?.addEventListener('click', () => zoomBy(1 / 1.16));
-  $('#graph-reset')?.addEventListener('click', () => fitGraph());
+  $('#graph-reset')?.addEventListener('click', () => ensureCosmos()?.fit(true));
+  $('#graph-search-toggle')?.addEventListener('click', () => {
+    const open = $('#graph-search-row')?.hidden;
+    if (!open) { $('#graph-search').value = ''; }
+    setGraphSearch(!!open);
+  });
   $('#graph-search')?.addEventListener('input', e => {
     const q = e.target.value.trim().toLowerCase();
-    if (!q) { state.focusId = null; $('#graph-card')?.classList.add('hidden'); renderGraph(false); return; }
-    const hit = state.notes.find(n => (n.title || '').toLowerCase().includes(q) || (n.tags || []).some(t => t.toLowerCase().includes(q)));
-    if (hit) selectGraphNode(hit.id);
+    if (!q) { clearGraphFocus(); return; }
+    renderGraph(false);
+    const stars = cosmosModel?.stars || [];
+    const hit = stars.find(s => s.title.toLowerCase().startsWith(q))
+      || stars.find(s => s.title.toLowerCase().includes(q))
+      || stars.find(s => s.tags.some(t => t.toLowerCase().includes(q)))
+      || stars.find(s => s.sector.toLowerCase().includes(q));
+    if (hit) selectGraphNode(hit.id, true);
   });
-  bindGraphPointer();
-  window.addEventListener('resize', () => {
-    if ($('#pane-graph')?.classList.contains('on')) fitGraph();
+  $('#graph-tilt')?.addEventListener('click', e => {
+    const on = e.currentTarget.getAttribute('aria-pressed') !== 'true';
+    e.currentTarget.setAttribute('aria-pressed', on ? 'true' : 'false');
+    ensureCosmos()?.setTilt(on);
   });
   refreshWorkspace().catch(err => console.warn(err));
 }

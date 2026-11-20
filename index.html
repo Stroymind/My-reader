@@ -100,27 +100,45 @@
       </div>
 
       <div id="pane-graph" class="pane" role="tabpanel" aria-label="星海">
-        <div class="pane-head">
-          <h2 id="graph-title">星海</h2>
-          <div class="zoom-ctl" aria-label="缩放">
-            <button id="graph-out" type="button" aria-label="缩小">−</button>
-            <button id="graph-reset" type="button">适应</button>
-            <button id="graph-in" type="button" aria-label="放大">+</button>
+        <h2 id="graph-title" class="sr">星海</h2>
+        <div id="graph-stage" class="graph-stage" tabindex="0" aria-label="星海画布：拖动平移，滚轮或双指缩放，方向键平移，加减号缩放">
+          <canvas id="graph-sky" class="graph-sky" aria-hidden="true"></canvas>
+          <div id="graph-plane" class="graph-plane">
+            <canvas id="graph-map" class="graph-map" aria-hidden="true"></canvas>
+            <div id="graph-world" class="graph-world" role="group" aria-label="星体"></div>
+          </div>
+          <div id="graph-empty" class="graph-empty hidden">
+            <p>星海尚未点亮</p>
+            <p>写下第一条笔记，它会成为这里的第一颗星。</p>
           </div>
         </div>
-        <div class="graph-search-row find-field">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.4"/><path d="M20 20l-4.3-4.3"/></svg>
-          <input id="graph-search" type="search" placeholder="找一个概念或笔记" aria-label="在星海中查找" autocomplete="off">
-        </div>
-        <div id="graph-stage" class="graph-stage">
-          <div id="graph-world" class="graph-world"></div>
-          <div id="graph-empty" class="graph-empty">
-            <p>星海还是暗的</p>
-            <p>写下两条笔记并连起来，它们会在这里亮起。</p>
+        <div class="cosmos-hud">
+          <div class="hud-left">
+            <div class="hud-pill telemetry">
+              <span id="cosmos-stats" aria-live="polite">0 星体 · 0 航线 · 0 星域</span>
+              <button id="graph-search-toggle" type="button" class="hud-icon" aria-label="在星海中查找" aria-expanded="false" aria-controls="graph-search-row" title="查找">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.4"/><path d="M20 20l-4.3-4.3"/></svg>
+              </button>
+            </div>
+            <div id="graph-search-row" class="hud-search" hidden>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.4"/><path d="M20 20l-4.3-4.3"/></svg>
+              <input id="graph-search" type="search" placeholder="找一颗星或一个标签" aria-label="在星海中查找" autocomplete="off" enterkeyhint="search">
+            </div>
           </div>
-          <div class="legend" aria-hidden="true"><span><i class="lg link"></i>关联</span><span><i class="lg tag"></i>同标签</span></div>
+          <div class="hud-pill hud-ctl" role="toolbar" aria-label="视图">
+            <button id="graph-tilt" type="button" aria-pressed="false" title="切换 2.5D 立体沙盘 / 平视">2.5D</button>
+            <button id="graph-reset" type="button" aria-label="适应" title="适应">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 9V5.5a1 1 0 0 1 1-1H9M15 4.5h3.5a1 1 0 0 1 1 1V9M19.5 15v3.5a1 1 0 0 1-1 1H15M9 19.5H5.5a1 1 0 0 1-1-1V15"/></svg>
+            </button>
+            <button id="graph-out" type="button" aria-label="缩小" title="缩小">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12h12"/></svg>
+            </button>
+            <button id="graph-in" type="button" aria-label="放大" title="放大">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 6v12M6 12h12"/></svg>
+            </button>
+          </div>
         </div>
-        <aside id="graph-card" class="graph-card hidden"></aside>
+        <aside id="graph-card" class="graph-card hidden" aria-live="polite"></aside>
       </div>
     </div>
   </div>
