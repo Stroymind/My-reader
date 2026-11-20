@@ -30,18 +30,26 @@ try {
   report.checks.push('Mobile startup and Zone heading/title');
 
   const chrome = await page.evaluate(() => ({
-    gone: ['.pane-intro', '.flow', '.pillars', '.tagline', '#desk-block', '#desk-list', '.sidebar', '.side-mark', '.book-grid'].filter(s => document.querySelector(s)),
-    headerButtons: [...document.querySelectorAll('.appbar button')].map(b => b.id),
-    labels: [...document.querySelectorAll('.tabbar [data-pane] span')].map(s => s.textContent),
-    panes: [...document.querySelectorAll('.tabbar [data-pane]')].map(b => b.dataset.pane),
+    gone: ['.appbar', '#btn-search-toggle', '#btn-menu', '.tabbar', '.pane-head', '.pane-intro', '.flow', '.pillars', '.tagline', '#desk-block', '#desk-list', '.sidebar', '.side-mark', '.book-grid'].filter(s => document.querySelector(s)),
+    spatialBar: (() => {
+      const b = document.querySelector('#spatial-bar'), l = document.querySelector('.spatial-line');
+      if (!b || !l) return null;
+      const lr = l.getBoundingClientRect();
+      return { w: Math.round(lr.width), h: Math.round(lr.height), bg: getComputedStyle(b).backgroundColor };
+    })(),
+    intentTabs: [...document.querySelectorAll('#intent-sheet [data-pane] span')].map(s => s.textContent),
+    intentPanes: [...document.querySelectorAll('#intent-sheet [data-pane]')].map(b => b.dataset.pane),
     shelfWords: /书架|书库/.test(document.querySelector('#library').innerText),
-    findHidden: document.querySelector('#find-bar').hidden
+    findHidden: document.querySelector('#find-bar').hidden,
+    kFindHidden: document.querySelector('#k-find-bar').hidden,
+    intentHidden: document.querySelector('#intent-mask').classList.contains('hidden')
   }));
   assert.deepEqual(chrome.gone, []);
-  assert.deepEqual(chrome.headerButtons, ['btn-search-toggle', 'btn-menu']);
-  assert.deepEqual(chrome.labels, ['流', '知识', '星海']); assert.deepEqual(chrome.panes, ['shelf', 'knowledge', 'graph']);
+  assert.deepEqual(chrome.spatialBar, { w: 48, h: 4, bg: 'rgba(0, 0, 0, 0)' });
+  assert.deepEqual(chrome.intentTabs, ['流', '知识', '星海']); assert.deepEqual(chrome.intentPanes, ['shelf', 'knowledge', 'graph']);
   assert.equal(chrome.shelfWords, false); assert.equal(chrome.findHidden, true);
-  report.checks.push('Full-screen shell: no marketing chrome, no 整理 block, header has only search and + controls, nav reads 流 · 知识 · 星海');
+  assert.equal(chrome.kFindHidden, true); assert.equal(chrome.intentHidden, true);
+  report.checks.push('Frameless full-screen shell: zero top bar, zero bottom tab-bar box, only bottom 48x4 breathing hairline; search/filter hidden at rest');
 
   const canvasInk = sel => page.evaluate(s => {
     const c = document.querySelector(s);
@@ -55,15 +63,20 @@ try {
   await sleep(500);
   const emptySky = await page.evaluate(() => ({
     text: document.querySelector('#graph-empty p').textContent,
-    stats: document.querySelector('#cosmos-stats').textContent,
-    appbar: getComputedStyle(document.querySelector('.appbar')).display
+    stats: document.querySelector('#cosmos-stats').textContent
   }));
-  assert.deepEqual(emptySky, { text: '星海尚未点亮', stats: '0 星体 · 0 航线 · 0 星域', appbar: 'none' });
+  assert.deepEqual(emptySky, { text: '星海尚未点亮', stats: '0 星体 · 0 航线 · 0 星域' });
   assert.ok(await canvasInk('#graph-map') > 10, 'empty cosmos still draws a single beacon');
   assert.ok(await canvasInk('#graph-sky') > 20, 'empty cosmos still draws the starfield');
   await page.evaluate(async () => { const w = await import('./workspace.js'); w.showPane('shelf'); });
-  assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('.appbar')).display), 'block');
-  report.checks.push('Empty 星海 renders the starfield, one gentle beacon and 星海尚未点亮; header returns on other panes');
+  report.checks.push('Empty 星海 renders the starfield, one gentle beacon and 星海尚未点亮');
+
+  const intentVisible = () => page.$eval('#intent-mask', el => !el.classList.contains('hidden'));
+  const openIntent = async () => {
+    if (await intentVisible()) return;
+    await page.click('#spatial-bar');
+    await page.waitForFunction(() => !document.querySelector('#intent-mask').classList.contains('hidden'));
+  };
 
   const ids = await page.evaluate(async () => {
     const k = await import('./knowledge.js');
@@ -76,23 +89,32 @@ try {
   assert.equal(await page.evaluate(async () => (await (await import('./knowledge.js')).listNotes()).length), 2);
   report.checks.push('Notes/tags persisted across reload; title link created');
   await page.evaluate(async () => { const w = await import('./workspace.js'); await w.refreshWorkspace(); });
-  await page.$$eval('[data-pane="knowledge"]', buttons => buttons.find(b => b.offsetWidth > 0).click());
+  // Horizontal swipe from 流 -> 知识
+  await page.mouse.move(320, 420); await page.mouse.down(); await page.mouse.move(80, 424, { steps: 6 }); await page.mouse.up();
+  await page.waitForFunction(() => document.querySelector('#pane-knowledge').classList.contains('on'));
   assert.equal(await page.$$eval('#note-list .note-card', a => a.length), 2);
-  const kpane = await page.evaluate(() => ({
-    actions: ['#btn-new-note', '#btn-new-decision', '#btn-export-notes'].map(s => !!document.querySelector(s)?.getClientRects().length),
-    chips: document.querySelectorAll('#tag-filters .chip').length,
+  const kResting = await page.evaluate(() => ({
+    kFindHidden: document.querySelector('#k-find-bar').hidden,
+    firstTop: document.querySelector('#note-list .note-card').getBoundingClientRect().top,
     overflow: document.querySelector('#pane-knowledge').scrollWidth > document.querySelector('#pane-knowledge').clientWidth
   }));
-  assert.deepEqual(kpane.actions, [true, true, true]); assert.ok(kpane.chips >= 7); assert.equal(kpane.overflow, false);
+  assert.equal(kResting.kFindHidden, true); assert.ok(kResting.firstTop < 48, `notes start near top (${kResting.firstTop})`); assert.equal(kResting.overflow, false);
+  await sleep(1250);
+  await page.screenshot({ path: path.resolve(root, 'test-results/zone-knowledge.png') });
+  // Open search in 知识 via intent sheet
+  await openIntent();
+  await page.click('#btn-intent-search');
+  await page.waitForFunction(() => !document.querySelector('#k-find-bar').hidden);
+  assert.ok(await page.$$eval('#tag-filters .chip', a => a.length) >= 7);
   await page.type('#note-search', 'Zone test B');
   await page.waitForFunction(() => document.querySelectorAll('#note-list .note-card').length === 1);
-  await page.$eval('#note-search', el => { el.value = ''; el.dispatchEvent(new Event('input', { bubbles: true })); });
+  await page.click('#note-search-clear');
   await page.waitForFunction(() => document.querySelectorAll('#note-list .note-card').length === 2);
-  await sleep(500);
-  await page.screenshot({ path: path.resolve(root, 'test-results/zone-knowledge.png') });
+  await page.click('#btn-k-find-close');
+  assert.equal(await page.$eval('#k-find-bar', el => el.hidden), true);
   await page.evaluate(async () => { const w = await import('./workspace.js'); w.showPane('graph'); w.fitGraph(); });
   await page.waitForFunction(() => document.querySelectorAll('#graph-world .gnode').length === 2);
-  report.checks.push('Knowledge pane (new note, judgment, outline, search, tag chips) and 星海 graph render both notes');
+  report.checks.push('Horizontal swipe enters frameless 知识 pane (notes start near top, search/chips open on demand) and 星海 renders both notes');
   await page.evaluate(async ({ a, b }) => {
     const k = await import('./knowledge.js');
     await k.unlinkPair(a, b);
@@ -105,40 +127,39 @@ try {
   report.checks.push('Unlink both directions, pair deduplication and deletion cleanup');
 
   await page.evaluate(async () => { const w = await import('./workspace.js'); w.showPane('shelf'); });
-  const menuVisible = () => page.$eval('#menu-mask', el => !el.classList.contains('hidden'));
-  await page.click('#btn-menu');
-  await page.waitForFunction(() => !document.querySelector('#menu-mask').classList.contains('hidden'));
-  const menu = await page.evaluate(() => ({
-    expanded: document.querySelector('#btn-menu').getAttribute('aria-expanded'),
-    items: [...document.querySelectorAll('#menu-sheet .menu-item')].filter(b => b.getClientRects().length).map(b => b.id),
+  await openIntent();
+  await sleep(400);
+  const intent = await page.evaluate(() => ({
+    expanded: document.querySelector('#spatial-bar').getAttribute('aria-expanded'),
+    items: [...document.querySelectorAll('#intent-sheet .menu-item')].filter(b => b.getClientRects().length).map(b => b.id),
     fileInput: !!document.querySelector('#file-input[type=file]'),
     focus: document.activeElement?.id,
-    inView: (() => { const r = document.querySelector('#menu-sheet').getBoundingClientRect(); return r.left >= 0 && r.right <= innerWidth; })()
+    inView: (() => { const r = document.querySelector('#intent-sheet').getBoundingClientRect(); return r.left >= 0 && r.right <= innerWidth && r.bottom <= innerHeight + 1; })()
   }));
-  assert.equal(menu.expanded, 'true');
-  assert.deepEqual(menu.items, ['btn-import', 'btn-select-mode', 'btn-excerpts', 'btn-appearance', 'btn-ai-settings']);
-  assert.equal(menu.fileInput, true); assert.equal(menu.focus, 'btn-import'); assert.equal(menu.inView, true);
+  assert.equal(intent.expanded, 'true');
+  assert.deepEqual(intent.items, ['btn-intent-search', 'btn-import', 'btn-new-note', 'btn-new-decision', 'btn-select-mode', 'btn-export-notes', 'btn-excerpts', 'btn-appearance', 'btn-ai-settings']);
+  assert.equal(intent.fileInput, true); assert.equal(intent.focus, 'btn-intent-search'); assert.equal(intent.inView, true);
+  await page.screenshot({ path: path.resolve(root, 'test-results/zone-intent-sheet.png') });
   await page.keyboard.press('ArrowDown');
-  assert.equal(await page.evaluate(() => document.activeElement?.id), 'btn-select-mode');
+  assert.equal(await page.evaluate(() => document.activeElement?.id), 'btn-import');
   await page.keyboard.press('Escape');
-  assert.equal(await menuVisible(), false);
-  assert.equal(await page.evaluate(() => document.activeElement?.id), 'btn-menu');
-  await page.click('#btn-menu');
-  await page.waitForFunction(() => !document.querySelector('#menu-mask').classList.contains('hidden'));
+  assert.equal(await intentVisible(), false);
+  assert.equal(await page.evaluate(() => document.activeElement?.id), 'spatial-bar');
+  await openIntent();
   await page.click('#btn-ai-settings');
   assert.equal(await page.$eval('#settings-mask', el => el.classList.contains('hidden')), false);
-  assert.equal(await menuVisible(), false);
+  assert.equal(await intentVisible(), false);
   await page.click('#ai-settings-cancel');
   assert.equal(await page.$eval('#settings-mask', el => el.classList.contains('hidden')), true);
-  report.checks.push('+ menu opens as a popover (aria-expanded, arrow keys, Escape) with 导入/整理/摘录/外观/AI; AI settings opens/closes without network calls');
+  report.checks.push('Bottom hairline opens unified frosted Intent Sheet (spaces + actions, arrow keys, Escape); AI settings opens/closes without network calls');
 
-  await page.click('#btn-search-toggle');
+  await openIntent();
+  await page.click('#btn-intent-search');
   assert.equal(await page.$eval('#find-bar', el => !el.hidden && el.getClientRects().length > 0), true);
-  assert.equal(await page.$eval('#btn-search-toggle', el => el.getAttribute('aria-expanded')), 'true');
   assert.equal(await page.evaluate(() => document.activeElement?.id), 'search');
-  await page.click('#btn-search-toggle');
+  await page.click('#btn-find-close');
   assert.equal(await page.$eval('#find-bar', el => el.hidden), true);
-  report.checks.push('Search toggle reveals and hides the inline search + sort bar');
+  report.checks.push('Intent sheet search reveals and closes the inline search + sort bar');
 
   // ---- Full-width message list and manual overlapping-card stacks ----
   const LONG = '深度工作 Deep Work: Rules for Focused Success in a Distracted World（一个很长的中英混排书名，用来检查不会被截断）';
@@ -196,20 +217,19 @@ try {
   const expanded = () => page.$eval('.stack-head', el => el.getAttribute('aria-expanded'));
   const picking = () => page.evaluate(() => document.querySelector('#library').classList.contains('picking'));
   const enterSelect = async () => {
-    await page.click('#btn-menu');
-    await page.waitForFunction(() => !document.querySelector('#menu-mask').classList.contains('hidden'));
+    await openIntent();
     await page.click('#btn-select-mode');
     await page.waitForFunction(() => document.querySelector('#library').classList.contains('picking') && !document.querySelector('#pick-bar').hidden);
   };
 
   await enterSelect();
   const pickShape = await page.evaluate(() => ({
-    tabbarOff: getComputedStyle(document.querySelector('.tabbar')).pointerEvents === 'none',
+    dockOff: getComputedStyle(document.querySelector('#spatial-bar')).pointerEvents === 'none',
     count: document.querySelector('#manage-count').textContent,
     stackDisabled: document.querySelector('#btn-stack-picked').disabled,
     buttons: [...document.querySelectorAll('#pick-bar button')].filter(b => b.getClientRects().length).map(b => b.textContent)
   }));
-  assert.equal(pickShape.tabbarOff, true); assert.equal(pickShape.stackDisabled, true);
+  assert.equal(pickShape.dockOff, true); assert.equal(pickShape.stackDisabled, true);
   assert.deepEqual(pickShape.buttons, ['建堆', '删除', '完成']);
   for (const id of ['z-a', 'z-b', 'z-c', 'z-d']) await tap(`#grid .book[data-id="${id}"]`);
   assert.equal(await page.$eval('#manage-count', el => el.textContent), '已选 4');
@@ -287,6 +307,7 @@ try {
     const hits = rows.map(r => { r.scrollIntoView({ block: 'center' }); const c = r.getBoundingClientRect(); return document.elementFromPoint(c.left + 30, c.top + c.height / 2)?.closest('.book') === r; });
     const wrap = items.querySelector('.row-wrap');
     const out = wrap.querySelector('.row-out');
+    const sec = document.querySelector('.stack.is-open');
     return {
       hidden: items.hidden, rows: rows.length, overlap, hits, focus,
       reader: document.querySelector('#reader').classList.contains('active'),
@@ -294,18 +315,21 @@ try {
       more: document.querySelector('.stack-more-btn')?.getAttribute('aria-haspopup'),
       menuItemsHidden: ['.stack-rename', '.stack-ungroup'].every(s => document.querySelector(s) && !document.querySelector(s).getClientRects().length),
       outLabel: out.getAttribute('aria-label'), outWidth: out.getBoundingClientRect().width,
-      titleShare: wrap.querySelector('.t').getBoundingClientRect().width / wrap.getBoundingClientRect().width
+      titleShare: wrap.querySelector('.t').getBoundingClientRect().width / wrap.getBoundingClientRect().width,
+      noNestedBoxes: getComputedStyle(sec).backgroundColor === 'rgba(0, 0, 0, 0)' && getComputedStyle(sec).boxShadow === 'none'
+        && getComputedStyle(items).backgroundColor === 'rgba(0, 0, 0, 0)' && getComputedStyle(items).boxShadow === 'none'
     };
   });
   assert.equal(openShape.hidden, false); assert.equal(openShape.rows, 4); assert.equal(openShape.overlap, false);
   assert.deepEqual(openShape.hits, [true, true, true, true]); assert.equal(openShape.reader, false); assert.equal(openShape.focus, true);
   assert.equal(openShape.collapse, '收起'); assert.equal(openShape.more, 'menu'); assert.equal(openShape.menuItemsHidden, true);
   assert.equal(openShape.outLabel, '移出卡片堆'); assert.ok(openShape.outWidth <= 44); assert.ok(openShape.titleShare > 0.5, `title keeps room (${openShape.titleShare})`);
+  assert.equal(openShape.noNestedBoxes, true, 'expanded stack has zero nested box-in-box borders/backgrounds');
   assert.ok(Math.abs(after - before) < 1.5, `expand keeps the stack header anchored (${before} -> ${after})`);
   assert.equal((await stackState()).stacks[0].collapsed, false);
   await page.$eval('[data-stack]', el => el.scrollIntoView({ block: 'start' }));
   await page.screenshot({ path: path.resolve(root, 'test-results/zone-shelf-expanded.png') });
-  report.checks.push('Tapping the stack expands in place (aria-expanded=true) into independent full-width rows with 收起 pill, ⋯ menu and slim 移出卡片堆 icon; no item opened; focus and anchor kept');
+  report.checks.push('Tapping the stack expands in place (aria-expanded=true) with zero nested double-box into independent full-width rows; focus and anchor kept');
 
   await tap('.stack-more-btn');
   await page.waitForFunction(() => document.querySelector('.stack-more-btn')?.getAttribute('aria-expanded') === 'true' && document.querySelector('.stack-rename').getClientRects().length > 0);
@@ -331,7 +355,8 @@ try {
   assert.equal((await stackState()).stacks[0].collapsed, true);
   report.checks.push('⋯ menu (keyboard + Escape) renames the stack; 移出卡片堆 keeps the item; 收起 collapses with focus back on the header');
 
-  await page.click('#btn-search-toggle');
+  await openIntent();
+  await page.click('#btn-intent-search');
   await page.type('#search', 'Thinking');
   await page.waitForFunction(() => document.querySelector('.stack-head')?.getAttribute('aria-expanded') === 'true');
   const searchShape = await page.evaluate(() => ({
@@ -360,7 +385,7 @@ try {
   assert.deepEqual(back, { q: '原则', find: true, expanded: 'true', focus: 'z-c' });
   await tap('#search-chip');
   await page.waitForFunction(() => document.querySelector('.stack-head')?.getAttribute('aria-expanded') === 'false');
-  await page.click('#btn-search-toggle');
+  await page.click('#btn-find-close');
   assert.equal(await page.$eval('#find-bar', el => el.hidden), true);
   report.checks.push('Opening an item from an expanded stack and returning keeps search text, expansion and focus');
 
@@ -424,10 +449,10 @@ try {
 
   const setAppearance = async want => {
     for (let i = 0; i < 3 && (await page.evaluate(() => document.documentElement.dataset.appearance)) !== want; i++) {
-      if (!(await menuVisible())) { await page.click('#btn-menu'); await page.waitForFunction(() => !document.querySelector('#menu-mask').classList.contains('hidden')); }
+      await openIntent();
       await page.click('#btn-appearance');
     }
-    if (await menuVisible()) await page.keyboard.press('Escape');
+    if (await intentVisible()) await page.keyboard.press('Escape');
   };
   await setAppearance('dark');
   const dark = await page.evaluate(() => ({
@@ -442,7 +467,7 @@ try {
   await page.screenshot({ path: path.resolve(root, 'test-results/zone-shelf-dark.png') });
   await setAppearance('system');
   assert.equal(await page.evaluate(() => document.documentElement.dataset.appearance), 'system');
-  report.checks.push('Appearance cycles to dark from the menu (shell only, reading theme untouched) and back to system');
+  report.checks.push('Appearance cycles to dark from the intent sheet (shell only, reading theme untouched) and back to system');
 
   for (const width of [390, 1100]) {
     await page.setViewport({ width, height: 844 });
@@ -455,27 +480,25 @@ try {
         const pane = document.querySelector('#pane-shelf');
         const grid = document.querySelector('#grid');
         const pr = pane.getBoundingClientRect(), gr = grid.getBoundingClientRect();
-        const tab = document.querySelector('.tabbar').getBoundingClientRect();
-        const h1 = document.querySelector('h1').getBoundingClientRect();
+        const bar = document.querySelector('#spatial-bar').getBoundingClientRect();
         return {
           doc: document.documentElement.scrollWidth > innerWidth,
           pane: pane.scrollWidth > pane.clientWidth,
           rowsFull: [...document.querySelectorAll('#grid > .row-wrap, #grid > .stack')].every(r => Math.abs(r.getBoundingClientRect().width - gr.width) < 1),
           width: gr.width, fill: gr.width / pane.clientWidth,
           centered: Math.abs((gr.left - pr.left) - (pr.left + pane.clientWidth - gr.right)) < 2,
-          titleAligned: Math.abs(h1.left - gr.left) < 2,
-          tabIn: tab.left >= 0 && tab.right <= innerWidth,
+          barIn: bar.left >= 0 && bar.right <= innerWidth,
           clipped: [...grid.querySelectorAll('.book .t, .stack-name')].filter(t => t.scrollWidth > t.clientWidth + 1 || t.scrollHeight > t.clientHeight + 1).length
         };
       });
       assert.equal(o.doc, false, `document overflow at ${width}`); assert.equal(o.pane, false, `stream overflow at ${width}`);
-      assert.equal(o.rowsFull, true); assert.equal(o.centered, true); assert.equal(o.titleAligned, true); assert.equal(o.tabIn, true); assert.equal(o.clipped, 0);
+      assert.equal(o.rowsFull, true); assert.equal(o.centered, true); assert.equal(o.barIn, true); assert.equal(o.clipped, 0);
       if (width === 1100 && !open) { await page.$eval('#pane-shelf', el => { el.scrollTop = 0; }); await sleep(400); await page.screenshot({ path: path.resolve(root, 'test-results/zone-desktop.png') }); }
       if (width === 390) assert.ok(o.fill > 0.85, `stream spans the phone width (${o.fill})`);
       else assert.ok(o.width >= 700 && o.width <= 770, `desktop measure is editorial (${o.width})`);
     }
   }
-  report.checks.push('Stream and stacks (collapsed and expanded) have no horizontal overflow at 390 px; desktop 1100 px uses a centered ~760 px measure aligned with the title');
+  report.checks.push('Stream and stacks (collapsed and expanded) have no horizontal overflow at 390 px; desktop 1100 px uses a centered ~760 px measure');
   await page.setViewport({ width: 390, height: 844, isMobile: true, hasTouch: true });
 
   // ---- 星海 deep-space knowledge atlas ----
@@ -503,7 +526,7 @@ try {
     const pills = [...document.querySelectorAll('.cosmos-hud .hud-pill')].map(p => p.getBoundingClientRect());
     return {
       stats: document.querySelector('#cosmos-stats').textContent,
-      appbar: getComputedStyle(document.querySelector('.appbar')).display,
+      hudBorderless: [...document.querySelectorAll('.cosmos-hud .hud-pill')].every(p => getComputedStyle(p).backgroundColor === 'rgba(0, 0, 0, 0)' && getComputedStyle(p).boxShadow === 'none'),
       fullBleed: stage.top <= 1 && stage.left <= 1 && Math.abs(stage.width - innerWidth) < 1 && Math.abs(stage.height - innerHeight) < 2,
       beacons: document.querySelectorAll('#graph-world .gnode.mag-beacon').length,
       faint: document.querySelectorAll('#graph-world .gnode.mag-faint').length,
@@ -515,7 +538,7 @@ try {
     };
   });
   assert.equal(atlas.stats, '9 星体 · 4 航线 · 3 星域');
-  assert.equal(atlas.appbar, 'none'); assert.equal(atlas.fullBleed, true);
+  assert.equal(atlas.hudBorderless, true); assert.equal(atlas.fullBleed, true);
   assert.ok(atlas.beacons >= 2, 'linked/concept notes become primary stars'); assert.equal(atlas.faint, 2);
   assert.equal(atlas.emptyHidden, true); assert.equal(atlas.buttons, true);
   assert.equal(atlas.hudInView, true); assert.equal(atlas.hudApart, true); assert.ok(atlas.lod);
@@ -538,14 +561,14 @@ try {
   await page.waitForFunction(() => !document.querySelector('#graph-card').classList.contains('hidden'));
   await sleep(700);
   const card = await page.evaluate(() => {
-    const c = document.querySelector('#graph-card'), tab = document.querySelector('.tabbar').getBoundingClientRect();
+    const c = document.querySelector('#graph-card'), line = document.querySelector('.spatial-line').getBoundingClientRect();
     return {
       cls: c.querySelector('.gc-class').textContent, title: c.querySelector('.gc-title').textContent,
       actions: [...c.querySelectorAll('.gc-actions button')].map(b => b.textContent),
       close: !!c.querySelector('.gc-close'), links: c.querySelector('.gc-links').textContent,
       on: document.querySelector('#graph-world .gnode.on')?.dataset.id,
       dim: document.querySelectorAll('#graph-world .gnode.dim').length,
-      above: c.getBoundingClientRect().bottom <= tab.top + 0.5,
+      above: c.getBoundingClientRect().bottom <= line.top + 0.5,
       inView: c.getBoundingClientRect().left >= 0 && c.getBoundingClientRect().right <= innerWidth
     };
   });

@@ -2,11 +2,20 @@
 // 天空画布不倾斜；星图平面（画布 + 按钮）在 2.5D 模式下用 CSS 3D 倾斜，按钮反向旋转成为立起的标牌。
 const TAU = Math.PI * 2;
 const GOLDEN = 2.399963229728653;
-const PALETTE = [192, 226, 268, 42, 168, 318, 206, 24];
+// 史诗深空星海光谱（JWST 船底座/猎户座/创世之柱/船帆座/玫瑰星云 多色体积梯度）
+const BIOMES = [
+  { hue: 196, deep: [14, 52, 118], mid: [44, 168, 224], core: [255, 222, 152] }, // 船底座：深钴蓝 → 电离冰青 → 琥珀金核
+  { hue: 34,  deep: [44, 34, 108], mid: [196, 86, 98],  core: [255, 212, 134] }, // 猎户炽焰：深靛蓝 → 玫瑰电离氢 → 炽金核
+  { hue: 176, deep: [10, 62, 84],  mid: [42, 194, 186], core: [216, 250, 255] }, // 创世之柱：深渊青 → 极光碧 → 冰白蓝核
+  { hue: 214, deep: [20, 42, 116], mid: [78, 146, 252], core: [232, 244, 255] }, // 船帆遗迹：深空蓝 → 炽天青 → 银白核
+  { hue: 28,  deep: [68, 22, 46],  mid: [224, 118, 56], core: [255, 232, 178] }  // 玫瑰余烬：暗绯空 → 熔金 → 白金恒星核
+];
+const PALETTE = BIOMES.map(b => b.hue);
 export const TILT_DEG = 34;
 const TILT_PAN = 1 / Math.cos(TILT_DEG * Math.PI / 180);
-const MAG_LABEL = { beacon: '主星', star: '恒星', faint: '暗星' };
+const MAG_LABEL = { beacon: '主星', star: '恒星', faint: '未知信号' };
 const UI_FONT = '-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Hiragino Sans GB","Noto Sans SC","Helvetica Neue",sans-serif';
+const MONO_FONT = '"SF Mono","JetBrains Mono","Geist Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace';
 const K_MIN = 0.18, K_MAX = 3;
 
 export const magLabel = m => MAG_LABEL[m] || '恒星';
@@ -176,75 +185,127 @@ export function layoutCosmos(notes, links, kindOf = () => 'note') {
   };
 }
 
-/* ---------- 预渲染的光斑与星云 ---------- */
+/* ---------- 预渲染的光斑与域扭曲 fBm 体积星云 ---------- */
 function canvas(w, h = w) { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; }
-function glowSprite(hue, sat = 90) {
+const smoothstep = (e0, e1, x) => { const t = clamp((x - e0) / (e1 - e0), 0, 1); return t * t * (3 - 2 * t); };
+function makeNoise(seed) {
+  const rnd = seeded(seed);
+  const perm = new Uint8Array(512), vals = new Float32Array(256);
+  for (let i = 0; i < 256; i++) { perm[i] = i; vals[i] = rnd(); }
+  for (let i = 255; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); const t = perm[i]; perm[i] = perm[j]; perm[j] = t; }
+  for (let i = 0; i < 256; i++) perm[i + 256] = perm[i];
+  const v = (x, y) => {
+    const xi = Math.floor(x), yi = Math.floor(y);
+    const xf = x - xi, yf = y - yi;
+    const u = xf * xf * (3 - 2 * xf), w = yf * yf * (3 - 2 * yf);
+    const X = xi & 255, Y = yi & 255;
+    const aa = vals[perm[perm[X] + Y]], ba = vals[perm[perm[X + 1] + Y]];
+    const ab = vals[perm[perm[X] + Y + 1]], bb = vals[perm[perm[X + 1] + Y + 1]];
+    return (aa + (ba - aa) * u) * (1 - w) + (ab + (bb - ab) * u) * w;
+  };
+  return (x, y, oct = 4) => {
+    let sum = 0, amp = 0.5, freq = 1, norm = 0;
+    for (let i = 0; i < oct; i++) { sum += v(x * freq, y * freq) * amp; norm += amp; amp *= 0.5; freq *= 2.04; }
+    return sum / norm;
+  };
+}
+function glowSprite(hue, sat = 82) {
   const S = 128, c = canvas(S), g = c.getContext('2d');
   const grd = g.createRadialGradient(S / 2, S / 2, 0, S / 2, S / 2, S / 2);
-  grd.addColorStop(0, `hsla(${hue},${sat}%,98%,1)`);
-  grd.addColorStop(0.07, `hsla(${hue},${sat}%,88%,.9)`);
-  grd.addColorStop(0.2, `hsla(${hue},${sat}%,68%,.38)`);
-  grd.addColorStop(0.45, `hsla(${hue},${sat}%,58%,.1)`);
-  grd.addColorStop(1, `hsla(${hue},${sat}%,50%,0)`);
+  grd.addColorStop(0, 'rgba(255,255,255,1)');
+  grd.addColorStop(0.07, `hsla(${hue},${Math.min(sat, 72)}%,92%,.95)`);
+  grd.addColorStop(0.2, `hsla(${hue},${sat}%,70%,.42)`);
+  grd.addColorStop(0.45, `hsla(${hue},${sat}%,55%,.11)`);
+  grd.addColorStop(1, `hsla(${hue},${sat}%,45%,0)`);
   g.fillStyle = grd;
   g.fillRect(0, 0, S, S);
   return c;
 }
 function nebulaSprite(hue, seed, frontier) {
-  const S = 360, c = canvas(S), g = c.getContext('2d'), rnd = seeded(seed);
-  const blob = (x, y, r, stops) => {
-    const grd = g.createRadialGradient(x, y, 0, x, y, r);
-    stops.forEach(([o, col]) => grd.addColorStop(o, col));
-    g.fillStyle = grd;
-    g.beginPath(); g.arc(x, y, r, 0, TAU); g.fill();
-  };
-  if (frontier) {
-    for (let i = 0; i < 10; i++) {
-      const x = S / 2 + (rnd() - 0.5) * S * 0.4, y = S / 2 + (rnd() - 0.5) * S * 0.4, r = S * (0.2 + rnd() * 0.24);
-      blob(x, y, r, [[0, 'rgba(2,3,10,.62)'], [0.6, 'rgba(2,3,10,.3)'], [1, 'rgba(2,3,10,0)']]);
+  const N = 160, S = 380, rnd = seeded(seed);
+  const fbm = makeNoise(seed ^ 0x9e3779b9);
+  const lo = canvas(N), lg = lo.getContext('2d'), img = lg.createImageData(N, N), d = img.data;
+  const biome = BIOMES.find(b => b.hue === hue) || BIOMES[seed % BIOMES.length];
+  const ang = rnd() * TAU, ca = Math.cos(ang), sa = Math.sin(ang);
+  const sx = 1.0, sy = 0.72 + rnd() * 0.22; // 非正圆有机星云拉长比
+  for (let y = 0; y < N; y++) {
+    const ny = (y / N - 0.5) * 2;
+    for (let x = 0; x < N; x++) {
+      const nx = (x / N - 0.5) * 2;
+      const rx = (nx * ca - ny * sa) * sx, ry = (nx * sa + ny * ca) * sy;
+      const dist = Math.hypot(rx, ry);
+      if (dist >= 1.05) continue;
+      // 域扭曲 fBm：生成真实的沸腾星云山脊与自然边缘
+      const wx = fbm(nx * 2.1 + 1.7, ny * 2.1 + 4.3, 3);
+      const wy = fbm(nx * 2.1 + 8.3, ny * 2.1 + 2.8, 3);
+      const n1 = fbm(nx * 2.4 + (wx - 0.5) * 1.65, ny * 2.4 + (wy - 0.5) * 1.65, 4);
+      const n2 = fbm(nx * 4.2 + (wy - 0.5) * 1.4 + 5.1, ny * 4.2 - (wx - 0.5) * 1.4, 3);
+      const edgeNoise = (n1 - 0.5) * 0.42;
+      const mask = 1 - smoothstep(0.18, 0.96, dist + edgeNoise);
+      if (mask <= 0.002) continue;
+      const idx = (y * N + x) * 4;
+      if (frontier) {
+        // 未知暗物质疆域：中心吞噬星光的深渊 + 边缘微弱幽青电离雾环
+        const rim = smoothstep(0.35, 0.78, dist) * (1 - smoothstep(0.78, 1.02, dist)) * n1;
+        const coreVoid = (1 - smoothstep(0.05, 0.76, dist + edgeNoise * 0.6)) * (0.58 + n2 * 0.25);
+        d[idx] = Math.round(14 + rim * 76);
+        d[idx + 1] = Math.round(28 + rim * 175);
+        d[idx + 2] = Math.round(48 + rim * 218);
+        d[idx + 3] = Math.round(clamp(coreVoid * 0.78 + rim * 0.42, 0, 0.85) * 255);
+        continue;
+      }
+      // 韦伯星云亮脊（ridge）+ 自然暗尘埃空洞（dust）
+      const ridge = Math.pow(1 - Math.abs(n2 * 2 - 1), 2.4);
+      const dust = smoothstep(0.56, 0.84, fbm(nx * 3.1 - 3.4, ny * 3.1 + 6.7, 3));
+      const dens = clamp((n1 * 0.85 + ridge * 0.55) * mask * (1 - dust * 0.58), 0, 1);
+      const coreW = smoothstep(0.42, 0.92, dens * (1 - dist * 0.45) + ridge * 0.28 * mask);
+      const midW = smoothstep(0.14, 0.62, dens);
+      const [dr, dg, db] = biome.deep, [mr, mg, mb] = biome.mid, [cr, cg, cb] = biome.core;
+      let r = dr + (mr - dr) * midW + (cr - mr) * coreW;
+      let gr = dg + (mg - dg) * midW + (cg - mg) * coreW;
+      let b = db + (mb - db) * midW + (cb - mb) * coreW;
+      const alpha = clamp(Math.pow(dens, 0.82) * 0.88, 0, 0.86);
+      d[idx] = Math.round(clamp(r, 0, 255));
+      d[idx + 1] = Math.round(clamp(gr, 0, 255));
+      d[idx + 2] = Math.round(clamp(b, 0, 255));
+      d[idx + 3] = Math.round(alpha * 255);
     }
+  }
+  lg.putImageData(img, 0, 0);
+  const c = canvas(S), g = c.getContext('2d');
+  g.imageSmoothingEnabled = true;
+  g.imageSmoothingQuality = 'high';
+  g.drawImage(lo, 0, 0, S, S);
+  if (!frontier) {
+    // 沿高密度星云脊线播撒高锐度育星区微星团
     g.globalCompositeOperation = 'lighter';
-    for (let i = 0; i < 5; i++) {
-      const x = S / 2 + (rnd() - 0.5) * S * 0.46, y = S / 2 + (rnd() - 0.5) * S * 0.46, r = S * (0.12 + rnd() * 0.16);
-      blob(x, y, r, [[0, 'hsla(226,22%,46%,.07)'], [1, 'hsla(226,22%,40%,0)']]);
+    const M = S / 2;
+    for (let i = 0; i < 280; i++) {
+      const rx = (rnd() - 0.5) * 1.5, ry = (rnd() - 0.5) * 1.5;
+      if (Math.hypot(rx, ry) > 0.78) continue;
+      const n = fbm(rx * 2.4 + 2.1, ry * 2.4 + 3.7, 3);
+      if (n < 0.42) continue;
+      const px = M + rx * M, py = M + ry * M;
+      const sh = rnd() < 0.3 ? 40 : rnd() < 0.7 ? biome.hue : 206;
+      g.fillStyle = `hsla(${sh},65%,${86 + rnd() * 14}%,${0.12 + (n - 0.42) * 0.9})`;
+      const sz = rnd() < 0.85 ? 1 : 1.7;
+      g.fillRect(px, py, sz, sz);
     }
-    return c;
-  }
-  g.globalCompositeOperation = 'lighter';
-  blob(S / 2, S / 2, S * 0.48, [[0, `hsla(${hue},70%,40%,.16)`], [0.5, `hsla(${hue},70%,32%,.07)`], [1, `hsla(${hue},70%,30%,0)`]]);
-  for (let i = 0; i < 9; i++) {
-    const h = hue + (rnd() - 0.5) * 56;
-    const x = S / 2 + (rnd() - 0.5) * S * 0.36, y = S / 2 + (rnd() - 0.5) * S * 0.36, r = S * (0.14 + rnd() * 0.26);
-    blob(x, y, r, [[0, `hsla(${h},88%,62%,${0.14 + rnd() * 0.12})`], [0.55, `hsla(${h},82%,48%,.05)`], [1, `hsla(${h},80%,45%,0)`]]);
-  }
-  for (let i = 0; i < 4; i++) {
-    g.save();
-    g.translate(S / 2 + (rnd() - 0.5) * S * 0.24, S / 2 + (rnd() - 0.5) * S * 0.24);
-    g.rotate(rnd() * TAU);
-    g.scale(1, 0.24 + rnd() * 0.16);
-    blob(0, 0, S * (0.26 + rnd() * 0.12), [[0, `hsla(${hue + (rnd() - 0.5) * 40},95%,74%,.13)`], [1, `hsla(${hue},90%,60%,0)`]]);
-    g.restore();
-  }
-  for (let i = 0; i < 220; i++) {
-    const a = rnd() * TAU, r = Math.pow(rnd(), 0.65) * S * 0.44;
-    g.fillStyle = `hsla(${hue + (rnd() - 0.5) * 50},70%,${80 + rnd() * 15}%,${0.06 + rnd() * 0.3})`;
-    const s = rnd() < 0.88 ? 0.9 : 1.8;
-    g.fillRect(S / 2 + Math.cos(a) * r, S / 2 + Math.sin(a) * r, s, s);
   }
   return c;
 }
 function skyField(seed = 20261120) {
   const rnd = seeded(seed);
   const layers = [
-    { f: 0.02, n: 260, s: [0.5, 1.0], a: [0.12, 0.42] },
-    { f: 0.06, n: 120, s: [0.7, 1.4], a: [0.28, 0.7] },
-    { f: 0.13, n: 34, s: [1.1, 2.0], a: [0.55, 0.95] }
+    { f: 0.015, n: 380, s: [0.45, 0.95], a: [0.12, 0.44] },
+    { f: 0.05,  n: 170, s: [0.7, 1.4],   a: [0.28, 0.74] },
+    { f: 0.11,  n: 44,  s: [1.1, 2.05],  a: [0.58, 0.96] }
   ];
   return layers.map(L => ({
     f: L.f,
     stars: Array.from({ length: L.n }, () => ({
       x: rnd(), y: rnd(), s: L.s[0] + rnd() * (L.s[1] - L.s[0]), a: L.a[0] + rnd() * (L.a[1] - L.a[0]),
-      h: rnd() < 0.18 ? 38 : rnd() < 0.5 ? 205 : 228, sat: rnd() < 0.7 ? 30 : 70, ph: rnd() * TAU, sp: 0.4 + rnd() * 1.4
+      h: rnd() < 0.24 ? 38 : rnd() < 0.72 ? 204 : 190, sat: rnd() < 0.6 ? 32 : 70, ph: rnd() * TAU, sp: 0.35 + rnd() * 1.3
     }))
   }));
 }
@@ -305,24 +366,46 @@ export class Cosmos {
     this.kick();
   }
   paintBackdrop(W, H, dpr) {
+    // 域扭曲 fBm 银河星河全景背景（深渊宇宙 + 蜿蜒银心辉光 + 星际暗尘裂隙）
+    const bw = 220, bh = Math.max(120, Math.round(bw * H / W));
+    const lo = canvas(bw, bh), lg = lo.getContext('2d'), img = lg.createImageData(bw, bh), d = img.data;
+    const fbm = makeNoise(42422026);
+    for (let y = 0; y < bh; y++) {
+      const ny = y / bh - 0.5;
+      for (let x = 0; x < bw; x++) {
+        const nx = x / bw - 0.5;
+        // 对角银河旋臂带坐标系
+        const u = nx * 0.82 - ny * 0.57;
+        const v = nx * 0.57 + ny * 0.82;
+        const wx = fbm(u * 2.6 + 2.4, v * 2.6 + 1.1, 3);
+        const wy = fbm(u * 2.6 + 7.1, v * 2.6 + 5.8, 3);
+        const cloud = fbm(u * 2.8 + (wx - 0.5) * 1.4, v * 2.8 + (wy - 0.5) * 1.4, 4);
+        const dust = fbm(u * 4.2 - 1.9, v * 4.2 + 3.4, 3);
+        const band = Math.exp(-Math.pow((v + (wx - 0.5) * 0.22) * 3.8, 2));
+        const core = Math.exp(-Math.pow(u * 2.1, 2)) * band;
+        const rift = smoothstep(0.48, 0.78, dust) * band * 0.72;
+        const glow = clamp(band * (0.25 + cloud * 0.95) * (1 - rift), 0, 1);
+        const r = 3 + glow * 26 + core * cloud * 68;
+        const gr = 5 + glow * 44 + core * cloud * 58;
+        const b = 12 + glow * 78 + core * cloud * 48;
+        const idx = (y * bw + x) * 4;
+        d[idx] = Math.round(clamp(r, 0, 255));
+        d[idx + 1] = Math.round(clamp(gr, 0, 255));
+        d[idx + 2] = Math.round(clamp(b, 0, 255));
+        d[idx + 3] = 255;
+      }
+    }
+    lg.putImageData(img, 0, 0);
     const c = canvas(Math.round(W * dpr), Math.round(H * dpr)), g = c.getContext('2d');
+    g.imageSmoothingEnabled = true;
+    g.imageSmoothingQuality = 'high';
+    g.drawImage(lo, 0, 0, c.width, c.height);
+    // 微弱深空边缘暗角，聚焦中心星海
     g.scale(dpr, dpr);
-    const lin = g.createLinearGradient(0, 0, 0, H);
-    lin.addColorStop(0, '#03040c'); lin.addColorStop(0.45, '#070a1d'); lin.addColorStop(1, '#04050e');
-    g.fillStyle = lin; g.fillRect(0, 0, W, H);
-    const glow = (x, y, r, col) => { const grd = g.createRadialGradient(x, y, 0, x, y, r); grd.addColorStop(0, col); grd.addColorStop(1, 'rgba(0,0,0,0)'); g.fillStyle = grd; g.fillRect(0, 0, W, H); };
-    g.globalCompositeOperation = 'lighter';
-    const M = Math.max(W, H);
-    glow(W * 0.16, H * 0.1, M * 0.62, 'rgba(58,40,140,.30)');
-    glow(W * 0.92, H * 0.86, M * 0.7, 'rgba(10,90,120,.22)');
-    glow(W * 0.62, H * 0.42, M * 0.42, 'rgba(90,40,120,.12)');
-    g.save();
-    g.translate(W * 0.5, H * 0.5); g.rotate(-0.5); g.scale(1, 0.2);
-    const band = g.createRadialGradient(0, 0, 0, 0, 0, M * 0.8);
-    band.addColorStop(0, 'rgba(120,140,220,.08)'); band.addColorStop(1, 'rgba(120,140,220,0)');
-    g.fillStyle = band;
-    g.beginPath(); g.arc(0, 0, M * 0.8, 0, TAU); g.fill();
-    g.restore();
+    const vig = g.createRadialGradient(W * 0.5, H * 0.48, Math.min(W, H) * 0.28, W * 0.5, H * 0.5, Math.max(W, H) * 0.78);
+    vig.addColorStop(0, 'rgba(0,0,0,0)');
+    vig.addColorStop(1, 'rgba(1,2,6,.58)');
+    g.fillStyle = vig; g.fillRect(0, 0, W, H);
     return c;
   }
 
@@ -607,8 +690,10 @@ export class Cosmos {
       if (allowed(s)) {
         const w = this.textWidth(s) + 8, x = s.x * k, y = s.y * k;
         const stem = s.mag === 'beacon' ? 46 : s.mag === 'faint' ? 8 : 18;
+        const py = this.tilt ? y * Math.cos(TILT_DEG * Math.PI / 180) : y;
+        const lh = this.lod === 'near' || s.id === this.focus ? 48 : 36;
         const opts = this.tilt
-          ? [0, 30, 60].map(lift => ({ lift, r: { x0: x - w / 2 - 10, x1: x + w / 2 + 10, y0: y - stem - lift - 34, y1: y - stem - lift } }))
+          ? [0, 40, 80, 120].map(lift => ({ lift, r: { x0: x - w / 2 - 14, x1: x + w / 2 + 14, y0: py - stem - lift - lh, y1: py - stem - lift + 2 } }))
           : [{ flip: false, r: { x0: x + 12, x1: x + 20 + w, y0: y - 11, y1: y + 11 } }, { flip: true, r: { x0: x - 20 - w, x1: x - 12, y0: y - 11, y1: y + 11 } }];
         const blocked = r => taken.some(o => o.id !== s.id && r.x0 < o.x1 && o.x0 < r.x1 && r.y0 < o.y1 && o.y0 < r.y1);
         pick = opts.find(o => !blocked(o.r)) || (s.id === this.focus ? opts[0] : null);
@@ -657,177 +742,243 @@ export class Cosmos {
     const lod = this.lod;
     const { stars, lanes, sectors } = this.model;
 
-    // 航图网格：同心轨道与经线
-    let ext = 260;
-    for (const s of sectors) ext = Math.max(ext, Math.hypot(s.x, s.y) + s.R * 1.4);
-    g.lineWidth = px(1);
-    for (let r = 220; r <= ext + 200; r += 220) {
-      g.strokeStyle = `rgba(150,170,255,${this.tilt ? 0.09 : 0.05})`;
+    // 精密星盘测绘网格：同心距离环 + 方位刻度 + 经纬准星
+    let ext = 280;
+    for (const s of sectors) ext = Math.max(ext, Math.hypot(s.x, s.y) + s.R * 1.45);
+    const outerR = Math.ceil((ext + 140) / 200) * 200;
+    g.lineWidth = px(0.85);
+    for (let r = 200; r <= outerR; r += 200) {
+      g.strokeStyle = `rgba(130,188,236,${this.tilt ? 0.11 : 0.06})`;
       g.beginPath(); g.arc(0, 0, r, 0, TAU); g.stroke();
     }
-    g.strokeStyle = `rgba(150,170,255,${this.tilt ? 0.06 : 0.03})`;
+    const dialR = Math.max(400, outerR - 200);
+    for (let deg = 0; deg < 360; deg += 5) {
+      const a = deg * Math.PI / 180 - Math.PI / 2;
+      const major = deg % 30 === 0, mid = deg % 15 === 0;
+      const len = major ? px(10) : mid ? px(6) : px(3);
+      g.strokeStyle = `rgba(145,200,240,${major ? 0.24 : mid ? 0.14 : 0.07})`;
+      g.beginPath();
+      g.moveTo(Math.cos(a) * (dialR - len), Math.sin(a) * (dialR - len));
+      g.lineTo(Math.cos(a) * dialR, Math.sin(a) * dialR);
+      g.stroke();
+    }
+    g.strokeStyle = `rgba(130,188,236,${this.tilt ? 0.075 : 0.04})`;
     for (let i = 0; i < 12; i++) {
       const a = i / 12 * TAU;
-      g.beginPath(); g.moveTo(Math.cos(a) * 120, Math.sin(a) * 120); g.lineTo(Math.cos(a) * (ext + 200), Math.sin(a) * (ext + 200)); g.stroke();
+      g.beginPath(); g.moveTo(Math.cos(a) * 90, Math.sin(a) * 90); g.lineTo(Math.cos(a) * outerR, Math.sin(a) * outerR); g.stroke();
+    }
+    g.font = `500 ${px(9.5)}px ${MONO_FONT}`;
+    g.fillStyle = 'rgba(148,198,236,0.28)';
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    for (let deg = 0; deg < 360; deg += 90) {
+      const a = deg * Math.PI / 180 - Math.PI / 2;
+      const r = dialR + px(14);
+      g.fillText(String(deg).padStart(3, '0') + '°', Math.cos(a) * r, Math.sin(a) * r);
     }
 
-    if (!stars.length) { this.paintBeacon(g, 0, 0, 205, zs, t, animate, 1, px); return; }
+    if (!stars.length) { this.paintBeacon(g, 0, 0, 196, zs, t, animate, 1, px); return; }
 
-    // 星云领地
+    // 体积星云领地（域扭曲 fBm 连续星云云团，不再被死板圆框切碎）
     for (const s of sectors) {
       const neb = this.nebulae.get(s.name);
       if (!neb) continue;
-      const S = s.R * 3.3;
+      const S = s.R * (s.frontier ? 3.2 : 3.75);
       const dimmed = focus && this.byId.get(focus)?.sector !== s.name;
       g.globalCompositeOperation = s.frontier ? 'source-over' : 'lighter';
-      g.globalAlpha = (s.frontier ? 1 : lod === 'far' ? 1 : lod === 'mid' ? 0.9 : 0.75) * (dimmed ? 0.5 : 1);
+      g.globalAlpha = (s.frontier ? 1 : lod === 'far' ? 1 : lod === 'mid' ? 0.94 : 0.78) * (dimmed ? 0.42 : 1);
       g.drawImage(neb, s.x - S / 2, s.y - S / 2, S, S);
     }
     g.globalCompositeOperation = 'source-over';
     g.globalAlpha = 1;
 
-    // 星域边界环与名称
-    const spin = animate ? t * 0.00003 : 0;
+    // 星域极细测绘弧标与未知疆域扫描雷达
+    const spin = animate ? t * 0.000035 : 0;
+    let secIdx = 0;
     for (const s of sectors) {
-      const col = s.frontier ? '200,210,235' : null;
-      const stroke = a => (col ? `rgba(${col},${a})` : `hsla(${s.hue},85%,72%,${a})`);
-      g.lineWidth = px(1);
-      g.setLineDash([px(2), px(7)]);
-      g.lineDashOffset = 0;
-      g.strokeStyle = stroke(s.frontier ? 0.16 : 0.26);
-      g.beginPath(); g.arc(s.x, s.y, s.R * 1.02, 0, TAU); g.stroke();
-      g.setLineDash([]);
-      if (!s.frontier) {
-        g.strokeStyle = stroke(0.1);
-        g.beginPath(); g.arc(s.x, s.y, s.R * 1.2, spin, spin + TAU * 0.82); g.stroke();
-        g.strokeStyle = stroke(0.45);
+      if (!s.frontier) secIdx++;
+      const col = s.frontier ? '138,198,232' : null;
+      const stroke = a => (col ? `rgba(${col},${a})` : `hsla(${s.hue},82%,76%,${a})`);
+      const dimmed = focus && this.byId.get(focus)?.sector !== s.name;
+      const df = dimmed ? 0.42 : 1;
+      g.lineWidth = px(0.9);
+      if (s.frontier) {
+        g.setLineDash([px(2), px(6)]);
+        g.strokeStyle = stroke(0.32 * df);
+        g.beginPath(); g.arc(s.x, s.y, s.R * 1.04, 0, TAU); g.stroke();
+        g.setLineDash([]);
+        const sw = animate ? (t * 0.00045) % TAU : 0.9;
+        const sweep = g.createRadialGradient(s.x, s.y, 0, s.x, s.y, s.R * 1.04);
+        sweep.addColorStop(0, 'rgba(95,212,255,0)');
+        sweep.addColorStop(0.68, `rgba(95,212,255,${0.08 * df})`);
+        sweep.addColorStop(1, `rgba(160,235,255,${0.22 * df})`);
+        g.fillStyle = sweep;
+        g.beginPath(); g.moveTo(s.x, s.y); g.arc(s.x, s.y, s.R * 1.04, sw - 0.55, sw); g.closePath(); g.fill();
+        g.strokeStyle = `rgba(175,238,255,${0.55 * df})`;
+        g.beginPath(); g.moveTo(s.x, s.y); g.lineTo(s.x + Math.cos(sw) * s.R * 1.04, s.y + Math.sin(sw) * s.R * 1.04); g.stroke();
+      } else {
+        // 极简四段星图短弧括标（不把自然星云关进死圆圈里）
+        g.strokeStyle = stroke(0.22 * df);
+        for (let q = 0; q < 4; q++) {
+          const a0 = spin + q * (TAU / 4) - 0.18;
+          g.beginPath(); g.arc(s.x, s.y, s.R * 1.04, a0, a0 + 0.36); g.stroke();
+        }
+        g.strokeStyle = stroke(0.42 * df);
         for (let i = 0; i < 4; i++) {
-          const a = spin * 2 + i * TAU / 4;
+          const a = spin + i * TAU / 4;
           g.beginPath();
-          g.moveTo(s.x + Math.cos(a) * s.R * 1.16, s.y + Math.sin(a) * s.R * 1.16);
-          g.lineTo(s.x + Math.cos(a) * s.R * 1.24, s.y + Math.sin(a) * s.R * 1.24);
+          g.moveTo(s.x + Math.cos(a) * s.R * 1.0, s.y + Math.sin(a) * s.R * 1.0);
+          g.lineTo(s.x + Math.cos(a) * s.R * 1.08, s.y + Math.sin(a) * s.R * 1.08);
           g.stroke();
         }
       }
-      const fs = lod === 'far' ? 15 : lod === 'mid' ? 13 : 12;
-      const alpha = (lod === 'far' ? 0.95 : lod === 'mid' ? 0.8 : 0.6) * (focus && this.byId.get(focus)?.sector !== s.name ? 0.45 : 1);
+      const fs = lod === 'far' ? 14.5 : lod === 'mid' ? 12.5 : 11.5;
+      const alpha = (lod === 'far' ? 0.94 : lod === 'mid' ? 0.8 : 0.6) * df;
       g.textAlign = 'center';
       g.textBaseline = 'alphabetic';
+      const ly = s.y - s.R * 1.04 - px(14);
+      g.font = `600 ${px(9)}px ${MONO_FONT}`;
+      g.fillStyle = col ? `rgba(${col},${alpha * 0.62})` : `hsla(${s.hue},72%,76%,${alpha * 0.65})`;
+      const code = s.frontier ? `UNMAPPED // ${String(s.count).padStart(2, '0')}` : `SEC-${String(secIdx).padStart(2, '0')} // ${String(s.count).padStart(2, '0')}`;
+      g.fillText(code, s.x, ly - px(13));
       try { g.letterSpacing = px(lod === 'far' ? 3 : 2) + 'px'; } catch {}
       g.font = `650 ${px(fs)}px ${UI_FONT}`;
-      g.fillStyle = col ? `rgba(${col},${alpha * 0.75})` : `hsla(${s.hue},90%,84%,${alpha})`;
-      const ly = s.y - s.R * 1.02 - px(12);
+      g.fillStyle = col ? `rgba(205,232,248,${alpha * 0.86})` : `hsla(${s.hue},58%,90%,${alpha})`;
       g.fillText(s.frontier ? s.name : s.name.toLocaleUpperCase(), s.x, ly);
-      try { g.letterSpacing = px(1) + 'px'; } catch {}
-      g.font = `500 ${px(10)}px ${UI_FONT}`;
-      g.fillStyle = col ? `rgba(${col},${alpha * 0.5})` : `hsla(${s.hue},60%,80%,${alpha * 0.6})`;
-      g.fillText(s.frontier ? `${s.count} 颗未连接` : `${s.count} 星体 · 星域`, s.x, ly + px(14));
       try { g.letterSpacing = '0px'; } catch {}
+      g.font = `500 ${px(9.5)}px ${UI_FONT}`;
+      g.fillStyle = col ? `rgba(${col},${alpha * 0.56})` : `hsla(${s.hue},46%,78%,${alpha * 0.56})`;
+      g.fillText(s.frontier ? `${s.count} 处未知信号` : `${s.count} 星体 · 星域`, s.x, ly + px(13));
     }
 
-    // 跃迁航线
+    // 跃迁航线：锐白电离核心 + 柔光外晕 + 流动光脉冲数据包
     g.lineCap = 'round';
     for (const l of lanes) {
       const a = this.byId.get(l.a), b = this.byId.get(l.b);
       if (!a || !b) continue;
       const touch = focus && (l.a === focus || l.b === focus);
-      const fade = focus && !touch ? 0.18 : 1;
+      const fade = focus && !touch ? 0.16 : 1;
       if (l.kind === 'tag') {
-        g.setLineDash([px(0.1), px(7)]);
-        g.lineWidth = px(1.8);
-        g.strokeStyle = `hsla(${a.hue},70%,78%,${0.34 * fade})`;
+        g.setLineDash([px(1.2), px(6)]);
+        g.lineWidth = px(1.1);
+        g.strokeStyle = `hsla(${a.hue},55%,78%,${0.28 * fade})`;
         g.beginPath(); g.moveTo(a.x, a.y); g.lineTo(b.x, b.y); g.stroke();
         g.setLineDash([]);
         continue;
       }
       const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2, dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy) || 1;
-      const bend = (hash(l.a + l.b) & 1 ? 1 : -1) * Math.min(d * 0.2, 90);
+      const bend = (hash(l.a + l.b) & 1 ? 1 : -1) * Math.min(d * 0.18, 84);
       const cx = mx - dy / d * bend, cy = my + dx / d * bend;
       const grad = g.createLinearGradient(a.x, a.y, b.x, b.y);
-      grad.addColorStop(0, `hsla(${a.hue},95%,72%,1)`);
-      grad.addColorStop(1, `hsla(${b.hue},95%,72%,1)`);
+      grad.addColorStop(0, `hsla(${a.hue},88%,78%,1)`);
+      grad.addColorStop(0.5, 'rgba(232,248,255,0.95)');
+      grad.addColorStop(1, `hsla(${b.hue},88%,78%,1)`);
       g.strokeStyle = grad;
       const curve = () => { g.beginPath(); g.moveTo(a.x, a.y); g.quadraticCurveTo(cx, cy, b.x, b.y); g.stroke(); };
-      g.globalAlpha = (touch ? 0.32 : 0.14) * fade; g.lineWidth = px(touch ? 9 : 6); curve();
-      g.globalAlpha = (touch ? 0.95 : 0.6) * fade; g.lineWidth = px(touch ? 1.8 : 1.3); curve();
+      g.globalAlpha = (touch ? 0.28 : 0.12) * fade; g.lineWidth = px(touch ? 7.5 : 4.8); curve();
+      g.globalAlpha = (touch ? 0.96 : 0.68) * fade; g.lineWidth = px(touch ? 1.5 : 1.1); curve();
       if (touch || (!focus && animate)) {
-        g.setLineDash([px(touch ? 8 : 3), px(touch ? 12 : 22)]);
-        g.lineDashOffset = -(animate ? t * (touch ? 0.05 : 0.02) : 0) / k;
-        g.strokeStyle = `rgba(255,255,255,${touch ? 0.9 : 0.35})`;
-        g.globalAlpha = fade; g.lineWidth = px(touch ? 1.6 : 1.1); curve();
-        g.setLineDash([]);
+        const u = ((animate ? t * 0.00028 : 0.35) + (hash(l.a + l.b) % 100) / 100) % 1;
+        const iu = 1 - u;
+        const px0 = iu * iu * a.x + 2 * iu * u * cx + u * u * b.x;
+        const py0 = iu * iu * a.y + 2 * iu * u * cy + u * u * b.y;
+        const ps = px(touch ? 14 : 10);
+        g.globalCompositeOperation = 'lighter';
+        g.globalAlpha = (touch ? 0.95 : 0.65) * fade;
+        g.drawImage(this.sprite(a.hue, 60), px0 - ps / 2, py0 - ps / 2, ps, ps);
+        g.globalCompositeOperation = 'source-over';
       }
       g.globalAlpha = 1;
     }
 
-    // 星体
+    // 星体：韦伯六芒光学衍射星 + 未知信号声呐脉冲 + 战术目标锁定准星
     for (const s of stars) {
-      const fade = focus && !near.has(s.id) ? 0.22 : 1;
-      const tw = animate ? 0.86 + 0.14 * Math.sin(t * 0.0019 + s.phase) : 1;
+      const fade = focus && !near.has(s.id) ? 0.2 : 1;
+      const tw = animate ? 0.88 + 0.12 * Math.sin(t * 0.0019 + s.phase) : 1;
       if (s.mag === 'beacon') this.paintBeacon(g, s.x, s.y, s.hue, zs, t, animate, fade * tw, px);
       else if (s.mag === 'star') {
-        const H = 50 * zs;
-        g.globalAlpha = 0.85 * fade * tw;
-        g.drawImage(this.sprite(s.hue), s.x - px(H / 2), s.y - px(H / 2), px(H), px(H));
-        g.globalAlpha = 0.5 * fade;
-        g.strokeStyle = `hsla(${s.hue},90%,85%,1)`;
-        g.lineWidth = px(0.8);
-        g.beginPath(); g.moveTo(s.x - px(9 * zs), s.y); g.lineTo(s.x + px(9 * zs), s.y); g.moveTo(s.x, s.y - px(9 * zs)); g.lineTo(s.x, s.y + px(9 * zs)); g.stroke();
+        const H = 44 * zs;
+        g.globalCompositeOperation = 'lighter';
+        g.globalAlpha = 0.8 * fade * tw;
+        g.drawImage(this.sprite(s.hue, 68), s.x - px(H / 2), s.y - px(H / 2), px(H), px(H));
+        g.globalCompositeOperation = 'source-over';
+        g.globalAlpha = 0.55 * fade;
+        g.strokeStyle = `hsla(${s.hue},75%,90%,1)`;
+        g.lineWidth = px(0.75);
+        const L = 10 * zs;
+        g.beginPath();
+        g.moveTo(s.x - px(L), s.y); g.lineTo(s.x + px(L), s.y);
+        g.moveTo(s.x, s.y - px(L * 0.72)); g.lineTo(s.x, s.y + px(L * 0.72));
+        g.stroke();
         g.globalAlpha = fade;
         g.fillStyle = '#fff';
-        g.beginPath(); g.arc(s.x, s.y, px(1.9 * zs), 0, TAU); g.fill();
+        g.beginPath(); g.arc(s.x, s.y, px(1.85 * zs), 0, TAU); g.fill();
       } else {
-        const H = 24 * zs;
-        g.globalAlpha = 0.5 * fade * tw;
-        g.drawImage(this.sprite(222, 25), s.x - px(H / 2), s.y - px(H / 2), px(H), px(H));
-        g.globalAlpha = 0.3 * fade;
+        const ping = animate ? ((t * 0.00055 + s.phase / TAU) % 1) : 0.42;
+        const H = 26 * zs;
+        g.globalCompositeOperation = 'lighter';
+        g.globalAlpha = 0.55 * fade * tw;
+        g.drawImage(this.sprite(196, 65), s.x - px(H / 2), s.y - px(H / 2), px(H), px(H));
+        g.globalCompositeOperation = 'source-over';
+        g.globalAlpha = (1 - ping) * 0.52 * fade;
+        g.strokeStyle = 'rgba(130,218,248,1)';
+        g.lineWidth = px(0.9);
+        g.beginPath(); g.arc(s.x, s.y, px((5 + ping * 18) * zs), 0, TAU); g.stroke();
+        g.globalAlpha = 0.4 * fade;
         g.setLineDash([px(1.5), px(3)]);
-        g.strokeStyle = 'rgba(190,200,230,1)';
-        g.lineWidth = px(0.8);
-        g.beginPath(); g.arc(s.x, s.y, px(9 * zs), 0, TAU); g.stroke();
+        g.beginPath(); g.arc(s.x, s.y, px(8 * zs), 0, TAU); g.stroke();
         g.setLineDash([]);
-        g.globalAlpha = 0.65 * fade;
-        g.fillStyle = 'rgba(205,212,235,1)';
-        g.beginPath(); g.arc(s.x, s.y, px(1.3 * zs), 0, TAU); g.fill();
+        g.globalAlpha = 0.85 * fade;
+        g.fillStyle = '#d8f4ff';
+        g.beginPath(); g.arc(s.x, s.y, px(1.5 * zs), 0, TAU); g.fill();
       }
       if (s.id === focus) {
-        const pulse = animate ? Math.sin(t * 0.004) * 3 : 0;
-        g.globalAlpha = 0.9;
-        g.strokeStyle = `hsla(${s.hue},100%,88%,1)`;
-        g.lineWidth = px(1.4);
-        g.beginPath(); g.arc(s.x, s.y, px((s.mag === 'beacon' ? 24 : 16) * zs + pulse), 0, TAU); g.stroke();
-        g.globalAlpha = 0.35;
-        g.beginPath(); g.arc(s.x, s.y, px((s.mag === 'beacon' ? 34 : 24) * zs + pulse * 1.6), 0, TAU); g.stroke();
+        const pulse = animate ? Math.sin(t * 0.004) * 2.5 : 0;
+        const R = px((s.mag === 'beacon' ? 24 : 16) * zs + pulse);
+        g.globalAlpha = 0.92;
+        g.strokeStyle = `hsla(${s.hue},90%,88%,1)`;
+        g.lineWidth = px(1.3);
+        for (let q = 0; q < 4; q++) {
+          const a = q * (TAU / 4) + 0.35;
+          g.beginPath(); g.arc(s.x, s.y, R, a, a + 0.85); g.stroke();
+        }
+        g.globalAlpha = 0.32;
+        g.lineWidth = px(0.9);
+        g.beginPath(); g.arc(s.x, s.y, R + px(9 * zs), 0, TAU); g.stroke();
       }
       g.globalAlpha = 1;
     }
   }
   paintBeacon(g, x, y, hue, zs, t, animate, alpha, px) {
-    const halo = 150 * zs, core = 48 * zs;
+    const halo = 126 * zs, core = 44 * zs;
     g.globalCompositeOperation = 'lighter';
-    g.globalAlpha = 0.5 * alpha;
-    g.drawImage(this.sprite(hue, 85), x - px(halo / 2), y - px(halo / 2), px(halo), px(halo));
-    g.globalAlpha = 0.95 * alpha;
-    g.drawImage(this.sprite(hue, 95), x - px(core / 2), y - px(core / 2), px(core), px(core));
+    g.globalAlpha = 0.42 * alpha;
+    g.drawImage(this.sprite(hue, 72), x - px(halo / 2), y - px(halo / 2), px(halo), px(halo));
+    g.globalAlpha = 0.94 * alpha;
+    g.drawImage(this.sprite(hue, 78), x - px(core / 2), y - px(core / 2), px(core), px(core));
     g.globalCompositeOperation = 'source-over';
-    const spin = animate ? t * 0.012 : 0;
-    g.lineWidth = px(1);
-    [17, 28, 41].forEach((r, i) => {
-      g.globalAlpha = (0.42 - i * 0.11) * alpha;
-      g.setLineDash([px(3 + i), px(5 + i * 2)]);
-      g.lineDashOffset = px(spin * (i % 2 ? -1 : 1) * (1 + i * 0.4));
-      g.strokeStyle = `hsla(${hue},95%,80%,1)`;
+    const spin = animate ? t * 0.01 : 0;
+    g.lineWidth = px(0.85);
+    [16, 27, 40].forEach((r, i) => {
+      g.globalAlpha = (0.38 - i * 0.1) * alpha;
+      g.setLineDash(i === 1 ? [px(12), px(8)] : [px(2.5), px(6 + i * 2)]);
+      g.lineDashOffset = px(spin * (i % 2 ? -1 : 1) * (0.9 + i * 0.35));
+      g.strokeStyle = `hsla(${hue},78%,82%,1)`;
       g.beginPath(); g.arc(x, y, px(r * zs), 0, TAU); g.stroke();
     });
     g.setLineDash([]);
-    g.globalAlpha = 0.6 * alpha;
-    g.strokeStyle = `hsla(${hue},100%,92%,1)`;
+    g.strokeStyle = `hsla(${hue},85%,94%,1)`;
     g.lineWidth = px(0.9);
-    const L = 30 * zs;
-    g.beginPath(); g.moveTo(x - px(L), y); g.lineTo(x + px(L), y); g.moveTo(x, y - px(L)); g.lineTo(x, y + px(L)); g.stroke();
+    const L = 30 * zs, D = 16 * zs;
+    g.globalAlpha = 0.72 * alpha;
+    g.beginPath(); g.moveTo(x - px(L), y); g.lineTo(x + px(L), y); g.moveTo(x, y - px(L * 0.78)); g.lineTo(x, y + px(L * 0.78)); g.stroke();
+    g.globalAlpha = 0.34 * alpha;
+    g.beginPath();
+    g.moveTo(x - px(D), y - px(D * 0.58)); g.lineTo(x + px(D), y + px(D * 0.58));
+    g.moveTo(x - px(D), y + px(D * 0.58)); g.lineTo(x + px(D), y - px(D * 0.58));
+    g.stroke();
     g.globalAlpha = alpha;
     g.fillStyle = '#fff';
-    g.beginPath(); g.arc(x, y, px(2.8 * zs), 0, TAU); g.fill();
+    g.beginPath(); g.arc(x, y, px(2.7 * zs), 0, TAU); g.fill();
     g.globalAlpha = 1;
   }
 }

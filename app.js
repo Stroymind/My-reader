@@ -6,7 +6,7 @@ import { settings, saveSettings, applyBodyTheme, applyAppearance, cycleAppearanc
 import { isMostlyCjk, translateVisible } from './bilingual.js';
 import { backfillFromBooks, deleteBookBundle, parseTags, syncBook } from './knowledge.js';
 import { addToStack, createStack, defaultStackName, dissolveStack, getStack, listStacks, reconcileStacks, removeFromStacks, renameStack, setStackCollapsed } from './stacks.js';
-import { dismissAssistant, initWorkspace, openAssistant, refreshWorkspace, showPane, workspaceHandleBack } from './workspace.js';
+import { dismissAssistant, initWorkspace, openAssistant, refreshWorkspace, setGraphSearch, setKnowledgeFind, showPane, workspaceHandleBack } from './workspace.js';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = './vendor/pdf.worker.min.mjs';
 const $ = s => document.querySelector(s);
@@ -374,11 +374,21 @@ async function toggleStack(id, open) {
 }
 
 function syncFindBar() {
-  const btn = $('#btn-search-toggle');
-  $('#find-bar').hidden = !findOpen;
-  btn.classList.toggle('on', findOpen);
-  btn.setAttribute('aria-expanded', findOpen ? 'true' : 'false');
-  btn.setAttribute('aria-label', findOpen ? '收起搜索' : '搜索与排序');
+  const bar = $('#find-bar');
+  if (bar) bar.hidden = !findOpen;
+}
+function openShelfFind() {
+  findOpen = true;
+  syncFindBar();
+  $('#pane-shelf')?.scrollTo({ top: 0, behavior: reduceMotion() ? 'auto' : 'smooth' });
+  $('#search')?.focus({ preventScroll: true });
+}
+function closeShelfFind() {
+  const had = !!$('#search').value;
+  findOpen = false;
+  $('#search').value = '';
+  syncFindBar();
+  if (had) renderLibrary();
 }
 
 async function renderLibrary(opts = {}) {
@@ -451,7 +461,7 @@ async function renderLibrary(opts = {}) {
   sub.textContent = !books.length ? ''
     : pickMode ? '轻点选择，长按也可以进入整理'
       : q ? `找到 ${shownCount} 项`
-        : [`${books.length} 项`, stacks.length ? `${stacks.length} 叠` : ''].filter(Boolean).join(' · ');
+        : '';
   paintSort();
   if (navigator.storage?.estimate) {
     try {
@@ -533,66 +543,146 @@ $('#stack-dialog').onsubmit = async e => {
   await renderLibrary({ focus: 'stack:' + s.id, reveal: true });
 };
 
-/* 顶部：搜索开关与「+」菜单 */
-function menuOpen() { return !$('#menu-mask').classList.contains('hidden'); }
-function openMenu() {
-  const r = $('#btn-menu').getBoundingClientRect();
-  const sheet = $('#menu-sheet');
-  sheet.style.top = Math.round(r.bottom + 8) + 'px';
-  sheet.style.right = Math.max(12, Math.round(document.documentElement.clientWidth - r.right)) + 'px';
-  $('#menu-mask').classList.remove('hidden');
-  $('#btn-menu').setAttribute('aria-expanded', 'true');
-  $('#btn-menu').classList.add('on');
-  $('#menu-sheet .menu-item')?.focus();
+/* 底部全面屏细线 + 空间横滑 + 统一意图层 */
+const SPACES = ['shelf', 'knowledge', 'graph'];
+function stepSpace(delta) {
+  const i = SPACES.indexOf(currentPane());
+  const next = SPACES[Math.max(0, Math.min(SPACES.length - 1, i + delta))];
+  showPane(next || SPACES[i], { whisper: true });
 }
-function closeMenu(refocus = true) {
-  if (!menuOpen()) return false;
-  $('#menu-mask').classList.add('hidden');
-  $('#btn-menu').setAttribute('aria-expanded', 'false');
-  $('#btn-menu').classList.remove('on');
-  if (refocus) $('#btn-menu').focus();
+function intentOpen() { return !$('#intent-mask').classList.contains('hidden'); }
+function openIntent() {
+  $('#intent-mask').classList.remove('hidden');
+  $('#spatial-bar')?.setAttribute('aria-expanded', 'true');
+  $('#intent-sheet .menu-item')?.focus();
+}
+function closeIntent(refocus = true) {
+  if (!intentOpen()) return false;
+  $('#intent-mask').classList.add('hidden');
+  $('#spatial-bar')?.setAttribute('aria-expanded', 'false');
+  if (refocus) $('#spatial-bar')?.focus();
   return true;
 }
-$('#btn-menu').onclick = () => (menuOpen() ? closeMenu() : openMenu());
-$('#menu-mask').addEventListener('click', e => { if (e.target === e.currentTarget) closeMenu(); });
-$('#menu-sheet').addEventListener('click', e => {
+function openActiveSearch() {
+  const pane = currentPane();
+  if (pane === 'knowledge') { setKnowledgeFind(true); return; }
+  if (pane === 'graph') { setGraphSearch(true); return; }
+  openShelfFind();
+}
+$('#intent-mask').addEventListener('click', e => { if (e.target === e.currentTarget) closeIntent(); });
+$('#intent-sheet').addEventListener('click', e => {
+  const tab = e.target.closest('[data-pane]');
+  if (tab) { closeIntent(false); return; }
   const item = e.target.closest('.menu-item');
-  if (item && item.id !== 'btn-appearance') closeMenu(false);
+  if (item && item.id !== 'btn-appearance') closeIntent(false);
 });
+$('#btn-intent-search').onclick = () => openActiveSearch();
+$('#btn-find-close').onclick = () => closeShelfFind();
 $('#btn-import').onclick = () => $('#file-input').click();
 $('#btn-empty-import').onclick = () => $('#file-input').click();
 $('#btn-select-mode').onclick = () => startPick(null);
-// 菜单里的上下键
+
+// 底部呼吸细线：轻点/上滑开意图层，左右滑切换空间
+(function bindSpatialBar() {
+  const bar = $('#spatial-bar');
+  if (!bar) return;
+  let sx = 0, sy = 0, pid = null, swiped = false;
+  bar.addEventListener('pointerdown', e => {
+    if (e.button != null && e.button !== 0) return;
+    sx = e.clientX; sy = e.clientY; pid = e.pointerId; swiped = false;
+    try { bar.setPointerCapture(e.pointerId); } catch {}
+  });
+  bar.addEventListener('pointerup', e => {
+    if (pid !== e.pointerId) return;
+    pid = null;
+    const dx = e.clientX - sx, dy = e.clientY - sy;
+    if (Math.abs(dx) > 36 && Math.abs(dx) > Math.abs(dy) * 1.2) {
+      swiped = true;
+      stepSpace(dx < 0 ? 1 : -1);
+    } else if (dy < -24 && Math.abs(dy) > Math.abs(dx)) {
+      swiped = true;
+      openIntent();
+    }
+  });
+  bar.addEventListener('pointercancel', () => { pid = null; });
+  bar.onclick = () => {
+    if (swiped) { swiped = false; return; }
+    if (intentOpen()) closeIntent(); else openIntent();
+  };
+})();
+
+// 空间手势：流/知识左右横滑切空间、顶部下拉唤出搜索；星海仅在屏幕边缘横滑离开，不冲突画布平移
+(function bindSpatialGestures() {
+  const lib = $('#library');
+  if (!lib) return;
+  let sx = 0, sy = 0, st = 0, pid = null, atTop = false, edge = false;
+  const blocked = () => pickMode || !lib.classList.contains('active')
+    || ['#ai-mask', '#note-mask', '#settings-mask', '#stack-mask', '#intent-mask', '#lib-panel', '#note-editor']
+      .some(sel => { const el = document.querySelector(sel); return el && !el.classList.contains('hidden'); });
+  lib.addEventListener('pointerdown', e => {
+    if (e.button != null && e.button !== 0) return;
+    if (blocked()) return;
+    if (e.target.closest('input, textarea, select, #spatial-bar, .stack-menu, .graph-card, .cosmos-hud')) return;
+    const pane = currentPane();
+    edge = e.clientX <= 28 || e.clientX >= window.innerWidth - 28;
+    if (pane === 'graph' && !edge) return;
+    sx = e.clientX; sy = e.clientY; st = Date.now(); pid = e.pointerId;
+    const scroller = $('#pane-' + pane);
+    atTop = !!(scroller && scroller.scrollTop <= 0);
+  }, { passive: true });
+  lib.addEventListener('pointerup', e => {
+    if (pid !== e.pointerId) return;
+    pid = null;
+    if (blocked()) return;
+    const dt = Date.now() - st;
+    if (dt > 750) return;
+    const dx = e.clientX - sx, dy = e.clientY - sy;
+    const pane = currentPane();
+    if (Math.abs(dx) > 56 && Math.abs(dx) > Math.abs(dy) * 1.45) {
+      stepSpace(dx < 0 ? 1 : -1);
+      return;
+    }
+    if (pane !== 'graph' && atTop && dy > 52 && dy > Math.abs(dx) * 1.5) {
+      openActiveSearch();
+    }
+  }, { passive: true });
+  lib.addEventListener('pointercancel', () => { pid = null; }, { passive: true });
+})();
+
+// 菜单上下键 + 快捷键（Ctrl+K / Alt+左右 / 1-3 / /）
 document.addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k' && $('#library')?.classList.contains('active')) {
+    e.preventDefault();
+    if (intentOpen()) closeIntent(); else openIntent();
+    return;
+  }
   const menu = e.target.closest?.('[role="menu"]');
-  if (!menu || !['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) return;
-  const items = [...menu.querySelectorAll('[role="menuitem"]')].filter(n => n.getClientRects().length);
-  if (!items.length) return;
-  e.preventDefault();
-  const i = items.indexOf(document.activeElement);
-  const next = e.key === 'Home' ? 0 : e.key === 'End' ? items.length - 1 : (i + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
-  items[next].focus();
+  if (menu && ['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) {
+    const items = [...menu.querySelectorAll('[role="menuitem"]')].filter(n => n.getClientRects().length);
+    if (!items.length) return;
+    e.preventDefault();
+    const i = items.indexOf(document.activeElement);
+    const next = e.key === 'Home' ? 0 : e.key === 'End' ? items.length - 1 : (i + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
+    items[next].focus();
+    return;
+  }
+  if (!$('#library')?.classList.contains('active') || engine) return;
+  if (e.target.closest?.('input, textarea, select')) return;
+  const modalUp = ['#ai-mask', '#note-mask', '#settings-mask', '#stack-mask', '#intent-mask', '#lib-panel', '#note-editor']
+    .some(sel => { const el = document.querySelector(sel); return el && !el.classList.contains('hidden'); });
+  if (modalUp) return;
+  if (e.altKey && e.key === 'ArrowLeft') { e.preventDefault(); stepSpace(-1); return; }
+  if (e.altKey && e.key === 'ArrowRight') { e.preventDefault(); stepSpace(1); return; }
+  if (!e.ctrlKey && !e.metaKey && !e.altKey) {
+    if (e.key === '1') { e.preventDefault(); showPane('shelf', { whisper: true }); }
+    else if (e.key === '2') { e.preventDefault(); showPane('knowledge', { whisper: true }); }
+    else if (e.key === '3') { e.preventDefault(); showPane('graph', { whisper: true }); }
+    else if (e.key === '/') { e.preventDefault(); openActiveSearch(); }
+  }
 });
 document.addEventListener('pointerdown', e => {
   if (!e.target.closest?.('.stack-menu, .stack-more-btn')) closeStackMenus();
 });
-$('#btn-search-toggle').onclick = () => {
-  const pane = currentPane();
-  if (pane === 'knowledge') { $('#note-search').focus(); return; }
-  if (pane === 'graph') { $('#graph-search').focus(); return; }
-  if (findOpen) {
-    const had = !!$('#search').value;
-    findOpen = false;
-    $('#search').value = '';
-    syncFindBar();
-    if (had) renderLibrary();
-  } else {
-    findOpen = true;
-    syncFindBar();
-    $('#pane-shelf').scrollTo({ top: 0, behavior: reduceMotion() ? 'auto' : 'smooth' });
-    $('#search').focus({ preventScroll: true });
-  }
-};
 
 $('#search').oninput = () => renderLibrary();
 $('#search-chip').onclick = () => { $('#search').value = ''; renderLibrary(); $('#search').focus({ preventScroll: true }); };
@@ -860,7 +950,7 @@ async function bumpSize(delta) {
     }
     if (!engine) return;
     if (e.target.matches('input, textarea, select')) return;
-    const maskOpen = ['#ai-mask', '#note-mask', '#settings-mask', '#stack-mask', '#menu-mask', '#lib-panel'].some(sel => {
+    const maskOpen = ['#ai-mask', '#note-mask', '#settings-mask', '#stack-mask', '#intent-mask', '#lib-panel'].some(sel => {
       const el = document.querySelector(sel);
       return el && !el.classList.contains('hidden');
     });
@@ -1155,13 +1245,14 @@ let rz; window.addEventListener('resize', () => { clearTimeout(rz); rz = setTime
 function handleBack() {
   if (dismissAssistant()) return true;
   if (closeStackDialog()) return true;
-  if (closeMenu()) return true;
+  if (closeIntent()) return true;
   if (closeStackMenus(true)) return true;
   if (!$('#note-mask').classList.contains('hidden')) { $('#note-mask').classList.add('hidden'); noteSel = null; return true; }
   if (document.body.classList.contains('selecting')) { exitSelect(); return true; }
   if (!$('#panel').classList.contains('hidden')) { $('#panel').classList.add('hidden'); return true; }
   if (!$('#settings').classList.contains('hidden')) { $('#settings').classList.add('hidden'); return true; }
   if (!$('#lib-panel').classList.contains('hidden')) { $('#lib-panel').classList.add('hidden'); return true; }
+  if (currentPane() === 'shelf' && findOpen) { closeShelfFind(); return true; }
   if (workspaceHandleBack()) return true;
   if ($('#library').classList.contains('active') && exitPick()) return true;
   if (engine) { history.back(); return true; }

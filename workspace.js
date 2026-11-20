@@ -28,8 +28,19 @@ function kindLabel(note) {
   return KIND[note.kind] || '笔记';
 }
 
-export function showPane(name) {
+let whisperTimer = null;
+export function showSpaceWhisper(name) {
+  const el = $('#space-whisper');
+  if (!el) return;
+  el.querySelectorAll('[data-w]').forEach(s => s.classList.toggle('on', s.dataset.w === name));
+  el.classList.add('show');
+  clearTimeout(whisperTimer);
+  whisperTimer = setTimeout(() => el.classList.remove('show'), 1150);
+}
+
+export function showPane(name, opts = {}) {
   if (!['shelf', 'knowledge', 'graph'].includes(name)) name = 'shelf';
+  const prev = document.querySelector('.pane.on')?.id?.replace(/^pane-/, '');
   document.querySelectorAll('.pane').forEach(pane => pane.classList.toggle('on', pane.id === 'pane-' + name));
   document.querySelectorAll('[data-pane]').forEach(btn => {
     const on = btn.dataset.pane === name;
@@ -37,8 +48,39 @@ export function showPane(name) {
     if (btn.getAttribute('role') === 'tab') btn.setAttribute('aria-selected', on ? 'true' : 'false');
   });
   document.querySelector('#library')?.classList.toggle('cosmos-on', name === 'graph');
+  if (opts?.whisper || (prev && prev !== name && opts?.whisper !== false && !opts?.silent)) {
+    if (opts?.whisper) showSpaceWhisper(name);
+  }
   if (name === 'graph') requestAnimationFrame(() => renderGraph(false));
   else cosmos?.setActive(false);
+}
+
+export function setKnowledgeFind(open) {
+  const bar = $('#k-find-bar');
+  if (!bar) return;
+  bar.hidden = !open;
+  if (open) {
+    $('#pane-knowledge')?.scrollTo({ top: 0, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+    $('#note-search')?.focus({ preventScroll: true });
+  }
+  syncKnowledgeFilterChip();
+}
+
+function syncKnowledgeFilterChip() {
+  const chip = $('#k-filter-chip');
+  const bar = $('#k-find-bar');
+  if (!chip) return;
+  const parts = [];
+  if (state.filter.q.trim()) parts.push(`「${state.filter.q.trim()}」`);
+  if (state.filter.kind !== 'all') {
+    const map = { highlight: '划线', excerpt: '摘录', annotation: '批注', note: '笔记', concept: '概念' };
+    parts.push(map[state.filter.kind] || state.filter.kind);
+  }
+  if (state.filter.tag) parts.push('#' + state.filter.tag);
+  const show = bar?.hidden && parts.length > 0;
+  chip.classList.toggle('hidden', !show);
+  chip.textContent = show ? `${parts.join(' · ')} · 清除` : '';
+  $('#note-search-clear')?.classList.toggle('hidden', !state.filter.q.trim());
 }
 
 export async function refreshWorkspace() {
@@ -91,13 +133,17 @@ function renderNotes() {
     return;
   }
   for (const note of notes) list.appendChild(noteCard(note));
+  syncKnowledgeFilterChip();
 }
 
 function emptyKnowledge() {
   const wrap = h('div', 'empty knowledge-empty');
   const glow = h('div', 'empty-glow');
   glow.setAttribute('aria-hidden', 'true');
-  wrap.append(glow, h('p', '', '还没有笔记'), h('p', 'hint', '阅读时长按一段文字，或新建一条。'));
+  const cta = h('button', 'pill accent', '新建笔记');
+  cta.type = 'button';
+  cta.onclick = () => openEditor(null);
+  wrap.append(glow, h('p', '', '还没有笔记'), h('p', 'hint', '阅读时长按一段文字，或写下第一条想法。'), cta);
   return wrap;
 }
 
@@ -439,7 +485,7 @@ export function fitGraph() {
 
 function zoomBy(factor) { ensureCosmos()?.zoomBy(factor); }
 
-function setGraphSearch(open) {
+export function setGraphSearch(open) {
   const row = $('#graph-search-row');
   const btn = $('#graph-search-toggle');
   if (!row || !btn) return;
@@ -575,6 +621,10 @@ async function saveAssistantNote() {
 export function workspaceHandleBack() {
   if (!$('#library')?.classList.contains('active')) return false;
   if ($('#note-editor') && !$('#note-editor').classList.contains('hidden')) { closeEditor(); return true; }
+  if ($('#pane-knowledge')?.classList.contains('on') && $('#k-find-bar') && !$('#k-find-bar').hidden) {
+    setKnowledgeFind(false);
+    return true;
+  }
   if ($('#graph-card') && !$('#graph-card').classList.contains('hidden')) {
     clearGraphFocus();
     return true;
@@ -586,7 +636,7 @@ export function workspaceHandleBack() {
     return true;
   }
   const onShelf = $('#pane-shelf')?.classList.contains('on');
-  if (!onShelf) { showPane('shelf'); return true; }
+  if (!onShelf) { showPane('shelf', { whisper: true }); return true; }
   return false;
 }
 
@@ -620,6 +670,18 @@ export function initWorkspace(nextApi) {
   });
   $('#btn-export-notes')?.addEventListener('click', () => exportOutline());
   $('#note-search')?.addEventListener('input', e => { state.filter.q = e.target.value; renderNotes(); });
+  $('#note-search-clear')?.addEventListener('click', () => {
+    $('#note-search').value = '';
+    state.filter.q = '';
+    renderNotes();
+    $('#note-search').focus({ preventScroll: true });
+  });
+  $('#btn-k-find-close')?.addEventListener('click', () => setKnowledgeFind(false));
+  $('#k-filter-chip')?.addEventListener('click', () => {
+    state.filter.q = ''; state.filter.kind = 'all'; state.filter.tag = '';
+    if ($('#note-search')) $('#note-search').value = '';
+    renderNotes();
+  });
   $('#btn-appearance')?.addEventListener('click', () => nextApi.cycleAppearance?.());
   $('#btn-ai-settings')?.addEventListener('click', () => openAiSettings());
   $('#ai-close')?.addEventListener('click', () => dismissAssistant());
