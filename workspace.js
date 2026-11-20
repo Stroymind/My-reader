@@ -398,8 +398,6 @@ function renderGraph(forceFit) {
     c.setModel(cosmosModel);
   }
   const s = cosmosModel.stats;
-  const stats = $('#cosmos-stats');
-  if (stats) stats.textContent = `${s.stars} 星体 · ${s.lanes} 航线 · ${s.sectors} 星域`;
   $('#graph-empty')?.classList.toggle('hidden', s.stars > 0);
   if (state.focusId && !cosmosModel.stars.some(st => st.id === state.focusId)) {
     const outside = state.notes.some(n => n.id === state.focusId);
@@ -487,12 +485,9 @@ function zoomBy(factor) { ensureCosmos()?.zoomBy(factor); }
 
 export function setGraphSearch(open) {
   const row = $('#graph-search-row');
-  const btn = $('#graph-search-toggle');
-  if (!row || !btn) return;
+  if (!row) return;
   row.hidden = !open;
-  btn.setAttribute('aria-expanded', open ? 'true' : 'false');
-  btn.classList.toggle('on', open);
-  if (open) $('#graph-search').focus({ preventScroll: true });
+  if (open) $('#graph-search')?.focus({ preventScroll: true });
 }
 
 let aiToken = 0;
@@ -632,7 +627,6 @@ export function workspaceHandleBack() {
   if ($('#pane-graph')?.classList.contains('on') && $('#graph-search-row') && !$('#graph-search-row').hidden) {
     $('#graph-search').value = '';
     setGraphSearch(false);
-    $('#graph-search-toggle')?.focus();
     return true;
   }
   const onShelf = $('#pane-shelf')?.classList.contains('on');
@@ -746,13 +740,11 @@ export function initWorkspace(nextApi) {
       status.textContent = '测试没有成功：' + (err.message || err);
     }
   });
-  $('#graph-in')?.addEventListener('click', () => zoomBy(1.16));
-  $('#graph-out')?.addEventListener('click', () => zoomBy(1 / 1.16));
   $('#graph-reset')?.addEventListener('click', () => ensureCosmos()?.fit(true));
-  $('#graph-search-toggle')?.addEventListener('click', () => {
-    const open = $('#graph-search-row')?.hidden;
-    if (!open) { $('#graph-search').value = ''; }
-    setGraphSearch(!!open);
+  $('#btn-graph-search-close')?.addEventListener('click', () => {
+    $('#graph-search').value = '';
+    clearGraphFocus();
+    setGraphSearch(false);
   });
   $('#graph-search')?.addEventListener('input', e => {
     const q = e.target.value.trim().toLowerCase();
@@ -768,6 +760,8 @@ export function initWorkspace(nextApi) {
   $('#graph-tilt')?.addEventListener('click', e => {
     const on = e.currentTarget.getAttribute('aria-pressed') !== 'true';
     e.currentTarget.setAttribute('aria-pressed', on ? 'true' : 'false');
+    const lbl = e.currentTarget.querySelector('.menu-label');
+    if (lbl) lbl.textContent = on ? '平视星图' : '2.5D 立体';
     ensureCosmos()?.setTilt(on);
   });
   refreshWorkspace().catch(err => console.warn(err));

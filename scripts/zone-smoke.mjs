@@ -30,7 +30,7 @@ try {
   report.checks.push('Mobile startup and Zone heading/title');
 
   const chrome = await page.evaluate(() => ({
-    gone: ['.appbar', '#btn-search-toggle', '#btn-menu', '.tabbar', '.pane-head', '.pane-intro', '.flow', '.pillars', '.tagline', '#desk-block', '#desk-list', '.sidebar', '.side-mark', '.book-grid'].filter(s => document.querySelector(s)),
+    gone: ['.appbar', '#btn-search-toggle', '#btn-menu', '.tabbar', '.pane-head', '.pane-intro', '.flow', '.pillars', '.tagline', '#desk-block', '#desk-list', '.sidebar', '.side-mark', '.book-grid', '.cosmos-hud', '#cosmos-stats', '#graph-search-toggle', '#graph-in', '#graph-out'].filter(s => document.querySelector(s)),
     spatialBar: (() => {
       const b = document.querySelector('#spatial-bar'), l = document.querySelector('.spatial-line');
       if (!b || !l) return null;
@@ -63,13 +63,13 @@ try {
   await sleep(500);
   const emptySky = await page.evaluate(() => ({
     text: document.querySelector('#graph-empty p').textContent,
-    stats: document.querySelector('#cosmos-stats').textContent
+    searchHidden: document.querySelector('#graph-search-row').hidden
   }));
-  assert.deepEqual(emptySky, { text: '星海尚未点亮', stats: '0 星体 · 0 航线 · 0 星域' });
+  assert.deepEqual(emptySky, { text: '星海尚未点亮', searchHidden: true });
   assert.ok(await canvasInk('#graph-map') > 10, 'empty cosmos still draws a single beacon');
   assert.ok(await canvasInk('#graph-sky') > 20, 'empty cosmos still draws the starfield');
   await page.evaluate(async () => { const w = await import('./workspace.js'); w.showPane('shelf'); });
-  report.checks.push('Empty 星海 renders the starfield, one gentle beacon and 星海尚未点亮');
+  report.checks.push('Empty 星海 renders the painterly indigo night sky, one beacon and 星海尚未点亮 with zero top HUD');
 
   const intentVisible = () => page.$eval('#intent-mask', el => !el.classList.contains('hidden'));
   const openIntent = async () => {
@@ -137,7 +137,7 @@ try {
     inView: (() => { const r = document.querySelector('#intent-sheet').getBoundingClientRect(); return r.left >= 0 && r.right <= innerWidth && r.bottom <= innerHeight + 1; })()
   }));
   assert.equal(intent.expanded, 'true');
-  assert.deepEqual(intent.items, ['btn-intent-search', 'btn-import', 'btn-new-note', 'btn-new-decision', 'btn-select-mode', 'btn-export-notes', 'btn-excerpts', 'btn-appearance', 'btn-ai-settings']);
+  assert.deepEqual(intent.items, ['btn-intent-search', 'btn-import', 'btn-select-mode', 'btn-excerpts', 'btn-appearance', 'btn-ai-settings']);
   assert.equal(intent.fileInput, true); assert.equal(intent.focus, 'btn-intent-search'); assert.equal(intent.inView, true);
   await page.screenshot({ path: path.resolve(root, 'test-results/zone-intent-sheet.png') });
   await page.keyboard.press('ArrowDown');
@@ -151,7 +151,7 @@ try {
   assert.equal(await intentVisible(), false);
   await page.click('#ai-settings-cancel');
   assert.equal(await page.$eval('#settings-mask', el => el.classList.contains('hidden')), true);
-  report.checks.push('Bottom hairline opens unified frosted Intent Sheet (spaces + actions, arrow keys, Escape); AI settings opens/closes without network calls');
+  report.checks.push('Bottom hairline opens compact contextual Intent Sheet (spaces + 4 context tiles + 2 prefs, arrow keys, Escape); AI settings opens/closes without network calls');
 
   await openIntent();
   await page.click('#btn-intent-search');
@@ -169,25 +169,28 @@ try {
     localStorage.removeItem('rr-stacks');
     const { db } = window.__app;
     const base = Date.now() - 100000;
-    const mk = (id, title, author, type, progress, i) => ({ id, title, author, type, progress, addedAt: base + i * 1000, lastOpened: 0, pos: null, bookmarks: [], highlights: [] });
+    const mkCover = (bg, accent, label, sub) => new Blob([`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 160"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${bg}"/><stop offset="1" stop-color="${accent}"/></linearGradient></defs><rect width="120" height="160" fill="url(#g)"/><circle cx="88" cy="118" r="46" fill="#fff" opacity=".12"/><text x="16" y="54" fill="#f9f5eb" font-size="22" font-family="Georgia,serif" font-weight="700">${label}</text><text x="16" y="76" fill="#f9f5eb" opacity=".78" font-size="11" font-family="sans-serif">${sub}</text></svg>`], { type: 'image/svg+xml' });
+    const mk = (id, title, author, type, progress, i, cover = null) => ({ id, title, author, type, progress, cover, addedAt: base + i * 1000, lastOpened: 0, pos: null, bookmarks: [], highlights: [] });
     const books = [
-      mk('z-a', long, 'Cal Newport', 'epub', 0.42, 5),
+      mk('z-a', long, 'Cal Newport', 'epub', 0.42, 5, mkCover('#18345c', '#2c648e', 'Deep', 'WORK')),
       mk('z-b', '思考，快与慢 Thinking, Fast and Slow', '丹尼尔·卡尼曼', 'pdf', 0.1, 4),
       mk('z-c', '原则 Principles', 'Ray Dalio', 'txt', 0, 3),
       mk('z-d', 'Zettelkasten 卡片笔记写作法', 'Sönke Ahrens', 'txt', 0.75, 2),
-      mk('z-e', '局外人 L’Étranger', 'Albert Camus', 'txt', 0, 1)
+      mk('z-e', '局外人 L’Étranger', 'Albert Camus', 'txt', 0, 1, mkCover('#8e3d2c', '#c97e48', '局外人', 'CAMUS'))
     ];
     for (const b of books) await db.put('books', b);
     const text = '第一章\n\n' + '这是一段只在本机测试里使用的中文正文，用来确认从卡片堆里打开一本书再返回时，列表的位置和焦点都还在。\n'.repeat(40);
     await db.put('files', { id: 'z-c', blob: new Blob([text], { type: 'text/plain' }) });
     await window.__app.renderLibrary();
   }, LONG);
-  await page.waitForFunction(() => document.querySelectorAll('#grid .book').length === 5);
+  await page.waitForFunction(() => document.querySelectorAll('#grid .book').length === 5 && [...document.querySelectorAll('#grid .book .avatar img')].every(img => img.complete && img.naturalWidth > 0));
   const listShape = await page.evaluate(() => {
     const grid = document.querySelector('#grid');
     const gw = grid.getBoundingClientRect().width;
     const rows = [...grid.querySelectorAll('.book')];
     const avatar = grid.querySelector('.book .avatar');
+    const ar = avatar.getBoundingClientRect();
+    const typoTitles = [...grid.querySelectorAll('.book .avatar.typo .ph-title')].map(el => el.textContent);
     return {
       display: getComputedStyle(grid).display,
       dir: getComputedStyle(grid).flexDirection,
@@ -195,7 +198,11 @@ try {
       lefts: new Set(rows.map(r => Math.round(r.getBoundingClientRect().left))).size,
       clipped: [...grid.querySelectorAll('.book .t')].filter(t => t.scrollWidth > t.clientWidth + 1 || t.scrollHeight > t.clientHeight + 1).map(t => t.textContent),
       longShown: [...grid.querySelectorAll('.book .t')].some(t => t.textContent.includes('一个很长的中英混排书名')),
-      monogram: grid.querySelectorAll('.book .avatar .ph').length === 5,
+      portrait: ar.height > ar.width && ar.width >= 38 && ar.height >= 50,
+      imgCovers: grid.querySelectorAll('.book .avatar img').length,
+      typoCovers: typoTitles.length,
+      multiCharTypo: typoTitles.every(t => t.length >= 2),
+      oldMonograms: grid.querySelectorAll('.book .avatar .ph').length,
       spine: getComputedStyle(avatar, '::after').content,
       radius: parseFloat(getComputedStyle(avatar).borderTopLeftRadius) === parseFloat(getComputedStyle(avatar).borderTopRightRadius),
       meta: grid.querySelector('.book[data-id="z-a"] .a').textContent,
@@ -206,10 +213,12 @@ try {
   assert.equal(listShape.display, 'flex'); assert.equal(listShape.dir, 'column');
   assert.equal(listShape.allFull, true); assert.equal(listShape.lefts, 1);
   assert.deepEqual(listShape.clipped, []); assert.equal(listShape.longShown, true);
-  assert.equal(listShape.monogram, true); assert.equal(listShape.spine, 'none'); assert.equal(listShape.radius, true);
+  assert.equal(listShape.portrait, true); assert.equal(listShape.imgCovers, 2);
+  assert.equal(listShape.typoCovers, 3); assert.equal(listShape.multiCharTypo, true); assert.equal(listShape.oldMonograms, 0);
+  assert.equal(listShape.spine, 'none'); assert.equal(listShape.radius, true);
   assert.ok(listShape.meta.includes('EPUB') && listShape.meta.includes('Cal Newport'));
   assert.equal(listShape.bar, true); assert.equal(listShape.unread, true);
-  report.checks.push('Stream renders one full-width row per item (monogram avatar without spine, unclipped mixed-language title, author/type, hairline progress, unread dot)');
+  report.checks.push('Stream renders one full-width message row per item with portrait cover thumbnails (real cover images + serif editorial mini-covers, zero single-char monograms, zero book spine)');
 
   const tap = async sel => { await page.$eval(sel, el => el.scrollIntoView({ block: 'center' })); await page.click(sel); };
   const stackState = () => page.evaluate(() => JSON.parse(localStorage.getItem('rr-stacks') || 'null'));
@@ -257,7 +266,7 @@ try {
     const next = sec.nextElementSibling?.getBoundingClientRect();
     const hr = head.getBoundingClientRect();
     const hit = document.elementFromPoint(hr.left + hr.width / 2, hr.top + hr.height / 2);
-    const parts = ['.stack-name', '.stack-preview', '.stack-count', '.stack-chev'].map(s => sec.querySelector(s).getBoundingClientRect());
+    const parts = ['.stack-fan', '.stack-name', '.stack-preview', '.stack-count', '.stack-chev'].map(s => sec.querySelector(s).getBoundingClientRect());
     let collide = false;
     for (let i = 0; i < parts.length; i++) for (let j = i + 1; j < parts.length; j++) {
       const a = parts[i], b = parts[j];
@@ -268,6 +277,7 @@ try {
     return {
       itemsHidden: items.hidden, rowsInside: items.querySelectorAll('.book').length,
       count: sec.querySelector('.stack-count').textContent,
+      fanCovers: sec.querySelectorAll('.stack-fan .avatar.sm').length,
       clutter: ['.stack-kicker', '.stack-covers', '.mini'].filter(s => sec.querySelector(s)),
       preview: sec.querySelector('.stack-preview').textContent,
       previewOneLine: sec.querySelector('.stack-preview').getBoundingClientRect().height < 26,
@@ -280,7 +290,7 @@ try {
     };
   });
   assert.equal(collapsedShape.itemsHidden, true); assert.equal(collapsedShape.rowsInside, 0);
-  assert.equal(collapsedShape.count, '4'); assert.deepEqual(collapsedShape.clutter, []);
+  assert.equal(collapsedShape.count, '4'); assert.equal(collapsedShape.fanCovers, 3); assert.deepEqual(collapsedShape.clutter, []);
   assert.ok(collapsedShape.preview.length > 0); assert.equal(collapsedShape.previewOneLine, true);
   assert.equal(collapsedShape.layers, true); assert.deepEqual(collapsedShape.layerWidths, [96, 92]); assert.deepEqual(collapsedShape.layerDrops, [8, 16]);
   assert.ok(collapsedShape.gapBelow >= 20, 'deck layers must not touch the next row');
@@ -523,27 +533,22 @@ try {
   await sleep(900);
   const atlas = await page.evaluate(() => {
     const stage = document.querySelector('#graph-stage').getBoundingClientRect();
-    const pills = [...document.querySelectorAll('.cosmos-hud .hud-pill')].map(p => p.getBoundingClientRect());
     return {
-      stats: document.querySelector('#cosmos-stats').textContent,
-      hudBorderless: [...document.querySelectorAll('.cosmos-hud .hud-pill')].every(p => getComputedStyle(p).backgroundColor === 'rgba(0, 0, 0, 0)' && getComputedStyle(p).boxShadow === 'none'),
+      zeroTopHud: !document.querySelector('.cosmos-hud') && document.querySelector('#graph-search-row').hidden,
       fullBleed: stage.top <= 1 && stage.left <= 1 && Math.abs(stage.width - innerWidth) < 1 && Math.abs(stage.height - innerHeight) < 2,
       beacons: document.querySelectorAll('#graph-world .gnode.mag-beacon').length,
       faint: document.querySelectorAll('#graph-world .gnode.mag-faint').length,
       emptyHidden: document.querySelector('#graph-empty').classList.contains('hidden'),
       buttons: [...document.querySelectorAll('#graph-world .gnode')].every(b => b.tagName === 'BUTTON' && b.getAttribute('aria-label')),
-      hudInView: pills.every(r => r.left >= 0 && r.right <= innerWidth && r.top >= 0),
-      hudApart: pills[0].right <= pills[1].left || pills[0].bottom <= pills[1].top,
+      labelsInView: [...document.querySelectorAll('#graph-world .gnode:not(.quiet) .gl')].every(el => { const r = el.getBoundingClientRect(); return r.left >= 0 && r.right <= innerWidth; }),
       lod: [...document.querySelector('#graph-stage').classList].find(c => c.startsWith('lod-'))
     };
   });
-  assert.equal(atlas.stats, '9 星体 · 4 航线 · 3 星域');
-  assert.equal(atlas.hudBorderless, true); assert.equal(atlas.fullBleed, true);
+  assert.equal(atlas.zeroTopHud, true); assert.equal(atlas.fullBleed, true);
   assert.ok(atlas.beacons >= 2, 'linked/concept notes become primary stars'); assert.equal(atlas.faint, 2);
-  assert.equal(atlas.emptyHidden, true); assert.equal(atlas.buttons, true);
-  assert.equal(atlas.hudInView, true); assert.equal(atlas.hudApart, true); assert.ok(atlas.lod);
-  assert.ok(await canvasInk('#graph-map') > 300, 'nebulae, lanes and stars are painted');
-  assert.ok(await canvasInk('#graph-sky') > 40, 'starfield is painted');
+  assert.equal(atlas.emptyHidden, true); assert.equal(atlas.buttons, true); assert.equal(atlas.labelsInView, true, 'all visible star art labels fit inside viewport'); assert.ok(atlas.lod);
+  assert.ok(await canvasInk('#graph-map') > 300, 'Impressionist brushwork, lanes and stars are painted');
+  assert.ok(await canvasInk('#graph-sky') > 40, 'Impressionist night sky is painted');
   const stable = await page.evaluate(async () => {
     const { layoutCosmos } = await import('./cosmos.js');
     const k = await import('./knowledge.js');
@@ -555,7 +560,7 @@ try {
   assert.equal(stable.same, true, 'star positions are deterministic');
   assert.deepEqual(stable.sectors, ['写作', '未测绘暗域', '认知', '系统'].sort());
   await page.screenshot({ path: path.resolve(root, 'test-results/zone-cosmos-mobile.png') });
-  report.checks.push('星海 full-bleed atlas: 9 stars in 3 deterministic sectors + 未测绘暗域, beacons and frontier stars, painted nebulae/lanes/starfield, floating HUD without header');
+  report.checks.push('星海 full-bleed Impressionist oil atlas: 9 stars in 3 deterministic sectors + 未测绘暗域, zero top HUD at rest, pure multi-bristle Impressionism & calligraphic art lettering');
 
   await page.click(`#graph-world .gnode[data-id="${cosmosIds.a}"] .gdot`);
   await page.waitForFunction(() => !document.querySelector('#graph-card').classList.contains('hidden'));
@@ -582,9 +587,12 @@ try {
   await page.waitForFunction(() => !document.querySelector('#ai-mask').classList.contains('hidden'));
   await page.click('#ai-close');
   await page.waitForFunction(() => document.querySelector('#ai-mask').classList.contains('hidden'));
-  report.checks.push('Tapping a star opens the dark-glass telemetry card (class, sector, links, 编辑/聚焦邻域/问 AI/关闭) above the nav; neighbourhood ignites, others recede');
+  report.checks.push('Tapping a star opens the frosted glass star card (class, sector, links, 编辑/聚焦邻域/问 AI/关闭) above the bottom hairline; neighbourhood ignites, others recede');
 
-  await page.click('#graph-search-toggle');
+  await openIntent();
+  const graphTiles = await page.evaluate(() => [...document.querySelectorAll('#intent-sheet .menu-item')].filter(b => b.getClientRects().length).map(b => b.id));
+  assert.deepEqual(graphTiles, ['btn-intent-search', 'btn-new-note', 'graph-tilt', 'graph-reset', 'btn-appearance', 'btn-ai-settings']);
+  await page.click('#btn-intent-search');
   assert.equal(await page.$eval('#graph-search-row', el => !el.hidden), true);
   await page.type('#graph-search', 'Zettel');
   await page.waitForFunction(() => document.querySelector('#graph-card .gc-title')?.textContent === '卡片写作 Zettelkasten');
@@ -593,10 +601,11 @@ try {
   assert.deepEqual(await page.$$eval('#graph-card .gc-actions button', bs => bs.map(b => b.textContent)), ['编辑', '跃迁原文', '聚焦邻域', '问 AI']);
   await page.$eval('#graph-search', el => { el.value = ''; el.dispatchEvent(new Event('input', { bubbles: true })); });
   await page.waitForFunction(() => document.querySelector('#graph-card').classList.contains('hidden'));
-  await page.click('#graph-search-toggle');
+  await page.click('#btn-graph-search-close');
   assert.equal(await page.$eval('#graph-search-row', el => el.hidden), true);
-  report.checks.push('星海 search reveals on demand, flies to matching stars (title) and offers 跃迁原文 for sourced notes');
+  report.checks.push('星海 contextual Intent Sheet reveals search on demand, flies to matching stars and offers 跃迁原文 for sourced notes');
 
+  await openIntent();
   await page.click('#graph-reset');
   await sleep(900);
   const sample = () => page.$eval(`#graph-world .gnode[data-id="${cosmosIds.lone}"]`, el => el.style.transform);
@@ -615,24 +624,34 @@ try {
   await page.mouse.wheel({ deltaY: -700 });
   await page.waitForFunction(() => document.querySelector('#graph-stage').classList.contains('lod-near'));
   assert.equal(await page.$$eval('#graph-world .gnode .gk', ks => ks.some(k => getComputedStyle(k).display === 'block')), true);
-  await page.click('#graph-out'); await page.click('#graph-in');
+  await openIntent();
   await page.click('#graph-reset');
   await sleep(900);
-  report.checks.push('Drag pans, wheel zoom reaches near LOD (star kinds appear), −/+/适应 controls work');
+  report.checks.push('Drag pans, wheel zoom reaches near LOD (star kinds appear), contextual 适应全图 restores fit');
 
+  await openIntent();
   await page.click('#graph-tilt');
   await sleep(1200);
   const tilt = await page.evaluate(() => {
     const stage = document.querySelector('#graph-stage');
     const beacon = document.querySelector('#graph-world .gnode.mag-beacon .gstem');
+    const labels = [...document.querySelectorAll('#graph-world .gnode:not(.quiet) .gtext')].map(el => el.getBoundingClientRect());
+    let labelOverlap = false;
+    for (let i = 0; i < labels.length; i++) for (let j = i + 1; j < labels.length; j++) {
+      const a = labels[i], b = labels[j];
+      if (a.left < b.right - 1 && b.left < a.right - 1 && a.top < b.bottom - 1 && b.top < a.bottom - 1) labelOverlap = true;
+    }
     return {
       on: stage.classList.contains('tilt'), pressed: document.querySelector('#graph-tilt').getAttribute('aria-pressed'),
+      label: document.querySelector('#graph-tilt .menu-label').textContent,
       plane: getComputedStyle(document.querySelector('#graph-plane')).transform,
-      stem: beacon.getBoundingClientRect().height
+      stem: beacon.getBoundingClientRect().height,
+      labelOverlap
     };
   });
-  assert.equal(tilt.on, true); assert.equal(tilt.pressed, 'true');
+  assert.equal(tilt.on, true); assert.equal(tilt.pressed, 'true'); assert.equal(tilt.label, '平视星图');
   assert.ok(tilt.plane.startsWith('matrix3d'), 'plane is tilted in 3D'); assert.ok(tilt.stem > 20, 'beacons rise on light stems');
+  assert.equal(tilt.labelOverlap, false, '2.5D labels must not overlap');
   const bp = await page.$eval(`#graph-world .gnode[data-id="${cosmosIds.b}"] .gdot`, el => { const r = el.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2, hit: document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2) === el }; });
   assert.equal(bp.hit, true, '3D hit-testing reaches the tilted star');
   await page.mouse.click(bp.x, bp.y);
@@ -642,16 +661,18 @@ try {
   await page.screenshot({ path: path.resolve(root, 'test-results/zone-cosmos-25d.png') });
   await page.keyboard.press('Escape');
   await page.waitForFunction(() => document.querySelector('#graph-card').classList.contains('hidden'));
+  await openIntent();
   await page.click('#graph-tilt');
   await sleep(1100);
   assert.equal(await page.$eval('#graph-stage', el => el.classList.contains('tilt')), false);
-  report.checks.push('2.5D toggle tilts the map plane in CSS 3D with beacon light-stems; tapping a star in 2.5D still opens its card; Escape closes it');
+  report.checks.push('2.5D toggle from Intent Sheet tilts the painterly atlas in CSS 3D with zero label overlap; tapping a star opens its card; Escape closes it');
 
   await page.setViewport({ width: 1100, height: 844 });
   await page.waitForFunction(() => window.__app);
   await page.evaluate(async () => { const w = await import('./workspace.js'); await w.refreshWorkspace(); w.showPane('graph'); });
   await page.waitForFunction(() => document.querySelectorAll('#graph-world .gnode').length === 9 && document.querySelector('#pane-graph').classList.contains('on'));
   await sleep(300);
+  await openIntent();
   await page.click('#graph-reset');
   await sleep(1100);
   const wide = await page.evaluate(() => ({

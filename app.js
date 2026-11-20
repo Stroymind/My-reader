@@ -164,9 +164,21 @@ function bindShelfBook(el, b) {
 
 function shelfQuery() { return $('#search').value.trim().toLowerCase(); }
 function bookMatches(b, q) { return (`${b.title || ''} ${b.author || ''}`).toLowerCase().includes(q); }
-function monogram(title) {
-  const ch = Array.from(String(title || '').trim())[0] || 'Z';
-  return ch.toLocaleUpperCase();
+function shortCoverTitle(title) {
+  const raw = String(title || '未命名').trim().replace(/[（(].*$/, '').trim() || String(title || '未命名').trim();
+  const cjk = raw.match(/[\u4e00-\u9fff\u3000-\u303f\uff00-\uffef]+/g);
+  if (cjk) {
+    const pick = cjk.join('').replace(/^[，。、：·\s]+|[，。、：·\s]+$/g, '');
+    if (pick.length >= 2) return Array.from(pick).slice(0, 7).join('');
+  }
+  const words = raw.split(/\s+/).filter(Boolean);
+  let out = '';
+  for (const w of words) {
+    if (out && (out.length + 1 + w.length) > 12) break;
+    out = out ? `${out} ${w}` : w;
+    if (out.length >= 10) break;
+  }
+  return out || Array.from(raw).slice(0, 10).join('');
 }
 function node(tag, cls, text) {
   const n = document.createElement(tag);
@@ -174,8 +186,8 @@ function node(tag, cls, text) {
   if (text != null) n.textContent = text;
   return n;
 }
-function avatarNode(b) {
-  const t = node('span', 'avatar');
+function avatarNode(b, small = false) {
+  const t = node('span', 'avatar' + (small ? ' sm' : ''));
   t.setAttribute('aria-hidden', 'true');
   if (b.cover) {
     if (!coverUrls.has(b.id)) coverUrls.set(b.id, URL.createObjectURL(b.cover));
@@ -183,9 +195,10 @@ function avatarNode(b) {
     img.alt = ''; img.src = coverUrls.get(b.id);
     t.appendChild(img);
   } else {
-    t.classList.add('mono');
+    t.classList.add('typo');
     t.style.setProperty('--h', hueFor(b.title || ''));
-    t.appendChild(node('span', 'ph', monogram(b.title)));
+    t.appendChild(node('span', 'ph-title', shortCoverTitle(b.title)));
+    if (!small && b.type) t.appendChild(node('span', 'ph-ext', String(b.type).toUpperCase()));
   }
   return t;
 }
@@ -288,7 +301,15 @@ function stackBlock(s, members, shown, open, q) {
   const text = node('span', 'stack-text');
   text.appendChild(node('span', 'stack-name', s.name));
   const partial = q && shown.length < members.length;
+  let fan = null;
   if (!open) {
+    fan = node('span', 'stack-fan');
+    fan.setAttribute('aria-hidden', 'true');
+    shown.slice(0, 3).reverse().forEach((m, idx, arr) => {
+      const av = avatarNode(m, true);
+      av.style.setProperty('--k', arr.length - 1 - idx);
+      fan.appendChild(av);
+    });
     const titles = shown.slice(0, 3).map(m => m.title || '未命名').join(' · ');
     const preview = node('span', 'stack-preview', (partial ? `${shown.length} 项匹配 · ` : '') + titles);
     preview.id = 'stack-preview-' + s.id;
@@ -300,7 +321,7 @@ function stackBlock(s, members, shown, open, q) {
   count.setAttribute('aria-hidden', 'true');
   side.appendChild(count);
   side.insertAdjacentHTML('beforeend', SVG.chev.replace('<svg', '<svg class="stack-chev"'));
-  head.append(text, side);
+  if (fan) head.append(fan, text, side); else head.append(text, side);
   head.onclick = () => toggleStack(s.id, !open);
   card.appendChild(head);
 
@@ -463,12 +484,7 @@ async function renderLibrary(opts = {}) {
       : q ? `找到 ${shownCount} 项`
         : '';
   paintSort();
-  if (navigator.storage?.estimate) {
-    try {
-      const e = await navigator.storage.estimate();
-      $('#storage-info').textContent = books.length ? `仅存于本机 · ${(e.usage / 1048576).toFixed(0)} MB` : '';
-    } catch {}
-  }
+  if ($('#storage-info')) $('#storage-info').textContent = '';
   if (books.length && !localStorage.getItem('rr-hint-panes') && !$('#reader').classList.contains('active')) {
     localStorage.setItem('rr-hint-panes', '1');
     setTimeout(() => toast('划线和摘录会进入「知识」，也会在「星海」里相连', 3600), 600);
@@ -551,10 +567,18 @@ function stepSpace(delta) {
   showPane(next || SPACES[i], { whisper: true });
 }
 function intentOpen() { return !$('#intent-mask').classList.contains('hidden'); }
+function syncIntentTiles() {
+  const pane = currentPane();
+  document.querySelectorAll('#intent-sheet .intent-tile').forEach(btn => {
+    const scope = (btn.dataset.for || '').split(/\s+/);
+    btn.hidden = scope.length > 0 && scope[0] !== '' && !scope.includes(pane);
+  });
+}
 function openIntent() {
+  syncIntentTiles();
   $('#intent-mask').classList.remove('hidden');
   $('#spatial-bar')?.setAttribute('aria-expanded', 'true');
-  $('#intent-sheet .menu-item')?.focus();
+  [...document.querySelectorAll('#intent-sheet .menu-item')].find(b => !b.hidden)?.focus();
 }
 function closeIntent(refocus = true) {
   if (!intentOpen()) return false;
@@ -622,7 +646,7 @@ $('#btn-select-mode').onclick = () => startPick(null);
   lib.addEventListener('pointerdown', e => {
     if (e.button != null && e.button !== 0) return;
     if (blocked()) return;
-    if (e.target.closest('input, textarea, select, #spatial-bar, .stack-menu, .graph-card, .cosmos-hud')) return;
+    if (e.target.closest('input, textarea, select, #spatial-bar, .stack-menu, .graph-card, .hud-search')) return;
     const pane = currentPane();
     edge = e.clientX <= 28 || e.clientX >= window.innerWidth - 28;
     if (pane === 'graph' && !edge) return;
@@ -656,7 +680,7 @@ document.addEventListener('keydown', e => {
     if (intentOpen()) closeIntent(); else openIntent();
     return;
   }
-  const menu = e.target.closest?.('[role="menu"]');
+  const menu = e.target.closest?.('#intent-sheet, [role="menu"]');
   if (menu && ['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) {
     const items = [...menu.querySelectorAll('[role="menuitem"]')].filter(n => n.getClientRects().length);
     if (!items.length) return;
