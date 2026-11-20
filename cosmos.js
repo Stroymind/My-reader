@@ -757,79 +757,127 @@ export class Cosmos {
         paintBristle(g, pts, wid, body, sheen, null, rnd);
       }
     }
-    // 随时间在天穹缓行的纯印象派油画日/月（零几何同心虚线圈，全用猪鬃厚涂笔触自然堆叠）
+    // 随时间在天穹缓行的纯印象派油画日/月（弯月为丰润厚涂新月 + 致密弯弧柔光月晕，绝无直棍散笔）
     const ox = W * th.orbX, oy = H * th.orbY, orbR = clamp(Math.min(W, H) * 0.044, 17, 27);
-    const orbGlow = g.createRadialGradient(ox, oy, 0, ox, oy, orbR * 6.5);
-    orbGlow.addColorStop(0, `hsla(${th.orbHue + 4},84%,78%,.36)`);
-    orbGlow.addColorStop(0.28, `hsla(${th.orbHue},72%,62%,.16)`);
-    orbGlow.addColorStop(0.62, `hsla(${th.orbHue - 6},56%,46%,.055)`);
+    const orbGlow = g.createRadialGradient(ox, oy, 0, ox, oy, orbR * 5.8);
+    orbGlow.addColorStop(0, `hsla(${th.orbHue + 6},88%,82%,.42)`);
+    orbGlow.addColorStop(0.24, `hsla(${th.orbHue + 2},78%,66%,.22)`);
+    orbGlow.addColorStop(0.55, `hsla(${th.orbHue - 6},58%,48%,.08)`);
     orbGlow.addColorStop(1, `hsla(${th.orbHue},50%,40%,0)`);
-    g.fillStyle = orbGlow; g.beginPath(); g.arc(ox, oy, orbR * 6.5, 0, TAU); g.fill();
-
-    // 1. 油画日/月周边有机晕染笔触（莫奈顺风霞光 / 梵高蓬松碎笔月晕，绝非机械等距圈）
-    const haloCount = th.orbKind === 'moon' ? 46 : 52;
-    for (let i = 0; i < haloCount; i++) {
-      const a = rnd() * TAU;
-      const dist = orbR * (0.95 + Math.pow(rnd(), 0.72) * 3.4);
-      const px = ox + Math.cos(a) * dist * (th.orbKind === 'sun' ? 1.28 : 1.04);
-      const py = oy + Math.sin(a) * dist * (th.orbKind === 'sun' ? 0.86 : 1.04);
-      const falloff = 1 - clamp((dist - orbR * 0.95) / (orbR * 3.4), 0, 1);
-      // 日轮周围顺夜风微斜铺霞，月牙周围蓬松轻旋（加自然笔意扰动）
-      const tang = th.orbKind === 'moon'
-        ? a + Math.PI / 2 + (rnd() - 0.5) * 0.42
-        : -0.22 + (rnd() - 0.5) * 0.45 + Math.sin(a) * 0.22;
-      const seg = (5 + rnd() * 7) * (0.7 + falloff * 0.6);
-      const cur = (rnd() - 0.5) * 0.32;
-      const pts = [
-        [px - Math.cos(tang) * seg, py - Math.sin(tang) * seg],
-        [px, py],
-        [px + Math.cos(tang + cur) * seg, py + Math.sin(tang + cur) * seg]
-      ];
-      const warmMix = falloff > 0.32 || rnd() < 0.65;
-      const h = warmMix ? th.orbHue + (rnd() - 0.5) * 18 : th.bgHi + (rnd() - 0.5) * 16;
-      const lum = warmMix ? (58 + falloff * 24 + rnd() * 8) : (42 + falloff * 22);
-      const alpha = (0.06 + falloff * 0.2) * (0.65 + rnd() * 0.6);
-      paintBristle(
-        g, pts, 3.2 + rnd() * 3.6,
-        `hsla(${h},${54 + falloff * 24}%,${lum}%,${alpha.toFixed(3)})`,
-        falloff > 0.45 ? `hsla(${h + 6},76%,${Math.min(92, lum + 12)}%,${(alpha * 0.65).toFixed(3)})` : null,
-        null, rnd
-      );
-    }
+    g.fillStyle = orbGlow; g.beginPath(); g.arc(ox, oy, orbR * 5.8, 0, TAU); g.fill();
 
     if (th.orbKind === 'moon') {
-      // 2. 梵高式厚涂油画弯月（用层叠暖金/奶油黄毛刷短笔触堆出饱满松软的新月，无生硬矢量描边）
-      const r = orbR * 0.86;
+      // 1. 梵高式致密柔和弯弧月晕（真实圆弧曲率短排笔，层层晕染过渡到夜空，彻底告别直线火柴棍）
       g.save();
-      g.translate(ox, oy);
-      g.rotate(-0.34);
-      // 柔和底层月光
-      const mGlow = g.createRadialGradient(r * 0.35, 0, 0, r * 0.2, 0, r * 1.45);
-      mGlow.addColorStop(0, 'rgba(255,244,196,0.52)');
-      mGlow.addColorStop(0.55, 'rgba(244,204,104,0.2)');
-      mGlow.addColorStop(1, 'rgba(244,204,104,0)');
-      g.fillStyle = mGlow; g.beginPath(); g.arc(r * 0.2, 0, r * 1.45, 0, TAU); g.fill();
-      // 沿新月脊线由暗金 -> 拿坡里黄 -> 象牙奶油白逐层落笔厚涂
-      const layers = [
-        { rad: r * 0.92, spread: 1.05, w: 6.8, col: 'rgba(226,170,68,0.62)', sheen: 'rgba(250,224,132,0.45)', n: 11 },
-        { rad: r * 0.95, spread: 0.98, w: 5.0, col: 'rgba(252,226,136,0.82)', sheen: 'rgba(255,248,214,0.68)', n: 12 },
-        { rad: r * 0.99, spread: 0.86, w: 3.1, col: 'rgba(255,250,226,0.9)', sheen: 'rgba(255,254,244,0.8)', n: 10 }
-      ];
-      for (const L of layers) {
-        for (let i = 0; i < L.n; i++) {
-          const u = (i / (L.n - 1)) * 2 - 1; // -1..1 从上月尖到下月尖
-          const taper = Math.sqrt(Math.max(0.12, 1 - u * u * 0.88));
-          const ang = u * Math.PI * 0.5 * L.spread;
-          const da = 0.22;
-          const p0 = [Math.cos(ang - da) * L.rad + (rnd() - 0.5) * 1.4, Math.sin(ang - da) * L.rad + (rnd() - 0.5) * 1.4];
-          const p1 = [Math.cos(ang) * L.rad, Math.sin(ang) * L.rad];
-          const p2 = [Math.cos(ang + da) * L.rad + (rnd() - 0.5) * 1.4, Math.sin(ang + da) * L.rad + (rnd() - 0.5) * 1.4];
-          paintBristle(g, [p0, p1, p2], L.w * taper, L.col, L.sheen, null, rnd);
+      g.lineCap = 'round';
+      for (let ring = 0; ring < 5; ring++) {
+        const baseR = orbR * (1.12 + ring * 0.42);
+        const count = 14 + ring * 5;
+        const falloff = 1 - ring / 5;
+        for (let i = 0; i < count; i++) {
+          const a0 = (i / count) * TAU + ring * 0.41 + (rnd() - 0.5) * 0.22;
+          const span = (0.24 + rnd() * 0.22) * (0.85 + falloff * 0.35);
+          const rr = baseR + (rnd() - 0.5) * orbR * 0.24;
+          const pts = [];
+          const steps = 4;
+          for (let s = 0; s <= steps; s++) {
+            const ang = a0 + (span * s) / steps;
+            const rj = rr + Math.sin(s * 1.4 + i) * 1.1;
+            pts.push([ox + Math.cos(ang) * rj, oy + Math.sin(ang) * rj]);
+          }
+          const warm = ring < 3 || rnd() < 0.55;
+          const h = warm ? (43 + (rnd() - 0.5) * 14) : (208 + (rnd() - 0.5) * 16);
+          const sat = warm ? (58 + falloff * 24) : 44;
+          const lum = warm ? (54 + falloff * 26 + rnd() * 8) : (40 + falloff * 18);
+          const a = (0.055 + falloff * 0.14) * (0.7 + rnd() * 0.5);
+          paintBristle(
+            g, pts, 2.8 + rnd() * 2.8 + falloff * 1.4,
+            `hsla(${h},${sat}%,${lum}%,${a.toFixed(3)})`,
+            ring < 2 ? `hsla(${h + 5},78%,${Math.min(92, lum + 12)}%,${(a * 0.6).toFixed(3)})` : null,
+            null, rnd
+          );
         }
       }
+      // 2. 饱满温润的雕塑感油画新月（淡蓝灰月影球体 + 裁剪内厚涂渐变笔触 + 象牙金高光）
+      const r = orbR * 0.88;
+      g.translate(ox, oy);
+      g.rotate(-0.36);
+      // 极淡的暗面月影（地照灰光），赋予新月真实的圆润立体球感
+      const earthshine = g.createRadialGradient(-r * 0.15, 0, r * 0.1, 0, 0, r);
+      earthshine.addColorStop(0, 'rgba(72,96,148,0.22)');
+      earthshine.addColorStop(0.75, 'rgba(36,52,96,0.16)');
+      earthshine.addColorStop(1, 'rgba(20,34,68,0)');
+      g.fillStyle = earthshine;
+      g.beginPath(); g.arc(0, 0, r * 0.96, 0, TAU); g.fill();
+
+      // 构造饱满舒展的新月剪裁路径（外弧与优雅偏心内弧自然收尖）
+      const crescent = new Path2D();
+      const tipA = Math.PI * 0.6;
+      const sx = Math.cos(-tipA) * r, sy = Math.sin(-tipA) * r;
+      const ex = Math.cos(tipA) * r, ey = Math.sin(tipA) * r;
+      crescent.arc(0, 0, r, -tipA, tipA, false);
+      crescent.bezierCurveTo(r * 0.56, r * 0.66, r * 0.56, -r * 0.66, sx, sy);
+      crescent.closePath();
+
+      // 柔和外溢月华
+      g.save();
+      g.shadowColor = 'rgba(255,232,148,0.72)';
+      g.shadowBlur = orbR * 0.72;
+      const moonGrad = g.createLinearGradient(r, -r * 0.6, -r * 0.2, r * 0.7);
+      moonGrad.addColorStop(0, '#fffdf0');
+      moonGrad.addColorStop(0.45, '#fde48c');
+      moonGrad.addColorStop(0.82, '#f0be58');
+      moonGrad.addColorStop(1, '#dfa040');
+      g.fillStyle = moonGrad;
+      g.fill(crescent);
+      g.restore();
+
+      // 在新月剪裁区内点染细腻的油画厚涂笔触与亮边光泽
+      g.save();
+      g.clip(crescent);
+      for (let i = 0; i < 16; i++) {
+        const u = (i / 15) * 2 - 1;
+        const ang = u * Math.PI * 0.52;
+        const rr = r * (0.68 + rnd() * 0.26);
+        const p0 = [Math.cos(ang - 0.18) * rr, Math.sin(ang - 0.18) * rr];
+        const p1 = [Math.cos(ang) * rr, Math.sin(ang) * rr];
+        const p2 = [Math.cos(ang + 0.18) * rr, Math.sin(ang + 0.18) * rr];
+        const bright = rr > r * 0.82;
+        paintBristle(
+          g, [p0, p1, p2], 2.4 + rnd() * 2.2,
+          bright ? 'rgba(255,253,238,0.55)' : 'rgba(242,190,82,0.38)',
+          'rgba(255,255,248,0.42)', null, rnd
+        );
+      }
+      g.restore();
       g.restore();
     } else {
-      // 2. 莫奈《印象·日出》厚涂柔光日轮（暖橘/杏金/浅柠檬奶油毛刷短笔触自然点染，边缘融入云雾）
+      // 莫奈《印象·日出》顺风霞光 + 厚涂柔光日轮
+      for (let i = 0; i < 52; i++) {
+        const a = rnd() * TAU;
+        const dist = orbR * (0.95 + Math.pow(rnd(), 0.72) * 3.4);
+        const px = ox + Math.cos(a) * dist * 1.28;
+        const py = oy + Math.sin(a) * dist * 0.86;
+        const falloff = 1 - clamp((dist - orbR * 0.95) / (orbR * 3.4), 0, 1);
+        const tang = -0.22 + (rnd() - 0.5) * 0.45 + Math.sin(a) * 0.22;
+        const seg = (5 + rnd() * 7) * (0.7 + falloff * 0.6);
+        const cur = (rnd() - 0.5) * 0.32;
+        const pts = [
+          [px - Math.cos(tang) * seg, py - Math.sin(tang) * seg],
+          [px, py],
+          [px + Math.cos(tang + cur) * seg, py + Math.sin(tang + cur) * seg]
+        ];
+        const warmMix = falloff > 0.32 || rnd() < 0.65;
+        const h = warmMix ? th.orbHue + (rnd() - 0.5) * 18 : th.bgHi + (rnd() - 0.5) * 16;
+        const lum = warmMix ? (58 + falloff * 24 + rnd() * 8) : (42 + falloff * 22);
+        const alpha = (0.06 + falloff * 0.2) * (0.65 + rnd() * 0.6);
+        paintBristle(
+          g, pts, 3.2 + rnd() * 3.6,
+          `hsla(${h},${54 + falloff * 24}%,${lum}%,${alpha.toFixed(3)})`,
+          falloff > 0.45 ? `hsla(${h + 6},76%,${Math.min(92, lum + 12)}%,${(alpha * 0.65).toFixed(3)})` : null,
+          null, rnd
+        );
+      }
       const core = g.createRadialGradient(ox, oy, 0, ox, oy, orbR * 1.35);
       core.addColorStop(0, `hsla(${th.orbHue + 10},94%,88%,.72)`);
       core.addColorStop(0.5, `hsla(${th.orbHue + 2},84%,68%,.42)`);
