@@ -62,7 +62,9 @@ Implemented on 2026-11-20 (library pane `#pane-shelf` only):
 - Collapsed/expanded state is saved per stack. While searching, matching stacks open temporarily (only matching members shown); clearing search restores the saved state.
 - Notes and excerpts are not mixed into this list. Desktop width is not capped.
 
-Still undecided: automatic grouping, whether notes/excerpts join a shared feed, and a desktop maximum width.
+Full-screen redesign (2026-11-20, same branch): marketing intro/flow/tagline, the sidebar and the bottom 整理 block were removed. The header holds only Zone, a search toggle (reveals #find-bar with #search/#sort-seg) and a + menu (#btn-import -> #file-input, #btn-select-mode, #btn-excerpts, #btn-appearance, #btn-ai-settings). Navigation is one floating capsule at all widths labelled 流 · 知识 · 星海 (data-pane ids unchanged). Selection is in place: menu 整理 or long-press a row; #pick-bar offers 建堆 / 移出 / 删除 / 完成. Expanded stacks show 收起 plus a ⋯ menu (重命名 / 解散); member rows use a slim 移出卡片堆 icon. Shelf and knowledge content use a centered 760 px measure on desktop.
+
+Still undecided: automatic grouping and whether notes/excerpts join a shared feed.
 
 Current Apple-inspired tokens are real source references, not a claim to reproduce Apple's proprietary UI: system font stack; light shell background `#f5f5f7`; dark shell `#000`; accents `#007aff` / `#0a84ff`; translucent cards/toolbars; subtle borders; radius and shadow hierarchy; motion curve `cubic-bezier(.22,.8,.24,1)`. See `app.css` root variables and `.appearance-dark`. Shell light/dark/system appearance is separate from reading paper/white/sepia/night themes; preserve that separation.
 

@@ -14,7 +14,7 @@ const coverUrls = new Map();
 const KIND = { highlight: '划线', excerpt: '摘录', copy: '复制', annotation: '批注' };
 
 function toast(msg, ms = 2200) { const t = $('#toast'); t.textContent = msg; t.classList.remove('hidden'); clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.add('hidden'), ms); }
-function colorFor(s) { let h = 0; for (const c of s) h = (h * 31 + c.codePointAt(0)) % 360; return `hsl(${h} 22% 42%)`; }
+function hueFor(s) { let h = 0; for (const c of s) h = (h * 31 + c.codePointAt(0)) % 360; return h; }
 const fmtPct = p => (p == null ? '' : (p * 100).toFixed(p < 0.1 && p > 0 ? 1 : 0) + '%');
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
 function emptyNote(text) { const d = document.createElement('div'); d.className = 'item'; d.textContent = text; return d; }
@@ -37,7 +37,7 @@ async function copyText(text) {
   } catch { return false; }
 }
 
-/* ---------------- 书架：整宽列表 + 手动卡片堆 ---------------- */
+/* ---------------- 流：整宽列表、手动卡片堆、就地整理 ---------------- */
 const picked = new Set();
 let viewGen = 0;
 const SORTS = ['recent', 'added', 'title'];
@@ -47,6 +47,17 @@ let lastQuery = '';
 let shelfOrder = [];
 let shelfMemory = null;
 let stackDialog = null;
+let pickMode = false;
+let findOpen = false;
+let fanId = null, settleId = null;
+const reduceMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+const wait = ms => new Promise(r => setTimeout(r, ms));
+const SVG = {
+  chev: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 6l6 6-6 6"/></svg>',
+  more: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12h.01M12 12h.01M18 12h.01"/></svg>',
+  minus: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M8.8 12h6.4"/></svg>',
+  check: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.5 12.4l3 3 6-6.6"/></svg>'
+};
 
 function recentKey(b) { return b.lastOpened > 0 ? b.lastOpened : 0; }
 function currentSort() {
@@ -70,12 +81,13 @@ function paintSort() {
     b.setAttribute('aria-checked', on ? 'true' : 'false');
   });
 }
-function updateManageBar() {
+function updatePickBar() {
   const n = picked.size;
-  $('#manage-bar').classList.toggle('hidden', n === 0);
-  $('#manage-count').textContent = n ? `已选 ${n} 本` : '';
-  const stacked = n > 0 && listStacks().some(s => s.bookIds.some(id => picked.has(id)));
-  $('#btn-unstack-picked').classList.toggle('hidden', !stacked);
+  const stacks = listStacks();
+  $('#manage-count').textContent = n ? `已选 ${n}` : '轻点选择';
+  $('#btn-stack-picked').disabled = !(n >= 2 || (n >= 1 && stacks.length));
+  $('#btn-delete-picked').disabled = n === 0;
+  $('#btn-unstack-picked').classList.toggle('hidden', !(n && stacks.some(s => s.bookIds.some(id => picked.has(id)))));
 }
 function showShelfPage() { showPane('shelf'); }
 let returnPane = 'shelf';
@@ -88,23 +100,44 @@ async function mirrorKnowledge(book) {
   catch (err) { console.warn(err); }
 }
 async function deleteBooks(recs) {
-  if (!recs.length) return;
+  if (!recs.length) return false;
   const msg = recs.length === 1
-    ? `删除《${recs[0].title}》吗？\n阅读进度、书签、摘录和相关笔记会一起去掉。`
-    : `删除这 ${recs.length} 本吗？\n阅读进度、书签、摘录和相关笔记会一起去掉。`;
-  if (!confirm(msg)) return;
+    ? `删除「${recs[0].title}」？\n进度、书签、摘录和相关笔记会一起移除。`
+    : `删除这 ${recs.length} 项？\n进度、书签、摘录和相关笔记会一起移除。`;
+  if (!confirm(msg)) return false;
   for (const b of recs) {
     try {
       await deleteBookBundle(b.id);
       picked.delete(b.id);
     } catch (err) {
       console.warn(err);
-      toast('《' + b.title + '》没有删掉。书和笔记都还在，可以再试一次。');
+      toast('「' + b.title + '」没有删掉，内容和笔记都还在。');
     }
   }
-  updateManageBar();
   await renderLibrary();
   try { await refreshWorkspace(); } catch (err) { console.warn(err); }
+  return true;
+}
+
+/* 就地整理：长按一行或从菜单进入；底部浮起操作条 */
+function startPick(id) {
+  if (currentPane() !== 'shelf') showPane('shelf');
+  pickMode = true;
+  if (id) picked.add(id);
+  return renderLibrary({ focus: id ? 'book:' + id : undefined });
+}
+function exitPick() {
+  if (!pickMode) return false;
+  pickMode = false;
+  picked.clear();
+  renderLibrary();
+  return true;
+}
+function togglePick(id, el) {
+  if (picked.has(id)) picked.delete(id); else picked.add(id);
+  el.classList.toggle('picked', picked.has(id));
+  el.setAttribute('aria-pressed', picked.has(id) ? 'true' : 'false');
+  updatePickBar();
 }
 function bindShelfBook(el, b) {
   let hold = null, sx = 0, sy = 0, held = false;
@@ -113,7 +146,8 @@ function bindShelfBook(el, b) {
     if (e.button != null && e.button !== 0) return;
     sx = e.clientX; sy = e.clientY; held = false;
     clearHold();
-    hold = setTimeout(() => { hold = null; held = true; deleteBooks([b]); }, 520);
+    if (pickMode) return;
+    hold = setTimeout(() => { hold = null; held = true; startPick(b.id); }, 480);
   });
   el.addEventListener('pointermove', e => {
     if (Math.abs(e.clientX - sx) > 12 || Math.abs(e.clientY - sy) > 12) clearHold();
@@ -121,13 +155,17 @@ function bindShelfBook(el, b) {
   el.addEventListener('pointerup', clearHold);
   el.addEventListener('pointercancel', clearHold);
   el.addEventListener('contextmenu', e => e.preventDefault());
-  el.onclick = () => { if (held) { held = false; return; } openBook(b.id); };
+  el.onclick = () => {
+    if (held) { held = false; return; }
+    if (pickMode) togglePick(b.id, el);
+    else openBook(b.id);
+  };
 }
 
 function shelfQuery() { return $('#search').value.trim().toLowerCase(); }
 function bookMatches(b, q) { return (`${b.title || ''} ${b.author || ''}`).toLowerCase().includes(q); }
 function monogram(title) {
-  const ch = Array.from(String(title || '').trim())[0] || '书';
+  const ch = Array.from(String(title || '').trim())[0] || 'Z';
   return ch.toLocaleUpperCase();
 }
 function node(tag, cls, text) {
@@ -136,8 +174,8 @@ function node(tag, cls, text) {
   if (text != null) n.textContent = text;
   return n;
 }
-function coverNode(b, cls) {
-  const t = node('span', cls);
+function avatarNode(b) {
+  const t = node('span', 'avatar');
   t.setAttribute('aria-hidden', 'true');
   if (b.cover) {
     if (!coverUrls.has(b.id)) coverUrls.set(b.id, URL.createObjectURL(b.cover));
@@ -145,9 +183,9 @@ function coverNode(b, cls) {
     img.alt = ''; img.src = coverUrls.get(b.id);
     t.appendChild(img);
   } else {
-    const ph = node('span', 'ph', monogram(b.title));
-    ph.style.background = colorFor(b.title || '');
-    t.appendChild(ph);
+    t.classList.add('mono');
+    t.style.setProperty('--h', hueFor(b.title || ''));
+    t.appendChild(node('span', 'ph', monogram(b.title)));
   }
   return t;
 }
@@ -165,35 +203,53 @@ function paneOffset(el) {
   return el.getBoundingClientRect().top - $('#pane-shelf').getBoundingClientRect().top;
 }
 
-function bookRow(b, stack) {
+function bookRow(b, stack, i = 0) {
   const wrap = node('div', 'row-wrap');
   wrap.setAttribute('role', 'listitem');
   wrap.dataset.anchor = 'book:' + b.id;
+  wrap.style.setProperty('--i', i);
   const el = node('button', 'book');
   el.type = 'button';
   el.dataset.id = b.id;
   el.dataset.focus = 'book:' + b.id;
+  if (pickMode) {
+    el.classList.toggle('picked', picked.has(b.id));
+    el.setAttribute('aria-pressed', picked.has(b.id) ? 'true' : 'false');
+  }
+  const tick = node('span', 'tick');
+  tick.setAttribute('aria-hidden', 'true');
+  tick.innerHTML = SVG.check;
   const meta = node('span', 'meta');
-  const line = node('span', 'a');
-  if (b.type) line.appendChild(node('span', 'type', String(b.type).toUpperCase()));
-  if (b.author) line.appendChild(node('span', 'by', b.author));
-  const bar = node('span', 'pbar');
-  const fill = document.createElement('i');
-  fill.style.width = Math.round(Math.min(1, Math.max(0, b.progress || 0)) * 100) + '%';
-  bar.appendChild(fill);
-  meta.append(node('span', 't', b.title || '未命名'), line, bar);
-  el.append(coverNode(b, 'thumb'), meta, node('span', 'pct', b.progress ? fmtPct(b.progress) : '未读'));
+  const title = node('span', 't', b.title || '未命名');
+  title.id = 't-' + b.id;
+  const line = node('span', 'a', [b.author, b.type ? String(b.type).toUpperCase() : ''].filter(Boolean).join(' · '));
+  meta.append(title, line);
+  if (b.progress > 0) {
+    const bar = node('span', 'pbar');
+    const fill = document.createElement('i');
+    fill.style.width = Math.round(Math.min(1, b.progress) * 100) + '%';
+    bar.appendChild(fill);
+    meta.appendChild(bar);
+  }
+  let side;
+  if (b.progress > 0) side = node('span', 'pct', fmtPct(b.progress));
+  else if (!b.lastOpened) { side = node('span', 'dot'); side.appendChild(node('span', 'sr', '未读')); }
+  else side = node('span', 'pct', '');
+  el.append(tick, avatarNode(b), meta, side);
   bindShelfBook(el, b);
   wrap.appendChild(el);
-  if (stack) {
-    const out = node('button', 'row-out', '移出');
+  if (stack && !pickMode) {
+    const out = node('button', 'row-out');
     out.type = 'button';
     out.dataset.focus = 'out:' + b.id;
-    out.setAttribute('aria-label', `把《${b.title || '未命名'}》移出「${stack.name}」，书不会删除`);
+    out.title = '移出卡片堆';
+    out.setAttribute('aria-label', '移出卡片堆');
+    out.setAttribute('aria-describedby', title.id);
+    out.innerHTML = SVG.minus;
     out.onclick = () => {
       removeFromStacks([b.id]);
       const still = getStack(stack.id);
-      toast(still ? `已移出「${stack.name}」，书还在` : `「${stack.name}」只剩一本，已解散，书都还在`);
+      toast(still ? `已移出「${stack.name}」` : `「${stack.name}」只剩一项，已散开`);
       renderLibrary(still ? { anchor: 'stack:' + stack.id, focus: 'stack:' + stack.id } : { anchor: 'book:' + b.id, focus: 'book:' + b.id });
     };
     wrap.appendChild(out);
@@ -201,8 +257,22 @@ function bookRow(b, stack) {
   return wrap;
 }
 
+function closeStackMenus(refocus = false) {
+  let closed = false;
+  document.querySelectorAll('.stack-menu:not([hidden])').forEach(menu => {
+    menu.hidden = true;
+    const btn = document.querySelector(`[aria-controls="${menu.id}"]`);
+    btn?.setAttribute('aria-expanded', 'false');
+    if (refocus) btn?.focus();
+    closed = true;
+  });
+  return closed;
+}
+
 function stackBlock(s, members, shown, open, q) {
   const sec = node('section', 'stack ' + (open ? 'is-open' : 'is-collapsed'));
+  if (open && fanId === s.id) sec.classList.add('fanning');
+  if (!open && settleId === s.id) sec.classList.add('settling');
   sec.setAttribute('role', 'listitem');
   sec.dataset.stack = s.id;
   sec.dataset.anchor = 'stack:' + s.id;
@@ -211,27 +281,26 @@ function stackBlock(s, members, shown, open, q) {
   head.type = 'button';
   head.id = 'stack-head-' + s.id;
   head.dataset.focus = 'stack:' + s.id;
+  head.dataset.anchor = 'head:' + s.id;
   head.setAttribute('aria-expanded', open ? 'true' : 'false');
   head.setAttribute('aria-controls', 'stack-items-' + s.id);
-  head.setAttribute('aria-describedby', 'stack-preview-' + s.id);
-  const covers = node('span', 'stack-covers');
-  covers.setAttribute('aria-hidden', 'true');
-  for (const m of members.slice(0, 3)) covers.appendChild(coverNode(m, 'mini'));
+  head.setAttribute('aria-label', `卡片堆「${s.name}」，${members.length} 项`);
   const text = node('span', 'stack-text');
-  const partial = q && shown.length < members.length;
-  text.appendChild(node('span', 'stack-kicker', partial ? `卡片堆 · ${shown.length} 本匹配` : '卡片堆'));
   text.appendChild(node('span', 'stack-name', s.name));
-  const titles = shown.slice(0, 3).map(m => m.title || '未命名');
-  const preview = node('span', 'stack-preview', titles.join(' · ') + (shown.length > 3 ? ` 等 ${shown.length} 本` : ''));
-  preview.id = 'stack-preview-' + s.id;
-  text.appendChild(preview);
+  const partial = q && shown.length < members.length;
+  if (!open) {
+    const titles = shown.slice(0, 3).map(m => m.title || '未命名').join(' · ');
+    const preview = node('span', 'stack-preview', (partial ? `${shown.length} 项匹配 · ` : '') + titles);
+    preview.id = 'stack-preview-' + s.id;
+    head.setAttribute('aria-describedby', preview.id);
+    text.appendChild(preview);
+  }
   const side = node('span', 'stack-side');
   const count = node('span', 'stack-count', String(members.length));
   count.setAttribute('aria-hidden', 'true');
   side.appendChild(count);
-  side.insertAdjacentHTML('beforeend', '<svg class="stack-chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg>');
-  head.append(covers, text, side);
-  head.setAttribute('aria-label', `卡片堆「${s.name}」，${members.length} 本`);
+  side.insertAdjacentHTML('beforeend', SVG.chev.replace('<svg', '<svg class="stack-chev"'));
+  head.append(text, side);
   head.onclick = () => toggleStack(s.id, !open);
   card.appendChild(head);
 
@@ -241,38 +310,75 @@ function stackBlock(s, members, shown, open, q) {
   items.setAttribute('aria-labelledby', head.id);
   items.hidden = !open;
   if (open) {
-    const tools = node('div', 'stack-tools');
-    tools.setAttribute('role', 'group');
-    tools.setAttribute('aria-label', `「${s.name}」的操作`);
-    const tool = (label, key, fn, cls = '') => {
+    const collapse = node('button', 'stack-collapse', '收起');
+    collapse.type = 'button';
+    collapse.dataset.focus = 'collapse:' + s.id;
+    collapse.setAttribute('aria-controls', items.id);
+    collapse.onclick = () => toggleStack(s.id, false);
+    const more = node('button', 'stack-more-btn');
+    more.type = 'button';
+    more.innerHTML = SVG.more;
+    more.dataset.focus = 'more:' + s.id;
+    more.title = '更多';
+    more.setAttribute('aria-label', `「${s.name}」的更多操作`);
+    more.setAttribute('aria-haspopup', 'menu');
+    more.setAttribute('aria-expanded', 'false');
+    more.setAttribute('aria-controls', 'stack-menu-' + s.id);
+    const menu = node('div', 'stack-menu');
+    menu.id = 'stack-menu-' + s.id;
+    menu.setAttribute('role', 'menu');
+    menu.hidden = true;
+    const item = (label, cls, fn) => {
       const b = node('button', cls, label);
       b.type = 'button';
-      b.dataset.focus = key + ':' + s.id;
+      b.setAttribute('role', 'menuitem');
       b.onclick = fn;
-      tools.appendChild(b);
-      return b;
+      menu.appendChild(b);
     };
-    const collapse = tool('收起', 'collapse', () => toggleStack(s.id, false), 'stack-collapse');
-    collapse.setAttribute('aria-controls', items.id);
-    tool('重命名', 'rename', () => openStackDialog({ mode: 'rename', stackId: s.id, returnFocus: 'rename:' + s.id }), 'stack-rename');
-    tool('解散', 'ungroup', () => {
+    item('重命名', 'stack-rename', () => {
+      closeStackMenus();
+      openStackDialog({ mode: 'rename', stackId: s.id, returnFocus: 'more:' + s.id });
+    });
+    item('解散', 'stack-ungroup danger', () => {
+      closeStackMenus();
       dissolveStack(s.id);
-      toast(`已解散「${s.name}」，${members.length} 本书都还在`);
+      toast(`已散开「${s.name}」，${members.length} 项都还在`);
       const first = members[0]?.id;
       renderLibrary({ anchor: first ? 'book:' + first : null, focus: first ? 'book:' + first : null });
-    }, 'stack-ungroup danger');
-    card.appendChild(tools);
-    for (const m of shown) items.appendChild(bookRow(m, s));
-    if (partial) items.appendChild(node('p', 'stack-more', `另有 ${members.length - shown.length} 本不匹配当前搜索`));
+    });
+    more.onclick = () => {
+      const show = menu.hidden;
+      closeStackMenus();
+      if (!show) return;
+      menu.hidden = false;
+      more.setAttribute('aria-expanded', 'true');
+      menu.querySelector('button')?.focus();
+    };
+    card.append(collapse, more, menu);
+    shown.forEach((m, i) => items.appendChild(bookRow(m, s, i)));
+    if (partial) items.appendChild(node('p', 'stack-more', `另有 ${members.length - shown.length} 项不匹配`));
   }
   sec.append(card, items);
   return sec;
 }
 
-function toggleStack(id, open) {
+async function toggleStack(id, open) {
+  closeStackMenus();
+  const sec = findKeyed('data-anchor', 'stack:' + id);
+  if (!open && sec && !reduceMotion()) { sec.classList.add('folding'); await wait(170); }
   if (shelfQuery()) searchOpen.set(id, open);
   else setStackCollapsed(id, !open);
-  return renderLibrary({ anchor: 'stack:' + id, focus: 'stack:' + id });
+  if (open) fanId = id; else settleId = id;
+  try { await renderLibrary({ anchor: 'head:' + id, focus: 'stack:' + id }); }
+  finally { fanId = null; settleId = null; }
+}
+
+function syncFindBar() {
+  const btn = $('#btn-search-toggle');
+  $('#find-bar').hidden = !findOpen;
+  btn.classList.toggle('on', findOpen);
+  btn.setAttribute('aria-expanded', findOpen ? 'true' : 'false');
+  btn.setAttribute('aria-label', findOpen ? '收起搜索' : '搜索与排序');
 }
 
 async function renderLibrary(opts = {}) {
@@ -280,10 +386,13 @@ async function renderLibrary(opts = {}) {
   const books = await db.all('books');
   const live = new Set(books.map(b => b.id));
   for (const id of [...picked]) if (!live.has(id)) picked.delete(id);
+  if (pickMode && !books.length) { pickMode = false; picked.clear(); }
   const stacks = reconcileStacks(live);
   const raw = $('#search').value.trim();
   const q = raw.toLowerCase();
   if (q !== lastQuery) { searchOpen.clear(); lastQuery = q; }
+  if (q) findOpen = true;
+  syncFindBar();
   const sort = currentSort();
   const sorted = books.slice();
   sortBooks(sorted, sort);
@@ -318,36 +427,13 @@ async function renderLibrary(opts = {}) {
     shownCount += shown.length;
   }
   $('#grid').replaceChildren(frag);
+  $('#library').classList.toggle('picking', pickMode);
+  $('#pick-bar').hidden = !pickMode;
+  updatePickBar();
 
   $('#empty').classList.toggle('hidden', books.length > 0);
   $('#no-match').classList.toggle('hidden', !q || shownCount > 0 || books.length === 0);
-  const chip = $('#search-chip');
-  chip.classList.toggle('hidden', !q);
-  chip.textContent = q ? `搜索「${raw}」 · 清除` : '';
-
-  const desk = $('#desk-list');
-  const deskFrag = document.createDocumentFragment();
-  for (const b of sorted) {
-    const s = stackByBook.get(b.id);
-    if (q && !bookMatches(b, q) && !(s?.name || '').toLowerCase().includes(q)) continue;
-    const row = node('button', 'desk-book' + (picked.has(b.id) ? ' picked' : ''));
-    row.type = 'button';
-    row.dataset.focus = 'pick:' + b.id;
-    row.dataset.id = b.id;
-    row.setAttribute('aria-pressed', picked.has(b.id) ? 'true' : 'false');
-    row.innerHTML = `<span class="tick" aria-hidden="true">✓</span><span class="nm"><b></b><small></small></span>`;
-    row.querySelector('b').textContent = b.title;
-    row.querySelector('small').textContent = [b.author, b.progress ? fmtPct(b.progress) : '', s ? `卡片堆「${s.name}」` : ''].filter(Boolean).join(' · ');
-    row.onclick = () => {
-      if (picked.has(b.id)) picked.delete(b.id); else picked.add(b.id);
-      row.classList.toggle('picked', picked.has(b.id));
-      row.setAttribute('aria-pressed', picked.has(b.id) ? 'true' : 'false');
-      updateManageBar();
-    };
-    deskFrag.appendChild(row);
-  }
-  if (!deskFrag.childNodes.length && q) deskFrag.appendChild(node('p', 'desk-note', '没有匹配的书'));
-  desk.replaceChildren(deskFrag);
+  $('#search-chip').classList.toggle('hidden', !q);
 
   if (opts.restore) {
     pane.scrollTop = opts.restore.scroll || 0;
@@ -358,23 +444,24 @@ async function renderLibrary(opts = {}) {
       if (now) pane.scrollTop += paneOffset(now) - anchorTop;
     }
     const el = restoreFocus(focus);
-    if (opts.reveal && el) el.scrollIntoView({ block: 'nearest', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+    if (opts.reveal && el) el.scrollIntoView({ block: 'nearest', behavior: reduceMotion() ? 'auto' : 'smooth' });
   }
 
   const sub = $('#shelf-sub');
-  if (sub) sub.textContent = books.length ? [`共 ${books.length} 本`, stacks.length ? `${stacks.length} 个卡片堆` : '', '只保存在这台设备'].filter(Boolean).join(' · ') : '';
-  $('#desk-block')?.classList.toggle('hidden', books.length === 0);
-  updateManageBar();
+  sub.textContent = !books.length ? ''
+    : pickMode ? '轻点选择，长按也可以进入整理'
+      : q ? `找到 ${shownCount} 项`
+        : [`${books.length} 项`, stacks.length ? `${stacks.length} 叠` : ''].filter(Boolean).join(' · ');
   paintSort();
   if (navigator.storage?.estimate) {
     try {
       const e = await navigator.storage.estimate();
-      $('#storage-info').textContent = books.length ? `共 ${books.length} 本 · 已用空间 ${(e.usage / 1048576).toFixed(0)} MB` : '';
+      $('#storage-info').textContent = books.length ? `仅存于本机 · ${(e.usage / 1048576).toFixed(0)} MB` : '';
     } catch {}
   }
   if (books.length && !localStorage.getItem('rr-hint-panes') && !$('#reader').classList.contains('active')) {
     localStorage.setItem('rr-hint-panes', '1');
-    setTimeout(() => toast('划线和摘录会进入「知识」，并可在「图谱」里串起来', 3600), 600);
+    setTimeout(() => toast('划线和摘录会进入「知识」，也会在「星海」里相连', 3600), 600);
   }
 }
 
@@ -384,23 +471,21 @@ function syncStackDialog() {
   const target = pick ? $('#stack-target').value : '';
   $('#stack-name-field').classList.toggle('hidden', !!target);
   const n = stackDialog?.ids?.length || 0;
-  $('#stack-save').textContent = pick ? (target ? '加进去' : '组成卡片堆') : '保存';
-  $('#stack-desc').textContent = !pick ? '只改名字，里面的书不变。'
-    : target ? `把所选的 ${n} 本加进这个卡片堆。原来所在的卡片堆会去掉它们。`
-      : `用所选的 ${n} 本组成一个卡片堆。书不会被复制或改动。`;
+  $('#stack-save').textContent = pick ? (target ? '加入' : '建堆') : '完成';
+  $('#stack-desc').textContent = !pick ? '' : target ? `把 ${n} 项加进这一叠。` : `把 ${n} 项叠成一摞，随时可以散开。`;
 }
 function openStackDialog(opts) {
   const stacks = listStacks();
   const pick = opts.mode === 'pick';
-  if (pick && opts.ids.length < 2 && !stacks.length) { toast('至少选两本，才能组成卡片堆'); return; }
+  if (pick && opts.ids.length < 2 && !stacks.length) { toast('至少选两项'); return; }
   stackDialog = { ...opts, returnFocus: opts.returnFocus || focusKey() };
-  $('#stack-heading').textContent = pick ? '放进卡片堆' : '重命名卡片堆';
+  $('#stack-heading').textContent = pick ? '建堆' : '重命名';
   const sel = $('#stack-target');
   sel.replaceChildren();
   $('#stack-target-field').classList.toggle('hidden', !pick || !stacks.length);
   if (pick) {
-    if (opts.ids.length >= 2) sel.append(new Option('新建卡片堆', ''));
-    for (const s of stacks) sel.append(new Option(`${s.name}（${s.bookIds.length} 本）`, s.id));
+    if (opts.ids.length >= 2) sel.append(new Option('新的一叠', ''));
+    for (const s of stacks) sel.append(new Option(`${s.name} · ${s.bookIds.length}`, s.id));
     sel.selectedIndex = 0;
   }
   $('#stack-name').value = pick ? defaultStackName(stacks) : (getStack(opts.stackId)?.name || '');
@@ -438,17 +523,79 @@ $('#stack-dialog').onsubmit = async e => {
   const target = $('#stack-target').value;
   let s;
   if (target) s = addToStack(target, d.ids);
-  else if (d.ids.length < 2) { toast('至少选两本，才能组成卡片堆'); return; }
+  else if (d.ids.length < 2) { toast('至少选两项'); return; }
   else s = createStack($('#stack-name').value, d.ids);
-  if (!s) { toast('没有放进去，请再试一次'); return; }
-  for (const id of d.ids) picked.delete(id);
+  if (!s) { toast('没有成功，请再试一次'); return; }
   closeStackDialog(false);
-  toast(target ? `已加进「${s.name}」，共 ${s.bookIds.length} 本` : `已组成「${s.name}」，共 ${s.bookIds.length} 本`);
+  pickMode = false;
+  picked.clear();
+  toast(target ? `已加入「${s.name}」` : `已建堆「${s.name}」`);
   await renderLibrary({ focus: 'stack:' + s.id, reveal: true });
 };
 
+/* 顶部：搜索开关与「+」菜单 */
+function menuOpen() { return !$('#menu-mask').classList.contains('hidden'); }
+function openMenu() {
+  const r = $('#btn-menu').getBoundingClientRect();
+  const sheet = $('#menu-sheet');
+  sheet.style.top = Math.round(r.bottom + 8) + 'px';
+  sheet.style.right = Math.max(12, Math.round(document.documentElement.clientWidth - r.right)) + 'px';
+  $('#menu-mask').classList.remove('hidden');
+  $('#btn-menu').setAttribute('aria-expanded', 'true');
+  $('#btn-menu').classList.add('on');
+  $('#menu-sheet .menu-item')?.focus();
+}
+function closeMenu(refocus = true) {
+  if (!menuOpen()) return false;
+  $('#menu-mask').classList.add('hidden');
+  $('#btn-menu').setAttribute('aria-expanded', 'false');
+  $('#btn-menu').classList.remove('on');
+  if (refocus) $('#btn-menu').focus();
+  return true;
+}
+$('#btn-menu').onclick = () => (menuOpen() ? closeMenu() : openMenu());
+$('#menu-mask').addEventListener('click', e => { if (e.target === e.currentTarget) closeMenu(); });
+$('#menu-sheet').addEventListener('click', e => {
+  const item = e.target.closest('.menu-item');
+  if (item && item.id !== 'btn-appearance') closeMenu(false);
+});
+$('#btn-import').onclick = () => $('#file-input').click();
+$('#btn-empty-import').onclick = () => $('#file-input').click();
+$('#btn-select-mode').onclick = () => startPick(null);
+// 菜单里的上下键
+document.addEventListener('keydown', e => {
+  const menu = e.target.closest?.('[role="menu"]');
+  if (!menu || !['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) return;
+  const items = [...menu.querySelectorAll('[role="menuitem"]')].filter(n => n.getClientRects().length);
+  if (!items.length) return;
+  e.preventDefault();
+  const i = items.indexOf(document.activeElement);
+  const next = e.key === 'Home' ? 0 : e.key === 'End' ? items.length - 1 : (i + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
+  items[next].focus();
+});
+document.addEventListener('pointerdown', e => {
+  if (!e.target.closest?.('.stack-menu, .stack-more-btn')) closeStackMenus();
+});
+$('#btn-search-toggle').onclick = () => {
+  const pane = currentPane();
+  if (pane === 'knowledge') { $('#note-search').focus(); return; }
+  if (pane === 'graph') { $('#graph-search').focus(); return; }
+  if (findOpen) {
+    const had = !!$('#search').value;
+    findOpen = false;
+    $('#search').value = '';
+    syncFindBar();
+    if (had) renderLibrary();
+  } else {
+    findOpen = true;
+    syncFindBar();
+    $('#pane-shelf').scrollTo({ top: 0, behavior: reduceMotion() ? 'auto' : 'smooth' });
+    $('#search').focus({ preventScroll: true });
+  }
+};
+
 $('#search').oninput = () => renderLibrary();
-$('#search-chip').onclick = () => { $('#search').value = ''; renderLibrary(); };
+$('#search-chip').onclick = () => { $('#search').value = ''; renderLibrary(); $('#search').focus({ preventScroll: true }); };
 document.querySelectorAll('#sort-seg button').forEach(b => b.onclick = () => {
   localStorage.setItem('rr-sort', b.dataset.sort);
   renderLibrary();
@@ -456,18 +603,19 @@ document.querySelectorAll('#sort-seg button').forEach(b => b.onclick = () => {
 paintSort();
 $('#btn-stack-picked').onclick = () => {
   const ids = pickedInOrder();
-  openStackDialog({ mode: 'pick', ids, returnFocus: ids.length ? 'pick:' + ids[0] : null });
+  openStackDialog({ mode: 'pick', ids, returnFocus: ids.length ? 'book:' + ids[0] : null });
 };
 $('#btn-unstack-picked').onclick = () => {
   const ids = pickedInOrder();
   removeFromStacks(ids);
-  toast(`已把 ${ids.length} 本移出卡片堆，书都还在`);
+  toast(`已移出 ${ids.length} 项`);
   renderLibrary();
 };
-$('#btn-clear-picked').onclick = () => { picked.clear(); renderLibrary(); };
+$('#btn-done-picked').onclick = () => exitPick();
 $('#btn-delete-picked').onclick = async () => {
   const books = await db.all('books');
-  await deleteBooks(books.filter(b => picked.has(b.id)));
+  const done = await deleteBooks(books.filter(b => picked.has(b.id)));
+  if (done && !picked.size) exitPick();
 };
 $('#file-input').onchange = async e => {
   showShelfPage();
@@ -712,7 +860,7 @@ async function bumpSize(delta) {
     }
     if (!engine) return;
     if (e.target.matches('input, textarea, select')) return;
-    const maskOpen = ['#ai-mask', '#note-mask', '#settings-mask', '#stack-mask', '#lib-panel'].some(sel => {
+    const maskOpen = ['#ai-mask', '#note-mask', '#settings-mask', '#stack-mask', '#menu-mask', '#lib-panel'].some(sel => {
       const el = document.querySelector(sel);
       return el && !el.classList.contains('hidden');
     });
@@ -1007,12 +1155,15 @@ let rz; window.addEventListener('resize', () => { clearTimeout(rz); rz = setTime
 function handleBack() {
   if (dismissAssistant()) return true;
   if (closeStackDialog()) return true;
+  if (closeMenu()) return true;
+  if (closeStackMenus(true)) return true;
   if (!$('#note-mask').classList.contains('hidden')) { $('#note-mask').classList.add('hidden'); noteSel = null; return true; }
   if (document.body.classList.contains('selecting')) { exitSelect(); return true; }
   if (!$('#panel').classList.contains('hidden')) { $('#panel').classList.add('hidden'); return true; }
   if (!$('#settings').classList.contains('hidden')) { $('#settings').classList.add('hidden'); return true; }
   if (!$('#lib-panel').classList.contains('hidden')) { $('#lib-panel').classList.add('hidden'); return true; }
   if (workspaceHandleBack()) return true;
+  if ($('#library').classList.contains('active') && exitPick()) return true;
   if (engine) { history.back(); return true; }
   return false;
 }

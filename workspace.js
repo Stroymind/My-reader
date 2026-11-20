@@ -92,17 +92,9 @@ function renderNotes() {
 
 function emptyKnowledge() {
   const wrap = h('div', 'empty knowledge-empty');
-  wrap.append(
-    h('p', '', '知识库还是空的'),
-    h('p', 'hint', '在书里长按一段文字，划线、批注或摘录。它们会留在这里，也可以直接写一条和书无关的笔记。')
-  );
-  const flow = h('ol', 'flow');
-  for (const [name, sub] of [['阅读', 'EPUB · PDF · TXT'], ['标注', '划线 · 批注 · 摘录'], ['积累', '笔记与标签'], ['关联', '把笔记连起来'], ['理解', '解释 · 问答'], ['应用', '导出大纲']]) {
-    const li = h('li');
-    li.append(h('b', '', name), h('span', '', sub));
-    flow.appendChild(li);
-  }
-  wrap.appendChild(flow);
+  const glow = h('div', 'empty-glow');
+  glow.setAttribute('aria-hidden', 'true');
+  wrap.append(glow, h('p', '', '还没有笔记'), h('p', 'hint', '阅读时长按一段文字，或新建一条。'));
   return wrap;
 }
 
@@ -416,7 +408,7 @@ function renderGraph(forceFit) {
   const sig = model.nodes.map(n => n.id + n.kind).join(',') + '|' + model.edges.map(e => e.a + e.b + e.kind).join(',');
   if (title) {
     const focus = state.notes.find(n => n.id === state.focusId);
-    title.textContent = focus ? '围绕「' + (focus.title || '未命名') + '」' : '个人知识网络';
+    title.textContent = focus ? '围绕「' + (focus.title || '未命名') + '」' : '星海';
   }
   if (state.focusId && !model.nodes.some(n => n.id === state.focusId)) {
     const outside = state.notes.some(n => n.id === state.focusId);

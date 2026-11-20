@@ -30,7 +30,8 @@ export function applyAppearance() {
   const btn = document.getElementById('btn-appearance');
   if (btn) {
     const name = pref === 'light' ? '浅色' : pref === 'dark' ? '深色' : '自动';
-    btn.textContent = '外观 · ' + name;
+    const label = btn.querySelector('.menu-label') || btn;
+    label.textContent = '外观 · ' + name;
     btn.setAttribute('aria-label', '外观，当前是' + name);
   }
 }
