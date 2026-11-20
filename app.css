@@ -225,7 +225,8 @@ html.appearance-dark .stack-fan .avatar.sm{box-shadow:0 2px 8px rgba(0,0,0,.5),i
 .intent-tile[aria-pressed="true"]{background:color-mix(in srgb,var(--app-accent) 16%,var(--app-elev));color:var(--app-accent)}
 .intent-tile[aria-pressed="true"] svg{color:var(--app-accent)}
 .intent-foot{display:flex;gap:8px;margin-top:8px}
-.intent-sub{flex:1;display:flex;align-items:center;justify-content:center;gap:8px;padding:10px 12px;border-radius:14px;background:transparent;color:var(--app-muted);font-size:13.5px;font-weight:560}
+.intent-sub{flex:1;display:flex;align-items:center;justify-content:center;gap:8px;padding:10px 10px;border-radius:14px;background:transparent;color:var(--app-muted);font-size:13px;font-weight:560;white-space:nowrap}
+.intent-sub[hidden]{display:none}
 .intent-sub svg{flex:none;width:16px;height:16px;color:var(--app-muted)}
 @media (hover:hover){.intent-tile:hover,.intent-sub:hover{background:color-mix(in srgb,var(--app-fg) 9%,transparent)}}
 #library.cosmos-on ~ #intent-mask .intent-sheet{background:rgba(11,18,36,.88);color:#f4ecd8;box-shadow:0 0 0 .5px rgba(244,232,204,.14),0 24px 64px rgba(0,0,0,.55)}
@@ -276,11 +277,11 @@ html.appearance-dark .stack-fan .avatar.sm{box-shadow:0 2px 8px rgba(0,0,0,.5),i
 .desk-note,.editor-hint{margin:8px 0 0;color:var(--app-muted);font-size:13px;line-height:1.6}
 #stack-desc:empty{display:none}
 
-/* 星海：纯粹印象派油画星夜 + 艺术题字（零版画网格、零雷达圈、零科幻方块）。 */
-#pane-graph{--art:"RR Latin Serif","RR Kai","KaiTi","STKaiti","Kaiti SC","RR CJK Serif",Georgia,serif;padding:0;overflow:hidden;background:#0b1633;color:#fbf2da;color-scheme:dark}
-#pane-graph.on{animation:fadeIn .5s var(--spring)}
+/* 星海：纯粹印象派油画星夜 + 随时间流转光影 + 艺术题字。 */
+#pane-graph{--art:"RR Latin Serif","RR Kai","KaiTi","STKaiti","Kaiti SC","RR CJK Serif",Georgia,serif;--sky-bg:#0b1633;padding:0;overflow:hidden;background:var(--sky-bg);color:#fbf2da;color-scheme:dark;transition:background-color .85s ease}
+#pane-graph.on{animation:fadeIn .55s var(--spring)}
 @keyframes fadeIn{from{opacity:0}}
-.graph-stage{position:absolute;inset:0;overflow:hidden;touch-action:none;perspective:1100px;perspective-origin:50% 34%;cursor:grab;background:#0b1633;outline:none;user-select:none;-webkit-user-select:none}
+.graph-stage{position:absolute;inset:0;overflow:hidden;touch-action:none;perspective:1100px;perspective-origin:50% 34%;cursor:grab;background:var(--sky-bg);outline:none;user-select:none;-webkit-user-select:none;transition:background-color .85s ease}
 .graph-stage:focus-visible{box-shadow:inset 0 0 0 2px color-mix(in srgb,var(--app-accent) 70%,transparent)}
 .graph-stage.panning{cursor:grabbing}
 .graph-sky{position:absolute;inset:0;width:100%;height:100%;display:block}
@@ -314,10 +315,11 @@ html.appearance-dark .stack-fan .avatar.sm{box-shadow:0 2px 8px rgba(0,0,0,.5),i
 .tilt .gstem{display:block;width:1px;height:calc(18px + var(--lift, 0px));background:linear-gradient(to top,rgba(252,226,154,.7),rgba(252,226,154,0))}
 .tilt .gnode.mag-beacon .gstem{width:1.2px;height:calc(42px + var(--lift, 0px));background:linear-gradient(to top,rgba(255,234,170,.86),rgba(255,234,170,0));box-shadow:0 0 8px rgba(246,204,104,.4)}
 .tilt .gnode.mag-faint .gstem{height:calc(8px + var(--lift, 0px));opacity:.35}
-.tilt .gtext{padding:2px 6px;border-radius:0;background:none;box-shadow:none;text-align:center}
+.tilt .gtext{padding:2px 6px;border-radius:0;background:none;box-shadow:none;text-align:center;animation:artFloat 5.6s ease-in-out infinite;animation-delay:var(--d,0s)}
 .tilt .gnode.mag-beacon .gtext{padding:2px 8px;background:none;box-shadow:none}
+@keyframes artFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-3.5px)}}
 .tilt .gnode.on .gtext::after{content:"";display:block;width:34px;height:1.5px;margin:4px auto 0;border-radius:99px;background:linear-gradient(90deg,transparent,rgba(252,222,140,.92),transparent)}
-.tilt .gnode.quiet .gtext{transform:translateY(4px)}
+.tilt .gnode.quiet .gtext{animation:none;transform:translateY(4px)}
 
 /* 星海按需浮现的搜索条（静息时星海顶部 0 按钮、0 读数） */
 .hud-search{position:absolute;left:50%;top:calc(env(safe-area-inset-top) + 14px);z-index:8;transform:translateX(-50%);display:flex;align-items:center;gap:8px;width:min(360px,calc(100vw - 28px));height:42px;padding:0 10px 0 14px;border-radius:16px;background:rgba(13,24,54,.82);backdrop-filter:saturate(150%) blur(24px);-webkit-backdrop-filter:saturate(150%) blur(24px);box-shadow:0 0 0 .5px rgba(250,236,198,.18),0 14px 36px rgba(4,10,26,.48);color:rgba(244,232,202,.76);animation:drop .34s var(--spring)}

@@ -569,7 +569,7 @@ function stepSpace(delta) {
 function intentOpen() { return !$('#intent-mask').classList.contains('hidden'); }
 function syncIntentTiles() {
   const pane = currentPane();
-  document.querySelectorAll('#intent-sheet .intent-tile').forEach(btn => {
+  document.querySelectorAll('#intent-sheet [data-for]').forEach(btn => {
     const scope = (btn.dataset.for || '').split(/\s+/);
     btn.hidden = scope.length > 0 && scope[0] !== '' && !scope.includes(pane);
   });
@@ -598,7 +598,7 @@ $('#intent-sheet').addEventListener('click', e => {
   const tab = e.target.closest('[data-pane]');
   if (tab) { closeIntent(false); return; }
   const item = e.target.closest('.menu-item');
-  if (item && item.id !== 'btn-appearance') closeIntent(false);
+  if (item && item.id !== 'btn-appearance' && item.id !== 'graph-mood') closeIntent(false);
 });
 $('#btn-intent-search').onclick = () => openActiveSearch();
 $('#btn-find-close').onclick = () => closeShelfFind();

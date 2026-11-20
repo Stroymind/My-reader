@@ -365,9 +365,27 @@ async function commitEditor() {
 
 /* ---------- 星海：深空知识地图 ---------- */
 const GRAPH_LIMIT = 160;
+const MOOD_CYCLE = ['auto', 'dawn', 'day', 'dusk', 'night'];
+const MOOD_NAME = { auto: '随时辰', dawn: '晨曦', day: '晴蓝', dusk: '暮色', night: '星夜' };
+const MOOD_KEY = 'rr-cosmos-mood';
 let cosmos = null;
 let cosmosModel = null;
 let graphSig = '';
+let graphMood = (() => {
+  try { const m = localStorage.getItem(MOOD_KEY); return MOOD_CYCLE.includes(m) ? m : 'auto'; } catch { return 'auto'; }
+})();
+
+function syncMoodButton() {
+  const lbl = $('#graph-mood .menu-label');
+  if (lbl) lbl.textContent = `天色 · ${MOOD_NAME[graphMood] || '随时辰'}`;
+}
+
+export function setGraphMood(mood, animate = true) {
+  graphMood = MOOD_CYCLE.includes(mood) ? mood : 'auto';
+  try { localStorage.setItem(MOOD_KEY, graphMood); } catch {}
+  syncMoodButton();
+  ensureCosmos()?.setMood(graphMood, animate);
+}
 
 function ensureCosmos() {
   if (cosmos) return cosmos;
@@ -375,6 +393,7 @@ function ensureCosmos() {
   if (!stage || !$('#graph-map')) return null;
   cosmos = new Cosmos({
     stage, plane: $('#graph-plane'), world: $('#graph-world'), sky: $('#graph-sky'), map: $('#graph-map'),
+    mood: graphMood,
     onSelect: id => selectGraphNode(id),
     onBackground: () => { if (state.focusId) clearGraphFocus(); }
   });
@@ -757,6 +776,11 @@ export function initWorkspace(nextApi) {
       || stars.find(s => s.sector.toLowerCase().includes(q));
     if (hit) selectGraphNode(hit.id, true);
   });
+  $('#graph-mood')?.addEventListener('click', () => {
+    const next = MOOD_CYCLE[(MOOD_CYCLE.indexOf(graphMood) + 1) % MOOD_CYCLE.length];
+    setGraphMood(next, true);
+  });
+  syncMoodButton();
   $('#graph-tilt')?.addEventListener('click', e => {
     const on = e.currentTarget.getAttribute('aria-pressed') !== 'true';
     e.currentTarget.setAttribute('aria-pressed', on ? 'true' : 'false');

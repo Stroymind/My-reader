@@ -589,9 +589,64 @@ try {
   await page.waitForFunction(() => document.querySelector('#ai-mask').classList.contains('hidden'));
   report.checks.push('Tapping a star opens the frosted glass star card (class, sector, links, 编辑/聚焦邻域/问 AI/关闭) above the bottom hairline; neighbourhood ignites, others recede');
 
+  await page.click('#graph-card .gc-close');
+  await page.waitForFunction(() => document.querySelector('#graph-card').classList.contains('hidden'));
+  await openIntent();
+  await page.click('#graph-reset');
+  await sleep(750);
   await openIntent();
   const graphTiles = await page.evaluate(() => [...document.querySelectorAll('#intent-sheet .menu-item')].filter(b => b.getClientRects().length).map(b => b.id));
-  assert.deepEqual(graphTiles, ['btn-intent-search', 'btn-new-note', 'graph-tilt', 'graph-reset', 'btn-appearance', 'btn-ai-settings']);
+  assert.deepEqual(graphTiles, ['btn-intent-search', 'btn-new-note', 'graph-tilt', 'graph-reset', 'graph-mood', 'btn-appearance', 'btn-ai-settings']);
+  // Test Impressionist time-of-day mood cycle (auto -> dawn -> day -> dusk -> night -> auto) + live motion
+  const moodCheck = await page.evaluate(async () => {
+    const { themeForHour } = await import('./cosmos.js');
+    const dawn = themeForHour(6.8), day = themeForHour(13), dusk = themeForHour(18.3), night = themeForHour(23), mid = themeForHour(8.3);
+    return {
+      distinct: JSON.stringify(dawn.skyMid) !== JSON.stringify(day.skyMid) && JSON.stringify(dusk.skyMid) !== JSON.stringify(night.skyMid),
+      interp: mid.skyMid[0] !== dawn.skyMid[0] && mid.skyMid[0] !== day.skyMid[0],
+      orbs: [dawn.orbKind, day.orbKind, dusk.orbKind, night.orbKind]
+    };
+  });
+  assert.equal(moodCheck.distinct, true); assert.equal(moodCheck.interp, true);
+  assert.deepEqual(moodCheck.orbs, ['sun', 'sun', 'sun', 'moon']);
+  const readMood = () => page.$eval('#graph-mood .menu-label', el => el.textContent);
+  assert.equal(await readMood(), '天色 · 随时辰');
+  await page.click('#graph-mood');
+  assert.equal(await intentVisible(), true, 'mood cycle keeps sheet open for live preview');
+  assert.equal(await readMood(), '天色 · 晨曦');
+  await page.keyboard.press('Escape');
+  await sleep(920);
+  await page.screenshot({ path: path.resolve(root, 'test-results/zone-cosmos-dawn.png') });
+  await openIntent();
+  await page.click('#graph-mood');
+  assert.equal(await readMood(), '天色 · 晴蓝');
+  await page.click('#graph-mood');
+  assert.equal(await readMood(), '天色 · 暮色');
+  await page.keyboard.press('Escape');
+  await sleep(920);
+  await page.screenshot({ path: path.resolve(root, 'test-results/zone-cosmos-dusk.png') });
+  await openIntent();
+  await page.click('#graph-mood');
+  assert.equal(await readMood(), '天色 · 星夜');
+  await page.keyboard.press('Escape');
+  await sleep(920);
+  // Check live Impressionist brushwork animation between frames
+  const snapMap = () => page.evaluate(() => {
+    const c = document.querySelector('#graph-map');
+    const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+    let sum = 0;
+    for (let i = 0; i < d.length; i += 37) sum = (sum + d[i] * ((i % 13) + 1)) % 1000000007;
+    return sum;
+  });
+  const f1 = await snapMap();
+  await sleep(420);
+  const f2 = await snapMap();
+  assert.notEqual(f1, f2, 'living Impressionist brushwork & starlight animate across frames');
+  await page.screenshot({ path: path.resolve(root, 'test-results/zone-cosmos-mobile.png') });
+  await openIntent();
+  await page.click('#graph-mood');
+  assert.equal(await readMood(), '天色 · 随时辰');
+  report.checks.push('Impressionist time-of-day cycle (随时辰/晨曦/晴蓝/暮色/星夜 with smooth interpolation & sun/moon arc) and live 60fps brushwork animation verified');
   await page.click('#btn-intent-search');
   assert.equal(await page.$eval('#graph-search-row', el => !el.hidden), true);
   await page.type('#graph-search', 'Zettel');

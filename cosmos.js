@@ -27,6 +27,100 @@ export function seeded(seed) {
 }
 const byId = (a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const lerp = (a, b, t) => a + (b - a) * t;
+const lerpRgb = (a, b, t) => [Math.round(lerp(a[0], b[0], t)), Math.round(lerp(a[1], b[1], t)), Math.round(lerp(a[2], b[2], t))];
+const lerpHue = (a, b, t) => { let d = ((b - a + 540) % 360) - 180; return (a + d * t + 360) % 360; };
+const rgbCss = (c, a = 1) => a >= 1 ? `rgb(${c[0]},${c[1]},${c[2]})` : `rgba(${c[0]},${c[1]},${c[2]},${a})`;
+
+/* ---------- 印象派四时光影调色板（晨曦 · 印象日出 / 晴蓝 · 睡莲光波 / 暮色 · 紫金黄昏 / 星夜 · 梵高星夜） ---------- */
+const MOOD_PRESET = {
+  dawn: {
+    skyTop: [20, 35, 61], skyMid: [35, 55, 86], skyBot: [44, 45, 72],
+    washA: [228, 142, 108], washB: [74, 146, 162], washC: [134, 114, 168],
+    bgHi: 22, bgMid: 204, bgLo: 234, bgLit: 4,
+    goldHue: 26, goldSat: 66, goldLum: 62, coolHue: 196, tealHue: 184, violetHue: 248,
+    starAlpha: 0.72, orbHue: 24, orbKind: 'sun'
+  },
+  day: {
+    skyTop: [14, 38, 74], skyMid: [24, 65, 112], skyBot: [16, 46, 84],
+    washA: [64, 152, 180], washB: [52, 116, 188], washC: [94, 156, 146],
+    bgHi: 188, bgMid: 208, bgLo: 220, bgLit: 6,
+    goldHue: 45, goldSat: 62, goldLum: 62, coolHue: 202, tealHue: 178, violetHue: 226,
+    starAlpha: 0.62, orbHue: 46, orbKind: 'sun'
+  },
+  dusk: {
+    skyTop: [24, 22, 54], skyMid: [42, 30, 74], skyBot: [34, 24, 58],
+    washA: [222, 128, 82], washB: [142, 82, 152], washC: [72, 88, 160],
+    bgHi: 26, bgMid: 256, bgLo: 242, bgLit: 3,
+    goldHue: 28, goldSat: 68, goldLum: 60, coolHue: 232, tealHue: 274, violetHue: 268,
+    starAlpha: 0.86, orbHue: 28, orbKind: 'sun'
+  },
+  night: {
+    skyTop: [11, 22, 51], skyMid: [19, 39, 82], skyBot: [13, 26, 58],
+    washA: [54, 96, 158], washB: [72, 64, 132], washC: [42, 104, 142],
+    bgHi: 202, bgMid: 215, bgLo: 234, bgLit: 0,
+    goldHue: 39, goldSat: 58, goldLum: 58, coolHue: 214, tealHue: 194, violetHue: 238,
+    starAlpha: 1.0, orbHue: 44, orbKind: 'moon'
+  }
+};
+const TIME_KEYS = [
+  [0, 'night'], [4.8, 'night'], [6.8, 'dawn'], [9.8, 'day'],
+  [15.8, 'day'], [18.3, 'dusk'], [20.6, 'night'], [24, 'night']
+];
+const MOOD_HOUR = { dawn: 6.8, day: 13.0, dusk: 18.3, night: 23.0 };
+
+export function themeForHour(hour) {
+  const h = ((hour % 24) + 24) % 24;
+  let k0 = TIME_KEYS[0], k1 = TIME_KEYS[TIME_KEYS.length - 1];
+  for (let i = 0; i < TIME_KEYS.length - 1; i++) {
+    if (h >= TIME_KEYS[i][0] && h <= TIME_KEYS[i + 1][0]) { k0 = TIME_KEYS[i]; k1 = TIME_KEYS[i + 1]; break; }
+  }
+  const span = Math.max(0.001, k1[0] - k0[0]);
+  const rawT = clamp((h - k0[0]) / span, 0, 1);
+  const t = rawT * rawT * (3 - 2 * rawT);
+  const a = MOOD_PRESET[k0[1]], b = MOOD_PRESET[k1[1]];
+  const isNight = h < 5.6 || h > 19.6;
+  // 随真实时辰沿天穹高位弧线缓行的印象派日/月光影（留出中庭画布给星群与艺术字）
+  let orbX, orbY, orbKind;
+  if (isNight) {
+    const u = h >= 19.6 ? (h - 19.6) / 10 : (h + 4.4) / 10;
+    orbX = lerp(0.84, 0.16, clamp(u, 0, 1));
+    orbY = 0.15 - Math.sin(clamp(u, 0, 1) * Math.PI) * 0.055;
+    orbKind = 'moon';
+  } else {
+    const u = clamp((h - 5.6) / 14, 0, 1);
+    orbX = lerp(0.82, 0.18, u);
+    orbY = 0.16 - Math.sin(u * Math.PI) * 0.065;
+    orbKind = 'sun';
+  }
+  return {
+    hour: h,
+    skyTop: lerpRgb(a.skyTop, b.skyTop, t),
+    skyMid: lerpRgb(a.skyMid, b.skyMid, t),
+    skyBot: lerpRgb(a.skyBot, b.skyBot, t),
+    washA: lerpRgb(a.washA, b.washA, t),
+    washB: lerpRgb(a.washB, b.washB, t),
+    washC: lerpRgb(a.washC, b.washC, t),
+    bgHi: lerpHue(a.bgHi, b.bgHi, t),
+    bgMid: lerpHue(a.bgMid, b.bgMid, t),
+    bgLo: lerpHue(a.bgLo, b.bgLo, t),
+    bgLit: lerp(a.bgLit, b.bgLit, t),
+    goldHue: lerpHue(a.goldHue, b.goldHue, t),
+    goldSat: lerp(a.goldSat, b.goldSat, t),
+    goldLum: lerp(a.goldLum, b.goldLum, t),
+    coolHue: lerpHue(a.coolHue, b.coolHue, t),
+    tealHue: lerpHue(a.tealHue, b.tealHue, t),
+    violetHue: lerpHue(a.violetHue, b.violetHue, t),
+    starAlpha: lerp(a.starAlpha, b.starAlpha, t),
+    orbHue: lerpHue(a.orbHue, b.orbHue, t),
+    orbX, orbY, orbKind
+  };
+}
+function currentHour(mood) {
+  if (mood && MOOD_HOUR[mood] != null) return MOOD_HOUR[mood];
+  const d = new Date();
+  return d.getHours() + d.getMinutes() / 60;
+}
 
 /* ---------- 布局：同样的笔记永远落在同样的位置 ---------- */
 export function layoutCosmos(notes, links, kindOf = () => 'note') {
@@ -259,9 +353,10 @@ function paintBristle(g, pts, wid, bodyCol, sheenCol, shadowCol, rnd) {
   }
 }
 
-function buildWorldField(model) {
+function buildWorldField(model, theme) {
   const { stars, lanes, sectors } = model;
   if (!stars.length) return null;
+  const th = theme || themeForHour(23);
   let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
   for (const s of sectors) {
     x0 = Math.min(x0, s.x - s.R); x1 = Math.max(x1, s.x + s.R);
@@ -329,11 +424,12 @@ function buildWorldField(model) {
       const vm = clamp(vSum / (p + 0.001), 0, 1);
       warmGrid[gi] = wm; tealGrid[gi] = tm; violetGrid[gi] = vm;
       if (v < 0.03) continue;
-      // 莫奈式柔润油画罩染底色（群青、暮紫、松石青、暖金暮晕）
+      // 随当前时辰变化的莫奈油画底色罩染
       const wash = smoothstep(0.03, 1.0, v);
-      const r = 24 + wash * (32 + wm * 104 + vm * 44 - tm * 6);
-      const gr = 46 + wash * (58 + wm * 56 + tm * 48 + vm * 16);
-      const b = 108 + wash * (70 - wm * 34 + tm * 18 + vm * 30);
+      const base = th.skyMid, wA = th.washA, wB = th.washB, wC = th.washC;
+      const r = base[0] * 0.4 + wash * (wA[0] * (0.35 + wm * 0.45) + wB[0] * (0.28 + tm * 0.25) + wC[0] * (0.2 + vm * 0.28));
+      const gr = base[1] * 0.4 + wash * (wA[1] * (0.35 + wm * 0.45) + wB[1] * (0.28 + tm * 0.25) + wC[1] * (0.2 + vm * 0.28));
+      const b = base[2] * 0.4 + wash * (wA[2] * (0.35 + wm * 0.45) + wB[2] * (0.28 + tm * 0.25) + wC[2] * (0.2 + vm * 0.28));
       const idx = gi * 4;
       d[idx] = Math.round(clamp(r, 0, 255));
       d[idx + 1] = Math.round(clamp(gr, 0, 255));
@@ -343,7 +439,7 @@ function buildWorldField(model) {
   }
   lg.putImageData(img, 0, 0);
 
-  // 高清纯印象派油画画布：抒情起伏的夜风短排笔，绝不做指纹同心圆！
+  // 高清纯印象派油画画布：抒情起伏的夜风短排笔
   const scale = 3.2;
   const CW = Math.round(GW * scale), CH = Math.round(GH * scale);
   const c = canvas(CW, CH), g = c.getContext('2d');
@@ -356,19 +452,16 @@ function buildWorldField(model) {
     const fx = gx - ix, fy = gy - iy, gi = iy * GW + ix;
     return (pot[gi] * (1 - fx) + pot[gi + 1] * fx) * (1 - fy) + (pot[gi + GW] * (1 - fx) + pot[gi + GW + 1] * fx) * fy;
   };
-  // 主导全画面的抒情印象派夜风长波（微弱绕星域轻拂，绝不锁成指纹涡旋）
   const windVec = (gx, gy) => {
     const ix = clamp(Math.round(gx), 1, GW - 2), iy = clamp(Math.round(gy), 1, GH - 2);
     const gi = iy * GW + ix;
     const v = pot[gi];
-    // 舒展的 S 形风浪 + 有机自然起伏
     const wave = -0.26 + Math.sin(gx * 0.044 + gy * 0.018) * 0.44 + Math.cos(gy * 0.036 - gx * 0.014) * 0.24;
     const breeze = wave + (fbm(gx * 0.045, gy * 0.045, 3) - 0.5) * 1.35;
     let vx = Math.cos(breeze), vy = Math.sin(breeze);
     const dpx = pot[gi + 1] - pot[gi - 1], dpy = pot[gi + GW] - pot[gi - GW];
     const mag = Math.hypot(dpx, dpy);
     if (mag > 0.004) {
-      // 仅叠加 28% 的轻柔绕流，让云气顺风拂过星群，而不是卷成死板同心圆
       const tang = Math.atan2(dpy, dpx) + Math.PI / 2;
       const bend = smoothstep(0.14, 0.55, v) * smoothstep(0.004, 0.025, mag) * 0.28;
       vx = vx * (1 - bend) + Math.cos(tang) * bend;
@@ -378,7 +471,7 @@ function buildWorldField(model) {
     return [vx / norm, vy / norm];
   };
 
-  // 第一遍：大笔湿画晕染（打通笔触之间的缝隙，让整片油画云气浑厚丰润）
+  // 第一遍：大笔湿画晕染
   for (let sy = 6; sy < GH - 6; sy += 5.4) {
     for (let sx = 6; sx < GW - 6; sx += 5.4) {
       const gx = sx + (rnd() - 0.5) * 4.5, gy = sy + (rnd() - 0.5) * 4.5;
@@ -393,13 +486,13 @@ function buildWorldField(model) {
       const ds = 3.2 + rnd() * 2.4;
       const pts = [[gx * scale, gy * scale], [(gx + vx * ds) * scale, (gy + vy * ds) * scale], [(gx + vx * ds * 1.9) * scale, (gy + vy * ds * 1.9) * scale]];
       const t = smoothstep(0.05, 0.82, v);
-      const h = wm > 0.45 && t > 0.45 ? 40 : vm > 0.35 ? 238 : tm > 0.32 ? 196 : 214;
-      const body = `hsla(${h + (rnd() - 0.5) * 14},${36 + t * 18}%,${24 + t * 24}%,${(0.055 + t * 0.075) * edge})`;
+      const h = wm > 0.45 && t > 0.45 ? th.goldHue : vm > 0.35 ? th.violetHue : tm > 0.32 ? th.tealHue : th.coolHue;
+      const body = `hsla(${h + (rnd() - 0.5) * 14},${36 + t * 18}%,${24 + th.bgLit + t * 24}%,${(0.055 + t * 0.075) * edge})`;
       paintBristle(g, pts, 14 + rnd() * 10, body, null, null, rnd);
     }
   }
 
-  // 第二遍：中号猪鬃毛刷短排笔（印象派标志性的色彩并置 + 厚涂层次）
+  // 第二遍：中号猪鬃毛刷短排笔 + 收集 54 缕实时流动的活笔触（60fps 微动呼吸）
   const stepGrid = 2.6;
   const seeds = [];
   for (let sy = 5; sy < GH - 5; sy += stepGrid) {
@@ -418,6 +511,7 @@ function buildWorldField(model) {
   }
   seeds.sort((a, b) => a.v - b.v);
 
+  const liveStrokes = [];
   for (const s of seeds) {
     const { gx, gy, v, edge, cloud } = s;
     const gi = clamp(Math.floor(gy), 0, GH - 1) * GW + clamp(Math.floor(gx), 0, GW - 1);
@@ -440,35 +534,47 @@ function buildWorldField(model) {
     const t = smoothstep(0.06, 0.82, v);
     const fade = edge;
     const pick = rnd();
-    let body, sheen, shadow = null;
-    if (t > 0.46 && pick < (0.22 + wm * 0.36 + (t - 0.46) * 0.44)) {
-      // 暖金 / 拿坡里黄 / 杏色月光笔触
-      const h = 39 + (rnd() - 0.5) * 16;
+    let body, sheen, shadow = null, liveH, liveLum;
+    if (t > 0.44 && pick < (0.24 + wm * 0.36 + (t - 0.44) * 0.44)) {
+      liveH = th.goldHue + (rnd() - 0.5) * 16;
+      liveLum = th.goldLum + rnd() * 12;
       const a = (0.11 + t * 0.14 + rnd() * 0.08) * fade;
-      body = `hsla(${h},${56 + rnd() * 20}%,${57 + rnd() * 12}%,${a.toFixed(3)})`;
-      sheen = `hsla(${h + 6},70%,${76 + rnd() * 8}%,${(a * 0.72).toFixed(3)})`;
-      shadow = `hsla(238,42%,22%,${(a * 0.32).toFixed(3)})`;
+      body = `hsla(${liveH},${th.goldSat + rnd() * 18}%,${liveLum}%,${a.toFixed(3)})`;
+      sheen = `hsla(${liveH + 6},${Math.min(88, th.goldSat + 14)}%,${Math.min(84, liveLum + 16)}%,${(a * 0.72).toFixed(3)})`;
+      shadow = `hsla(${th.violetHue},42%,20%,${(a * 0.3).toFixed(3)})`;
     } else if (pick < 0.26 + vm * 0.28) {
-      // 莫奈暮紫 / 熏衣草靛紫笔触
-      const h = 238 + (rnd() - 0.5) * 22;
+      liveH = th.violetHue + (rnd() - 0.5) * 20;
       const sat = 38 + t * 18 + rnd() * 14;
-      const lum = 28 + t * 24 + rnd() * 12;
+      liveLum = 28 + th.bgLit + t * 24 + rnd() * 10;
       const a = (0.1 + t * 0.13 + rnd() * 0.08) * fade;
-      body = `hsla(${h},${sat.toFixed(0)}%,${lum.toFixed(0)}%,${a.toFixed(3)})`;
-      sheen = `hsla(${h + 14},${(sat + 8).toFixed(0)}%,${Math.min(72, lum + 16).toFixed(0)}%,${(a * 0.55).toFixed(3)})`;
+      body = `hsla(${liveH},${sat.toFixed(0)}%,${liveLum.toFixed(0)}%,${a.toFixed(3)})`;
+      sheen = `hsla(${liveH + 12},${(sat + 8).toFixed(0)}%,${Math.min(76, liveLum + 16).toFixed(0)}%,${(a * 0.55).toFixed(3)})`;
     } else {
-      // 群青 / 钴蓝 / 天青松石色并置短笔触
-      const h = (tm > 0.3 || cloud > 0.62 ? 194 : 214) + (rnd() - 0.5) * 18;
+      liveH = (tm > 0.3 || cloud > 0.62 ? th.tealHue : th.coolHue) + (rnd() - 0.5) * 18;
       const sat = 42 + t * 22 + rnd() * 14;
-      const lum = 26 + t * 28 + rnd() * 12;
+      liveLum = 26 + th.bgLit + t * 28 + rnd() * 10;
       const a = (0.1 + t * 0.14 + rnd() * 0.08) * fade;
-      body = `hsla(${h},${sat.toFixed(0)}%,${lum.toFixed(0)}%,${a.toFixed(3)})`;
-      sheen = `hsla(${h - 10},${(sat + 10).toFixed(0)}%,${Math.min(76, lum + 16).toFixed(0)}%,${(a * 0.6).toFixed(3)})`;
+      body = `hsla(${liveH},${sat.toFixed(0)}%,${liveLum.toFixed(0)}%,${a.toFixed(3)})`;
+      sheen = `hsla(${liveH - 10},${(sat + 10).toFixed(0)}%,${Math.min(78, liveLum + 16).toFixed(0)}%,${(a * 0.6).toFixed(3)})`;
     }
     paintBristle(g, pts, wid, body, sheen, shadow, rnd);
+    // 抽样少量明亮云风路径作为实时微动光影笔触（世界坐标）
+    if (v > 0.16 && liveStrokes.length < 56 && rnd() < 0.045) {
+      const [vx, vy] = windVec(gx, gy);
+      const wx = x0 + (gx / (GW - 1)) * W, wy = y0 + (gy / (GH - 1)) * H;
+      const len = 18 + rnd() * 24;
+      liveStrokes.push({
+        x: wx, y: wy, dx: vx * len, dy: vy * len,
+        cx: vx * len * 0.5 - vy * (rnd() - 0.5) * 8,
+        cy: vy * len * 0.5 + vx * (rnd() - 0.5) * 8,
+        w: 3.2 + rnd() * 3.4,
+        h: liveH, l: Math.min(82, liveLum + 14),
+        ph: rnd(), sp: 0.00011 + rnd() * 0.0001
+      });
+    }
   }
 
-  return { canvas: c, x0, y0, W, H };
+  return { canvas: c, x0, y0, W, H, liveStrokes };
 }
 function skyField(seed = 20261120) {
   const rnd = seeded(seed);
@@ -488,8 +594,18 @@ function skyField(seed = 20261120) {
 
 /* ---------- 渲染器 ---------- */
 export class Cosmos {
-  constructor({ stage, plane, world, sky, map, onSelect, onBackground, onView }) {
+  constructor({ stage, plane, world, sky, map, mood = 'auto', onSelect, onBackground, onView }) {
     Object.assign(this, { stage, plane, world, sky, map, onSelect, onBackground, onView });
+    this.mood = mood || 'auto';
+    this.theme = themeForHour(currentHour(this.mood));
+    this.lastClock = Date.now();
+    this.moodFade = null;
+    this.ripples = [];
+    this.enterAt = 0;
+    this.skyDrifts = Array.from({ length: 24 }, (_, i) => {
+      const r = seeded(314159 + i * 97);
+      return { x: r(), y: r(), len: 22 + r() * 28, w: 2.2 + r() * 2.8, ph: r(), sp: 0.00008 + r() * 0.00009, warm: r() < 0.32 };
+    });
     this.cam = { x: 0, y: 0, k: 1 };
     this.model = { stars: [], lanes: [], sectors: [], stats: { stars: 0, lanes: 0, sectors: 0 } };
     this.byId = new Map();
@@ -515,6 +631,7 @@ export class Cosmos {
     this.mapCtx = map.getContext('2d');
     this.measureCtx = canvas(4).getContext('2d');
     this.frame = this.frame.bind(this);
+    this.applySkyCss();
     this.bind();
     if (window.ResizeObserver) {
       this.ro = new ResizeObserver(() => {
@@ -524,8 +641,36 @@ export class Cosmos {
       });
       this.ro.observe(stage);
     }
-    document.addEventListener('visibilitychange', () => { if (!document.hidden && this.active) this.kick(); });
+    document.addEventListener('visibilitychange', () => { if (!document.hidden && this.active) { this.syncClock(true); this.kick(); } });
     document.fonts?.ready?.then(() => { this.widths.clear(); this.labelK = 0; this.dirty = true; this.camDirty = true; this.kick(); });
+  }
+  applySkyCss() {
+    const pane = this.stage?.closest('#pane-graph');
+    if (pane) pane.style.setProperty('--sky-bg', rgbCss(this.theme.skyTop));
+  }
+  setMood(mood = 'auto', animate = true) {
+    this.mood = mood || 'auto';
+    this.rebuildAtmosphere(themeForHour(currentHour(this.mood)), animate);
+  }
+  syncClock(animate = true) {
+    if (this.mood !== 'auto') return;
+    const now = Date.now();
+    if (now - this.lastClock < 180000) return;
+    this.lastClock = now;
+    const next = themeForHour(currentHour('auto'));
+    if (Math.abs(next.hour - this.theme.hour) >= 0.08) this.rebuildAtmosphere(next, animate);
+  }
+  rebuildAtmosphere(nextTheme, animate = true) {
+    const prevBg = this.bg, prevField = this.worldField;
+    this.theme = nextTheme;
+    this.applySkyCss();
+    if (this.SW && this.SH) this.bg = this.paintBackdrop(this.SW, this.SH, this.dpr, this.theme);
+    if (this.model.stars.length) this.worldField = buildWorldField(this.model, this.theme);
+    this.moodFade = (animate && !this.reduce.matches && prevBg)
+      ? { prevBg, prevField, t0: performance.now(), dur: 820 }
+      : null;
+    this.dirty = true;
+    this.kick();
   }
 
   /* 尺寸 */
@@ -538,35 +683,37 @@ export class Cosmos {
     Object.assign(this, { SW, SH, PW, PH, dpr });
     this.sky.width = Math.round(SW * dpr); this.sky.height = Math.round(SH * dpr);
     this.map.width = Math.round(PW * dpr); this.map.height = Math.round(PH * dpr);
-    this.bg = this.paintBackdrop(SW, SH, dpr);
+    this.bg = this.paintBackdrop(SW, SH, dpr, this.theme);
+    this.moodFade = null;
     this.camDirty = true; this.dirty = true;
     this.kick();
   }
-  paintBackdrop(W, H, dpr) {
-    // 100% 纯粹印象派油画夜空（群青、钴蓝、暮紫、天青厚涂短笔触；彻底移除一切横线/网格）
+  paintBackdrop(W, H, dpr, theme) {
+    // 100% 纯粹印象派油画天幕（随真实时辰在晨曦/晴蓝/暮色/星夜间连续流转）
+    const th = theme || this.theme || themeForHour(23);
     const c = canvas(Math.round(W * dpr), Math.round(H * dpr)), g = c.getContext('2d');
     g.scale(dpr, dpr);
     const bg = g.createLinearGradient(0, 0, W * 0.42, H);
-    bg.addColorStop(0, '#0b1633');
-    bg.addColorStop(0.5, '#132752');
-    bg.addColorStop(1, '#0d1a3a');
+    bg.addColorStop(0, rgbCss(th.skyTop));
+    bg.addColorStop(0.5, rgbCss(th.skyMid));
+    bg.addColorStop(1, rgbCss(th.skyBot));
     g.fillStyle = bg; g.fillRect(0, 0, W, H);
     const fbm = makeNoise(42422026), rnd = seeded(18890619);
     const M = Math.max(W, H);
-    // 莫奈式暮蓝与熏衣草紫油画罩染底晕
+    // 莫奈式大笔油画罩染底晕
     const washes = [
-      [W * 0.35, H * 0.38, M * 0.65, 'rgba(54,96,158,.24)'],
-      [W * 0.72, H * 0.62, M * 0.58, 'rgba(72,64,132,.16)'],
-      [W * 0.52, H * 0.22, M * 0.46, 'rgba(42,104,142,.15)']
+      [W * 0.34, H * 0.38, M * 0.66, rgbCss(th.washA, 0.24)],
+      [W * 0.72, H * 0.62, M * 0.58, rgbCss(th.washB, 0.18)],
+      [W * 0.52, H * 0.22, M * 0.48, rgbCss(th.washC, 0.16)]
     ];
     for (const [wx, wy, wr, col] of washes) {
       const grd = g.createRadialGradient(wx, wy, 0, wx, wy, wr);
       grd.addColorStop(0, col);
-      grd.addColorStop(1, 'rgba(12,24,54,0)');
+      grd.addColorStop(1, rgbCss(th.skyTop, 0));
       g.fillStyle = grd; g.fillRect(0, 0, W, H);
     }
 
-    // 第一遍宽笔柔刷底云 + 第二遍致密毛刷油画排笔（铺满全屏，绝无漂浮短棒感）
+    // 第一遍宽笔柔刷底云 + 第二遍致密毛刷油画排笔
     const broad = clamp(Math.round(M / 14), 48, 72);
     for (let sy = -broad; sy < H + broad; sy += broad * 0.72) {
       for (let sx = -broad; sx < W + broad; sx += broad * 0.85) {
@@ -574,8 +721,8 @@ export class Cosmos {
         const a = -0.26 + Math.sin(cx / M * 5.2 + cy / M * 2.1) * 0.4;
         const pts = [[cx, cy], [cx + Math.cos(a) * 28, cy + Math.sin(a) * 28], [cx + Math.cos(a + 0.1) * 54, cy + Math.sin(a + 0.1) * 54]];
         const lift = fbm(cx / M * 2.2 + 1.2, cy / M * 2.2 + 3.4, 2);
-        const h = lift > 0.56 ? 206 : lift < 0.38 ? 236 : 220;
-        paintBristle(g, pts, 24 + rnd() * 14, `hsla(${h},42%,${16 + lift * 16}%,0.09)`, null, null, rnd);
+        const h = lift > 0.58 ? th.bgHi : lift < 0.36 ? th.bgLo : th.bgMid;
+        paintBristle(g, pts, 24 + rnd() * 14, `hsla(${h},42%,${16 + th.bgLit + lift * 16}%,0.095)`, null, null, rnd);
       }
     }
     const step = clamp(Math.round(M / 42), 15, 24);
@@ -596,24 +743,66 @@ export class Cosmos {
         const wid = 4.2 + rnd() * 4.6;
         let body, sheen = null;
         if (lift > 0.64) {
-          const h = 200 + rnd() * 16;
-          body = `hsla(${h},44%,${28 + rnd() * 11}%,${0.11 + rnd() * 0.08})`;
-          sheen = `hsla(${h - 6},50%,${42 + rnd() * 10}%,${0.06 + rnd() * 0.05})`;
+          const h = th.bgHi + (rnd() - 0.5) * 16;
+          body = `hsla(${h},46%,${28 + th.bgLit + rnd() * 11}%,${0.11 + rnd() * 0.08})`;
+          sheen = `hsla(${h - 6},52%,${42 + th.bgLit + rnd() * 10}%,${0.06 + rnd() * 0.05})`;
         } else if (lift < 0.34) {
-          const h = rnd() < 0.48 ? 240 : 226;
-          body = `hsla(${h},46%,${12 + rnd() * 6}%,${0.16 + rnd() * 0.12})`;
+          const h = rnd() < 0.5 ? th.bgLo : th.bgMid;
+          body = `hsla(${h},44%,${12 + th.bgLit * 0.6 + rnd() * 6}%,${0.16 + rnd() * 0.12})`;
         } else {
-          const h = rnd() < 0.34 ? 236 + rnd() * 14 : 214 + rnd() * 14;
-          body = `hsla(${h},44%,${20 + rnd() * 9}%,${0.13 + rnd() * 0.09})`;
-          sheen = `hsla(${h - 8},48%,${33 + rnd() * 9}%,${0.05 + rnd() * 0.05})`;
+          const h = (rnd() < 0.34 ? th.bgLo : th.bgMid) + (rnd() - 0.5) * 14;
+          body = `hsla(${h},44%,${20 + th.bgLit + rnd() * 9}%,${0.13 + rnd() * 0.09})`;
+          sheen = `hsla(${h - 8},48%,${33 + th.bgLit + rnd() * 9}%,${0.05 + rnd() * 0.05})`;
         }
         paintBristle(g, pts, wid, body, sheen, null, rnd);
       }
     }
+    // 随时间在天穹缓行的印象派日/月厚涂笔触（夜晚为梵高弯月，日间/晨暮为莫奈柔光日轮）
+    const ox = W * th.orbX, oy = H * th.orbY, orbR = clamp(Math.min(W, H) * 0.042, 16, 26);
+    const orbGlow = g.createRadialGradient(ox, oy, 0, ox, oy, orbR * 6.2);
+    orbGlow.addColorStop(0, `hsla(${th.orbHue},82%,76%,.36)`);
+    orbGlow.addColorStop(0.35, `hsla(${th.orbHue},68%,62%,.14)`);
+    orbGlow.addColorStop(1, `hsla(${th.orbHue},60%,50%,0)`);
+    g.fillStyle = orbGlow; g.beginPath(); g.arc(ox, oy, orbR * 6.2, 0, TAU); g.fill();
+    g.lineCap = 'round';
+    [1.55, 2.25, 3.05].forEach((m, ri) => {
+      const n = 6 + ri * 2;
+      g.strokeStyle = `hsla(${th.orbHue + ri * 4},74%,${80 - ri * 6}%,${0.28 - ri * 0.07})`;
+      g.lineWidth = 3.2 - ri * 0.6;
+      for (let i = 0; i < n; i++) {
+        const a0 = (i / n) * TAU + ri * 0.4 + rnd() * 0.18;
+        g.beginPath(); g.arc(ox, oy, orbR * m, a0, a0 + 0.56 - ri * 0.08); g.stroke();
+      }
+    });
+    if (th.orbKind === 'moon') {
+      // 梵高式优雅弯月牙（真正内凹的新月弧线，绝不画成直边半圆）
+      const r = orbR * 0.84;
+      g.save();
+      g.translate(ox, oy);
+      g.rotate(-0.32);
+      g.fillStyle = 'rgba(255,241,182,0.95)';
+      g.beginPath();
+      g.arc(0, 0, r, -Math.PI * 0.56, Math.PI * 0.56, false);
+      g.bezierCurveTo(r * 0.62, r * 0.42, r * 0.62, -r * 0.42, Math.cos(-Math.PI * 0.56) * r, Math.sin(-Math.PI * 0.56) * r);
+      g.closePath();
+      g.fill();
+      g.strokeStyle = 'rgba(255,250,224,0.75)';
+      g.lineWidth = 1.2;
+      g.stroke();
+      g.restore();
+    } else {
+      // 莫奈《印象·日出》柔润日轮
+      const core = g.createRadialGradient(ox, oy, 0, ox, oy, orbR * 0.92);
+      core.addColorStop(0, `hsla(${th.orbHue + 8},95%,90%,.85)`);
+      core.addColorStop(0.65, `hsla(${th.orbHue},84%,72%,.55)`);
+      core.addColorStop(1, `hsla(${th.orbHue},78%,64%,0)`);
+      g.fillStyle = core; g.beginPath(); g.arc(ox, oy, orbR * 0.92, 0, TAU); g.fill();
+    }
+
     // 柔和油画暗角收束视心
     const vig = g.createRadialGradient(W * 0.5, H * 0.48, Math.min(W, H) * 0.28, W * 0.5, H * 0.5, Math.max(W, H) * 0.86);
     vig.addColorStop(0, 'rgba(0,0,0,0)');
-    vig.addColorStop(1, 'rgba(6,12,28,.48)');
+    vig.addColorStop(1, 'rgba(5,10,24,.46)');
     g.fillStyle = vig; g.fillRect(0, 0, W, H);
     return c;
   }
@@ -628,7 +817,7 @@ export class Cosmos {
       if (!this.adj.has(l.b)) this.adj.set(l.b, new Set());
       this.adj.get(l.a).add(l.b); this.adj.get(l.b).add(l.a);
     }
-    this.worldField = buildWorldField(model);
+    this.worldField = buildWorldField(model, this.theme);
     const order = model.stars.slice().sort((a, b) => (a.frontier - b.frontier) || a.sector.localeCompare(b.sector) || b.score - a.score || byId(a, b));
     const keep = new Map();
     const frag = document.createDocumentFragment();
@@ -643,6 +832,7 @@ export class Cosmos {
       }
       btn.className = `gnode kind-${s.kind} mag-${s.mag}`;
       btn.style.setProperty('--h', s.hue);
+      btn.style.setProperty('--d', `${-((s.phase / TAU) * 5.6).toFixed(2)}s`);
       btn.querySelector('.gl').textContent = s.title;
       btn.querySelector('.gk').textContent = `${magLabel(s.mag)} · ${s.frontier ? '暗域' : s.sector}`;
       btn.setAttribute('aria-label', `${s.title}，${magLabel(s.mag)}，${s.frontier ? '未测绘暗域' : s.sector + ' 星域'}，${s.links} 条航线`);
@@ -658,7 +848,12 @@ export class Cosmos {
     this.kick();
   }
   setFocus(id) {
+    const prev = this.focus;
     this.focus = id && this.byId.has(id) ? id : null;
+    if (this.focus && this.focus !== prev && !this.reduce.matches) {
+      const s = this.byId.get(this.focus);
+      if (s) this.ripples.push({ x: s.x, y: s.y, t0: performance.now(), hue: this.theme.goldHue, ph: s.phase });
+    }
     this.near = new Set(this.focus ? [this.focus, ...(this.adj?.get(this.focus) || [])] : []);
     for (const [sid, btn] of this.buttons) {
       const on = sid === this.focus;
@@ -744,7 +939,12 @@ export class Cosmos {
   }
   setActive(on) {
     this.active = !!on;
-    if (this.active) { if (!this.SW) this.resize(); this.dirty = true; this.camDirty = true; this.kick(); }
+    if (this.active) {
+      this.enterAt = performance.now();
+      this.syncClock(false);
+      if (!this.SW) this.resize();
+      this.dirty = true; this.camDirty = true; this.kick();
+    }
   }
   kick() {
     if (!this.active || this.raf || document.hidden) return;
@@ -854,15 +1054,17 @@ export class Cosmos {
       if (p >= 1) { this.tween = null; this.onView?.(this.cam); }
     }
     const animate = !this.reduce.matches;
+    this.syncClock(true);
+    if (this.moodFade && t - this.moodFade.t0 >= this.moodFade.dur) { this.moodFade = null; this.dirty = true; }
     if (this.camDirty) { this.place(); this.camDirty = false; this.dirty = true; }
-    if (this.dirty || animate) {
-      if (animate && !this.dirty && !this.tween && t - (this.lastPaint || 0) < 30) { this.kick(); return; }
+    if (this.dirty || animate || this.moodFade) {
+      if (animate && !this.dirty && !this.tween && !this.moodFade && t - (this.lastPaint || 0) < 30) { this.kick(); return; }
       this.lastPaint = t;
       this.paintSky(t, animate);
       this.paintMap(t, animate);
       this.dirty = false;
     }
-    if (animate || this.tween) this.kick();
+    if (animate || this.tween || this.moodFade) this.kick();
   }
 
   place() {
@@ -929,21 +1131,90 @@ export class Cosmos {
 
   paintSky(t, animate) {
     const g = this.skyCtx, dpr = this.dpr, W = this.SW, H = this.SH;
+    const th = this.theme;
     g.setTransform(1, 0, 0, 1, 0, 0);
-    g.drawImage(this.bg, 0, 0);
+    if (this.moodFade && this.moodFade.prevBg) {
+      const p = clamp((t - this.moodFade.t0) / this.moodFade.dur, 0, 1);
+      const e = p * p * (3 - 2 * p);
+      g.drawImage(this.moodFade.prevBg, 0, 0, this.sky.width, this.sky.height);
+      g.globalAlpha = e;
+      g.drawImage(this.bg, 0, 0);
+      g.globalAlpha = 1;
+    } else {
+      g.drawImage(this.bg, 0, 0);
+    }
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    // 1. 实时流动的天穹印象派微风笔触（轻缓流转、呼吸淡入淡出）
+    if (animate) {
+      g.lineCap = 'round';
+      for (const d of this.skyDrifts) {
+        const u = (d.ph + t * d.sp) % 1;
+        const life = Math.sin(u * Math.PI);
+        if (life < 0.05) continue;
+        const x0 = ((d.x + u * 0.14) % 1) * W;
+        const y0 = ((d.y - u * 0.045 + 1) % 1) * H;
+        const ang = -0.26 + Math.sin(x0 / Math.max(W, H) * 4.5 + y0 / Math.max(W, H) * 1.8) * 0.36;
+        const dx = Math.cos(ang) * d.len, dy = Math.sin(ang) * d.len;
+        g.strokeStyle = d.warm
+          ? `hsla(${th.goldHue},62%,72%,${(0.08 * life).toFixed(3)})`
+          : `hsla(${th.bgHi},48%,56%,${(0.075 * life).toFixed(3)})`;
+        g.lineWidth = d.w;
+        g.beginPath();
+        g.moveTo(x0, y0);
+        g.quadraticCurveTo(x0 + dx * 0.5 - dy * 0.14, y0 + dy * 0.5 + dx * 0.14, x0 + dx, y0 + dy);
+        g.stroke();
+      }
+      // 日/月柔和呼吸光潮
+      const ox = W * th.orbX, oy = H * th.orbY;
+      const pulse = 0.5 + 0.5 * Math.sin(t * 0.0009);
+      const hr = clamp(Math.min(W, H) * 0.16, 56, 110) * (0.94 + pulse * 0.12);
+      const og = g.createRadialGradient(ox, oy, 0, ox, oy, hr);
+      og.addColorStop(0, `hsla(${th.orbHue},80%,82%,${(0.1 + pulse * 0.08).toFixed(3)})`);
+      og.addColorStop(1, `hsla(${th.orbHue},70%,60%,0)`);
+      g.fillStyle = og;
+      g.beginPath(); g.arc(ox, oy, hr, 0, TAU); g.fill();
+    }
+
+    // 2. 随四时明暗自适应的远景繁星
+    const sa = th.starAlpha;
     for (const L of this.field) {
       const ox = this.cam.x * L.f, oy = this.cam.y * L.f;
       for (const s of L.stars) {
         const x = ((s.x * W + ox) % W + W) % W, y = ((s.y * H + oy) % H + H) % H;
         const tw = animate ? 0.72 + 0.28 * Math.sin(t * 0.0012 * s.sp + s.ph) : 1;
-        g.fillStyle = `hsla(${s.h},${s.sat}%,90%,${(s.a * tw).toFixed(3)})`;
+        g.fillStyle = `hsla(${s.h},${s.sat}%,92%,${(s.a * tw * sa).toFixed(3)})`;
         if (s.s > 1.5) {
-          g.globalAlpha = 0.55 * tw;
-          g.drawImage(this.sprite(s.h, 40), x - s.s * 3, y - s.s * 3, s.s * 6, s.s * 6);
+          g.globalAlpha = 0.52 * tw * sa;
+          g.drawImage(this.sprite(s.h, 46), x - s.s * 3, y - s.s * 3, s.s * 6, s.s * 6);
           g.globalAlpha = 1;
         }
         g.fillRect(x - s.s / 2, y - s.s / 2, s.s, s.s);
+      }
+    }
+
+    // 3. 偶发印象派油画流星（每 9 秒划过一抹暖金笔痕，安静诗意）
+    if (animate && sa > 0.65) {
+      const cycle = 9200, dur = 1350;
+      const idx = Math.floor(t / cycle), local = t % cycle;
+      if (local < dur) {
+        const p = local / dur;
+        const fade = Math.sin(p * Math.PI);
+        const r = seeded(7711 + idx * 131);
+        const sx = (0.55 + r() * 0.4) * W, sy = (0.06 + r() * 0.28) * H;
+        const dist = Math.min(W, H) * (0.28 + r() * 0.16);
+        const ang = 2.45 + (r() - 0.5) * 0.34;
+        const hx = sx + Math.cos(ang) * dist * p, hy = sy + Math.sin(ang) * dist * p;
+        const tail = dist * 0.26 * fade;
+        const tx = hx - Math.cos(ang) * tail, ty = hy - Math.sin(ang) * tail;
+        const lg = g.createLinearGradient(hx, hy, tx, ty);
+        lg.addColorStop(0, `rgba(255,248,220,${(0.72 * fade * sa).toFixed(3)})`);
+        lg.addColorStop(0.45, `hsla(${th.goldHue},82%,76%,${(0.32 * fade * sa).toFixed(3)})`);
+        lg.addColorStop(1, 'rgba(255,230,160,0)');
+        g.lineCap = 'round';
+        g.strokeStyle = lg;
+        g.lineWidth = 2.2;
+        g.beginPath(); g.moveTo(tx, ty); g.lineTo(hx, hy); g.stroke();
       }
     }
   }
@@ -966,14 +1237,67 @@ export class Cosmos {
 
     if (!stars.length) { this.paintBeacon(g, 0, 0, 42, zs, t, animate, 1, px); return; }
 
-    // 1. 纯粹印象派油画云气与短排笔层（零几何等高线、零雷达同心圆）
+    // 1. 纯粹印象派油画云气与实时流动短排笔层（支持四时平滑过渡 + 呼吸光潮 + 活笔触）
     if (this.worldField) {
       const wf = this.worldField;
+      const baseA = (lod === 'far' ? 0.92 : lod === 'mid' ? 0.84 : 0.7) * (focus ? 0.55 : 1);
+      const tide = animate ? 0.94 + 0.06 * Math.sin(t * 0.00068) : 1;
+      const sx = animate ? Math.sin(t * 0.00042) * px(2.2) : 0;
+      const sy = animate ? Math.cos(t * 0.00036) * px(1.6) : 0;
       g.globalCompositeOperation = 'screen';
-      g.globalAlpha = (lod === 'far' ? 0.92 : lod === 'mid' ? 0.84 : 0.7) * (focus ? 0.55 : 1);
-      g.drawImage(wf.canvas, wf.x0, wf.y0, wf.W, wf.H);
+      if (this.moodFade && this.moodFade.prevField) {
+        const pf = this.moodFade.prevField;
+        const p = clamp((t - this.moodFade.t0) / this.moodFade.dur, 0, 1);
+        const e = p * p * (3 - 2 * p);
+        g.globalAlpha = baseA * tide * (1 - e);
+        g.drawImage(pf.canvas, pf.x0 + sx, pf.y0 + sy, pf.W, pf.H);
+        g.globalAlpha = baseA * tide * e;
+        g.drawImage(wf.canvas, wf.x0 + sx, wf.y0 + sy, wf.W, wf.H);
+      } else {
+        g.globalAlpha = baseA * tide;
+        g.drawImage(wf.canvas, wf.x0 + sx, wf.y0 + sy, wf.W, wf.H);
+      }
+      // 实时微动油画笔触：沿星域风场轻盈流淌，仿佛莫奈水面反光与星夜流动气旋
+      if (animate && wf.liveStrokes?.length) {
+        g.lineCap = 'round';
+        for (const st of wf.liveStrokes) {
+          const u = (st.ph + t * st.sp) % 1;
+          const life = Math.sin(u * Math.PI);
+          if (life < 0.08) continue;
+          const ox = st.x + st.dx * (u - 0.5) * 0.75, oy = st.y + st.dy * (u - 0.5) * 0.75;
+          g.globalAlpha = 0.24 * life * (focus ? 0.45 : 1);
+          g.strokeStyle = `hsla(${st.h},64%,${st.l}%,1)`;
+          g.lineWidth = px(st.w * 0.85);
+          g.beginPath();
+          g.moveTo(ox, oy);
+          g.quadraticCurveTo(ox + st.cx, oy + st.cy, ox + st.dx, oy + st.dy);
+          g.stroke();
+        }
+      }
       g.globalCompositeOperation = 'source-over';
       g.globalAlpha = 1;
+    }
+
+    // 1.5 点击星体绽放的印象派笔触涟漪（如星光点落水面，1.25 秒自然消散）
+    if (animate && this.ripples.length) {
+      g.lineCap = 'round';
+      this.ripples = this.ripples.filter(rp => {
+        const p = (t - rp.t0) / 1250;
+        if (p < 0 || p >= 1) return false;
+        const e = 1 - Math.pow(1 - p, 3);
+        const a = (1 - p) * (1 - p);
+        [1, 0.66].forEach((m, ri) => {
+          const r = px((16 + e * 64 * m) * zs);
+          g.strokeStyle = `hsla(${rp.hue + ri * 8},80%,82%,${(0.62 * a * (ri ? 0.7 : 1)).toFixed(3)})`;
+          g.lineWidth = px((2.6 - ri * 0.7) * zs);
+          const n = ri ? 4 : 6;
+          for (let i = 0; i < n; i++) {
+            const a0 = rp.ph + e * (ri ? -0.6 : 0.7) + (i / n) * TAU;
+            g.beginPath(); g.arc(rp.x, rp.y, r, a0, a0 + 0.62); g.stroke();
+          }
+        });
+        return true;
+      });
     }
 
     // 2. 画中艺术大题字（霞鹜文楷 / 楷书手书题款；2.5D 聚焦星体时该星域退隐，绝不与悬空艺术字重叠）
@@ -1039,9 +1363,11 @@ export class Cosmos {
       g.globalAlpha = 1;
     }
 
-    // 4. 印象派厚涂发光星体（梵高《星夜》手绘圆弧暖金星晕，绝无硬十字标尺）
+    // 4. 印象派厚涂发光星体（入画柔光苏醒 + 梵高《星夜》手绘圆弧暖金星晕）
+    const enterP = animate && this.enterAt ? clamp((t - this.enterAt) / 720, 0, 1) : 1;
     for (const s of stars) {
-      const fade = focus && !near.has(s.id) ? 0.18 : 1;
+      const wake = enterP < 1 ? smoothstep(0, 1, clamp((enterP - (s.phase / TAU) * 0.35) / 0.65, 0, 1)) : 1;
+      const fade = (focus && !near.has(s.id) ? 0.18 : 1) * wake;
       const tw = animate ? 0.9 + 0.1 * Math.sin(t * 0.0017 + s.phase) : 1;
       if (s.mag === 'beacon') this.paintBeacon(g, s.x, s.y, s.hue, zs, t, animate, fade * tw, px, s.phase);
       else if (s.mag === 'star') {
