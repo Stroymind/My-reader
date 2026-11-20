@@ -46,13 +46,13 @@ jobs:
         run: |
           f=$(echo android/app/build/outputs/apk/release/*.apk)
           test -f "$f"
-          cp "$f" shufang.apk
+          cp "$f" zone.apk
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: shufang-android
-          path: shufang.apk
+          name: zone-android
+          path: zone.apk
           if-no-files-found: error
 
   release:
@@ -65,10 +65,10 @@ jobs:
       - name: Download APK
         uses: actions/download-artifact@v4
         with:
-          name: shufang-android
+          name: zone-android
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: shufang.apk
+          files: zone.apk
           generate_release_notes: true

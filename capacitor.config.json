@@ -1,6 +1,6 @@
 {
   "appId": "io.github.stroymind.myreader",
-  "appName": "我的书房",
+  "appName": "Zone",
   "webDir": "www",
   "android": {
     "path": "android",

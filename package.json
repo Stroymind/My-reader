@@ -1,13 +1,14 @@
 {
-  "name": "my-reader",
+  "name": "zone",
   "private": true,
-  "version": "1.0.0",
-  "description": "我的书房：离线电子书阅读，以及可积累、可理解的个人知识工作台。",
+  "version": "1.3.0",
+  "description": "Zone：个人知识管理系统，连接阅读、摘录、笔记、图谱与 AI。",
   "scripts": {
     "sync:www": "node scripts/sync-www.mjs",
     "cap:sync": "npm run sync:www && cap sync android",
     "android:release": "npm run cap:sync && cd android && ./gradlew assembleRelease --no-daemon",
-    "test:smoke": "node scripts/smoke.mjs"
+    "test:smoke": "node scripts/smoke.mjs",
+    "test:zone": "node scripts/zone-smoke.mjs"
   },
   "dependencies": {
     "@capacitor/android": "8.6.0",

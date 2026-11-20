@@ -1,6 +1,6 @@
 {
-  "name": "我的书房 · 电子书阅读器",
-  "short_name": "书房",
+  "name": "Zone",
+  "short_name": "Zone",
   "lang": "zh-CN",
   "start_url": "./",
   "scope": "./",

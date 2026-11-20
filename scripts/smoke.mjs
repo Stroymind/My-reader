@@ -271,7 +271,7 @@ await page.setOfflineMode(true);
 await page.reload({ waitUntil: 'domcontentloaded' });
 await page.waitForFunction(() => window.__app && document.querySelectorAll('.book').length === 7);
 const offlineTitle = await page.$eval('h1', el => el.textContent);
-if (offlineTitle !== '我的书房') throw new Error('离线页面标题不对');
+if (offlineTitle !== 'Zone') throw new Error('离线页面标题不对');
 
 if (errors.length) throw new Error('页面报错：\\n' + errors.join('\\n'));
 const tweet = await fetch(base + '/tweet-to-text/index.html');
