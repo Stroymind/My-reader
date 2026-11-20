@@ -218,6 +218,12 @@ html.appearance-dark .stack-fan .avatar.sm{box-shadow:0 2px 8px rgba(0,0,0,.5),i
 .intent-spaces button{display:flex;align-items:center;justify-content:center;gap:6px;height:38px;padding:0 10px;border-radius:12px;color:var(--app-muted);font-size:14px;font-weight:600;white-space:nowrap}
 .intent-spaces button svg{flex:none;width:18px;height:18px}
 .intent-spaces button.on{color:var(--app-fg);background:var(--app-elev);box-shadow:0 1px 3px rgba(0,0,0,.1),0 0 0 .5px rgba(0,0,0,.04)}
+.intent-cmd-row{display:flex;align-items:center;gap:6px;margin-bottom:10px}
+.intent-cmd-btn{flex:1;min-width:0;display:flex;align-items:center;gap:9px;height:40px;padding:0 13px;border-radius:14px;background:var(--app-fill);color:var(--app-muted);font-size:13.5px;text-align:left}
+.intent-cmd-btn svg{flex:none;width:16px;height:16px;opacity:.76}
+.intent-cmd-btn span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.intent-mic{flex:none;display:grid;place-items:center;width:40px;height:40px;padding:0;border-radius:14px;background:var(--app-fill);color:var(--app-fg)}
+.intent-mic svg{width:17px;height:17px}
 .intent-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
 .intent-tile{display:flex;align-items:center;gap:10px;width:100%;padding:12px 14px;border-radius:15px;background:var(--app-fill);text-align:left;font-size:14.5px;font-weight:560;color:var(--app-fg)}
 .intent-tile[hidden]{display:none}
@@ -228,11 +234,44 @@ html.appearance-dark .stack-fan .avatar.sm{box-shadow:0 2px 8px rgba(0,0,0,.5),i
 .intent-sub{flex:1;display:flex;align-items:center;justify-content:center;gap:8px;padding:10px 10px;border-radius:14px;background:transparent;color:var(--app-muted);font-size:13px;font-weight:560;white-space:nowrap}
 .intent-sub[hidden]{display:none}
 .intent-sub svg{flex:none;width:16px;height:16px;color:var(--app-muted)}
-@media (hover:hover){.intent-tile:hover,.intent-sub:hover{background:color-mix(in srgb,var(--app-fg) 9%,transparent)}}
+@media (hover:hover){.intent-tile:hover,.intent-sub:hover,.intent-cmd-btn:hover,.intent-mic:hover{background:color-mix(in srgb,var(--app-fg) 9%,transparent)}}
 #library.cosmos-on ~ #intent-mask .intent-sheet{background:rgba(11,18,36,.88);color:#f4ecd8;box-shadow:0 0 0 .5px rgba(244,232,204,.14),0 24px 64px rgba(0,0,0,.55)}
-#library.cosmos-on ~ #intent-mask .intent-spaces,#library.cosmos-on ~ #intent-mask .intent-tile{background:rgba(244,234,210,.08);color:rgba(244,236,218,.92)}
+#library.cosmos-on ~ #intent-mask .intent-spaces,#library.cosmos-on ~ #intent-mask .intent-tile,#library.cosmos-on ~ #intent-mask .intent-cmd-btn,#library.cosmos-on ~ #intent-mask .intent-mic{background:rgba(244,234,210,.08);color:rgba(244,236,218,.92)}
+#library.cosmos-on ~ #intent-mask .intent-cmd-btn{color:rgba(232,224,204,.7)}
 #library.cosmos-on ~ #intent-mask .intent-spaces button.on{background:rgba(244,234,210,.18);color:#fff8ea}
 #library.cosmos-on ~ #intent-mask .intent-sub,#library.cosmos-on ~ #intent-mask .intent-tile svg,#library.cosmos-on ~ #intent-mask .intent-sub svg{color:rgba(222,216,198,.72)}
+
+/* 零 AI 味声控指令条：长按底线或 Alt+Space 浮现，用完即隐 */
+.spatial-bar.listening .spatial-line{width:64px;background:var(--app-accent);opacity:.95}
+.spatial-bar.wake-on .spatial-line{background:color-mix(in srgb,var(--app-accent) 62%,var(--app-fg) 38%)}
+.command-mask{position:fixed;inset:0;z-index:55;display:flex;align-items:flex-end;justify-content:center;padding:14px 14px calc(env(safe-area-inset-bottom) + 18px);background:rgba(0,0,0,.18);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);animation:fadeIn .18s ease-out}
+.command-bar{width:min(480px,100%);padding:6px;border-radius:22px;background:var(--glass-strong);backdrop-filter:saturate(180%) blur(32px);-webkit-backdrop-filter:saturate(180%) blur(32px);box-shadow:0 0 0 .5px var(--app-line),0 20px 56px rgba(0,0,0,.22);animation:sheetUp .32s var(--spring)}
+.command-form{display:flex;align-items:center;gap:6px}
+.cmd-mic{flex:none;display:grid;place-items:center;width:40px;height:40px;padding:0;border-radius:16px;background:var(--app-fill);color:var(--app-fg)}
+.cmd-wave{display:flex;align-items:center;gap:3px;height:16px}
+.cmd-wave i{display:block;width:2px;height:7px;border-radius:99px;background:currentColor;transition:height .2s}
+.cmd-wave i:nth-child(2){height:13px}
+.command-bar.listening .cmd-mic{background:var(--app-fg);color:var(--app-bg)}
+.command-bar.listening .cmd-wave i{animation:wavePulse .9s ease-in-out infinite}
+.command-bar.listening .cmd-wave i:nth-child(2){animation-delay:.15s}
+.command-bar.listening .cmd-wave i:nth-child(3){animation-delay:.3s}
+@keyframes wavePulse{0%,100%{height:5px}50%{height:15px}}
+#cmd-input{flex:1;min-width:0;height:40px;border:0;background:transparent;outline:none;padding:0 4px;font-size:16px;color:var(--app-fg)}
+#cmd-input::placeholder{color:var(--app-muted);font-size:14px}
+.cmd-wake{flex:none;height:32px;padding:0 11px;border-radius:999px;background:transparent;color:var(--app-muted);font-size:12.5px;font-weight:600;white-space:nowrap}
+.cmd-wake[aria-pressed="true"]{background:color-mix(in srgb,var(--app-fg) 12%,transparent);color:var(--app-fg)}
+#library.cosmos-on ~ #command-mask .command-bar{background:rgba(13,24,54,.88);box-shadow:0 0 0 .5px rgba(250,236,198,.18),0 24px 60px rgba(4,10,26,.55)}
+#library.cosmos-on ~ #command-mask #cmd-input{color:#fdf4dc}
+#library.cosmos-on ~ #command-mask #cmd-input::placeholder{color:rgba(232,224,200,.52)}
+#library.cosmos-on ~ #command-mask .cmd-mic{background:rgba(250,238,204,.1);color:#fdf4dc}
+#library.cosmos-on ~ #command-mask .command-bar.listening .cmd-mic{background:#fdf4dc;color:#0e1b3d}
+#library.cosmos-on ~ #command-mask .cmd-wake{color:rgba(232,224,200,.72)}
+#library.cosmos-on ~ #command-mask .cmd-wake[aria-pressed="true"]{background:rgba(250,238,204,.16);color:#fff8e4}
+.reader-cmd-bar{position:absolute;left:50%;bottom:calc(env(safe-area-inset-bottom) + 2px);transform:translateX(-50%);z-index:5;width:128px;height:26px;padding:0;display:flex;align-items:flex-end;justify-content:center;background:transparent;border-radius:0;-webkit-tap-highlight-color:transparent}
+.reader-cmd-line{display:block;width:40px;height:3px;margin-bottom:4px;border-radius:999px;background:var(--fg);opacity:.18;transition:width .3s var(--spring),opacity .25s}
+.reader-cmd-bar:active .reader-cmd-line,.reader-cmd-bar:hover .reader-cmd-line{width:56px;opacity:.5}
+.reader-cmd-bar:focus-visible{outline:none}
+.reader-cmd-bar:focus-visible .reader-cmd-line{width:56px;opacity:.7}
 
 /* 知识：零顶栏，直接呈现纯净卡片流 */
 .chips{display:flex;flex-wrap:nowrap;gap:6px;overflow-x:auto;scrollbar-width:none;padding:1px 0}
@@ -419,8 +458,12 @@ body[data-type=pdf] #stage{padding:calc(env(safe-area-inset-top) + 30px) 4px cal
 .seg .font-serif{font-family:var(--serif)}.seg .font-kai{font-family:"RR Kai",var(--serif)}
 .seg button.swatch{border-radius:10px;box-shadow:inset 0 0 0 1px var(--line)}
 .seg button.swatch.on{box-shadow:0 0 0 2px var(--accent)}
-.toast{position:fixed;left:50%;bottom:calc(env(safe-area-inset-bottom) + 44px);transform:translateX(-50%);background:rgba(28,28,30,.9);color:#fff;padding:9px 16px;border-radius:999px;font-size:13.5px;font-weight:560;z-index:80;max-width:86%;text-align:center;box-shadow:0 10px 30px rgba(0,0,0,.22);pointer-events:none;animation:pop .3s var(--spring)}
+.toast{position:fixed;left:50%;bottom:calc(env(safe-area-inset-bottom) + 44px);transform:translateX(-50%);display:inline-flex;align-items:center;gap:10px;background:rgba(28,28,30,.92);color:#fff;padding:9px 16px;border-radius:999px;font-size:13.5px;font-weight:560;z-index:80;max-width:88%;text-align:center;box-shadow:0 10px 30px rgba(0,0,0,.22);pointer-events:none;animation:pop .3s var(--spring)}
+#command-mask:not(.hidden) ~ .toast{bottom:calc(env(safe-area-inset-bottom) + 84px)}
+.toast.has-undo{pointer-events:auto;padding-right:10px}
+.toast-undo{padding:3px 9px;border-radius:999px;background:rgba(255,255,255,.16);color:#fff;font-size:12.5px;font-weight:650;pointer-events:auto}
 html.appearance-dark .toast{background:rgba(245,245,247,.94);color:#1d1d1f}
+html.appearance-dark .toast-undo{background:rgba(0,0,0,.1);color:#1d1d1f}
 
 /* 选区、摘录、AI */
 .selectbar{position:absolute;left:0;right:0;width:min(560px,calc(100% - 20px));margin:0 auto;bottom:calc(env(safe-area-inset-bottom) + 14px);z-index:40;background:var(--bar);backdrop-filter:saturate(180%) blur(24px);-webkit-backdrop-filter:saturate(180%) blur(24px);border-radius:22px;box-shadow:0 16px 50px rgba(0,0,0,.16),0 0 0 .5px var(--line);padding:12px}

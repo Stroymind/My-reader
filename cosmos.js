@@ -757,46 +757,101 @@ export class Cosmos {
         paintBristle(g, pts, wid, body, sheen, null, rnd);
       }
     }
-    // 随时间在天穹缓行的印象派日/月厚涂笔触（夜晚为梵高弯月，日间/晨暮为莫奈柔光日轮）
-    const ox = W * th.orbX, oy = H * th.orbY, orbR = clamp(Math.min(W, H) * 0.042, 16, 26);
-    const orbGlow = g.createRadialGradient(ox, oy, 0, ox, oy, orbR * 6.2);
-    orbGlow.addColorStop(0, `hsla(${th.orbHue},82%,76%,.36)`);
-    orbGlow.addColorStop(0.35, `hsla(${th.orbHue},68%,62%,.14)`);
-    orbGlow.addColorStop(1, `hsla(${th.orbHue},60%,50%,0)`);
-    g.fillStyle = orbGlow; g.beginPath(); g.arc(ox, oy, orbR * 6.2, 0, TAU); g.fill();
-    g.lineCap = 'round';
-    [1.55, 2.25, 3.05].forEach((m, ri) => {
-      const n = 6 + ri * 2;
-      g.strokeStyle = `hsla(${th.orbHue + ri * 4},74%,${80 - ri * 6}%,${0.28 - ri * 0.07})`;
-      g.lineWidth = 3.2 - ri * 0.6;
-      for (let i = 0; i < n; i++) {
-        const a0 = (i / n) * TAU + ri * 0.4 + rnd() * 0.18;
-        g.beginPath(); g.arc(ox, oy, orbR * m, a0, a0 + 0.56 - ri * 0.08); g.stroke();
-      }
-    });
+    // 随时间在天穹缓行的纯印象派油画日/月（零几何同心虚线圈，全用猪鬃厚涂笔触自然堆叠）
+    const ox = W * th.orbX, oy = H * th.orbY, orbR = clamp(Math.min(W, H) * 0.044, 17, 27);
+    const orbGlow = g.createRadialGradient(ox, oy, 0, ox, oy, orbR * 6.5);
+    orbGlow.addColorStop(0, `hsla(${th.orbHue + 4},84%,78%,.36)`);
+    orbGlow.addColorStop(0.28, `hsla(${th.orbHue},72%,62%,.16)`);
+    orbGlow.addColorStop(0.62, `hsla(${th.orbHue - 6},56%,46%,.055)`);
+    orbGlow.addColorStop(1, `hsla(${th.orbHue},50%,40%,0)`);
+    g.fillStyle = orbGlow; g.beginPath(); g.arc(ox, oy, orbR * 6.5, 0, TAU); g.fill();
+
+    // 1. 油画日/月周边有机晕染笔触（莫奈顺风霞光 / 梵高蓬松碎笔月晕，绝非机械等距圈）
+    const haloCount = th.orbKind === 'moon' ? 46 : 52;
+    for (let i = 0; i < haloCount; i++) {
+      const a = rnd() * TAU;
+      const dist = orbR * (0.95 + Math.pow(rnd(), 0.72) * 3.4);
+      const px = ox + Math.cos(a) * dist * (th.orbKind === 'sun' ? 1.28 : 1.04);
+      const py = oy + Math.sin(a) * dist * (th.orbKind === 'sun' ? 0.86 : 1.04);
+      const falloff = 1 - clamp((dist - orbR * 0.95) / (orbR * 3.4), 0, 1);
+      // 日轮周围顺夜风微斜铺霞，月牙周围蓬松轻旋（加自然笔意扰动）
+      const tang = th.orbKind === 'moon'
+        ? a + Math.PI / 2 + (rnd() - 0.5) * 0.42
+        : -0.22 + (rnd() - 0.5) * 0.45 + Math.sin(a) * 0.22;
+      const seg = (5 + rnd() * 7) * (0.7 + falloff * 0.6);
+      const cur = (rnd() - 0.5) * 0.32;
+      const pts = [
+        [px - Math.cos(tang) * seg, py - Math.sin(tang) * seg],
+        [px, py],
+        [px + Math.cos(tang + cur) * seg, py + Math.sin(tang + cur) * seg]
+      ];
+      const warmMix = falloff > 0.32 || rnd() < 0.65;
+      const h = warmMix ? th.orbHue + (rnd() - 0.5) * 18 : th.bgHi + (rnd() - 0.5) * 16;
+      const lum = warmMix ? (58 + falloff * 24 + rnd() * 8) : (42 + falloff * 22);
+      const alpha = (0.06 + falloff * 0.2) * (0.65 + rnd() * 0.6);
+      paintBristle(
+        g, pts, 3.2 + rnd() * 3.6,
+        `hsla(${h},${54 + falloff * 24}%,${lum}%,${alpha.toFixed(3)})`,
+        falloff > 0.45 ? `hsla(${h + 6},76%,${Math.min(92, lum + 12)}%,${(alpha * 0.65).toFixed(3)})` : null,
+        null, rnd
+      );
+    }
+
     if (th.orbKind === 'moon') {
-      // 梵高式优雅弯月牙（真正内凹的新月弧线，绝不画成直边半圆）
-      const r = orbR * 0.84;
+      // 2. 梵高式厚涂油画弯月（用层叠暖金/奶油黄毛刷短笔触堆出饱满松软的新月，无生硬矢量描边）
+      const r = orbR * 0.86;
       g.save();
       g.translate(ox, oy);
-      g.rotate(-0.32);
-      g.fillStyle = 'rgba(255,241,182,0.95)';
-      g.beginPath();
-      g.arc(0, 0, r, -Math.PI * 0.56, Math.PI * 0.56, false);
-      g.bezierCurveTo(r * 0.62, r * 0.42, r * 0.62, -r * 0.42, Math.cos(-Math.PI * 0.56) * r, Math.sin(-Math.PI * 0.56) * r);
-      g.closePath();
-      g.fill();
-      g.strokeStyle = 'rgba(255,250,224,0.75)';
-      g.lineWidth = 1.2;
-      g.stroke();
+      g.rotate(-0.34);
+      // 柔和底层月光
+      const mGlow = g.createRadialGradient(r * 0.35, 0, 0, r * 0.2, 0, r * 1.45);
+      mGlow.addColorStop(0, 'rgba(255,244,196,0.52)');
+      mGlow.addColorStop(0.55, 'rgba(244,204,104,0.2)');
+      mGlow.addColorStop(1, 'rgba(244,204,104,0)');
+      g.fillStyle = mGlow; g.beginPath(); g.arc(r * 0.2, 0, r * 1.45, 0, TAU); g.fill();
+      // 沿新月脊线由暗金 -> 拿坡里黄 -> 象牙奶油白逐层落笔厚涂
+      const layers = [
+        { rad: r * 0.92, spread: 1.05, w: 6.8, col: 'rgba(226,170,68,0.62)', sheen: 'rgba(250,224,132,0.45)', n: 11 },
+        { rad: r * 0.95, spread: 0.98, w: 5.0, col: 'rgba(252,226,136,0.82)', sheen: 'rgba(255,248,214,0.68)', n: 12 },
+        { rad: r * 0.99, spread: 0.86, w: 3.1, col: 'rgba(255,250,226,0.9)', sheen: 'rgba(255,254,244,0.8)', n: 10 }
+      ];
+      for (const L of layers) {
+        for (let i = 0; i < L.n; i++) {
+          const u = (i / (L.n - 1)) * 2 - 1; // -1..1 从上月尖到下月尖
+          const taper = Math.sqrt(Math.max(0.12, 1 - u * u * 0.88));
+          const ang = u * Math.PI * 0.5 * L.spread;
+          const da = 0.22;
+          const p0 = [Math.cos(ang - da) * L.rad + (rnd() - 0.5) * 1.4, Math.sin(ang - da) * L.rad + (rnd() - 0.5) * 1.4];
+          const p1 = [Math.cos(ang) * L.rad, Math.sin(ang) * L.rad];
+          const p2 = [Math.cos(ang + da) * L.rad + (rnd() - 0.5) * 1.4, Math.sin(ang + da) * L.rad + (rnd() - 0.5) * 1.4];
+          paintBristle(g, [p0, p1, p2], L.w * taper, L.col, L.sheen, null, rnd);
+        }
+      }
       g.restore();
     } else {
-      // 莫奈《印象·日出》柔润日轮
-      const core = g.createRadialGradient(ox, oy, 0, ox, oy, orbR * 0.92);
-      core.addColorStop(0, `hsla(${th.orbHue + 8},95%,90%,.85)`);
-      core.addColorStop(0.65, `hsla(${th.orbHue},84%,72%,.55)`);
-      core.addColorStop(1, `hsla(${th.orbHue},78%,64%,0)`);
-      g.fillStyle = core; g.beginPath(); g.arc(ox, oy, orbR * 0.92, 0, TAU); g.fill();
+      // 2. 莫奈《印象·日出》厚涂柔光日轮（暖橘/杏金/浅柠檬奶油毛刷短笔触自然点染，边缘融入云雾）
+      const core = g.createRadialGradient(ox, oy, 0, ox, oy, orbR * 1.35);
+      core.addColorStop(0, `hsla(${th.orbHue + 10},94%,88%,.72)`);
+      core.addColorStop(0.5, `hsla(${th.orbHue + 2},84%,68%,.42)`);
+      core.addColorStop(1, `hsla(${th.orbHue - 4},74%,56%,0)`);
+      g.fillStyle = core; g.beginPath(); g.arc(ox, oy, orbR * 1.35, 0, TAU); g.fill();
+      for (let i = 0; i < 24; i++) {
+        const a = rnd() * TAU;
+        const rr = orbR * Math.sqrt(rnd()) * 0.92;
+        const sx = ox + Math.cos(a) * rr, sy = oy + Math.sin(a) * rr;
+        const tilt = -0.18 + (rnd() - 0.5) * 0.6;
+        const len = 3.5 + rnd() * 5.5;
+        const pts = [[sx - Math.cos(tilt) * len, sy - Math.sin(tilt) * len], [sx, sy], [sx + Math.cos(tilt) * len, sy + Math.sin(tilt) * len]];
+        const center = 1 - rr / orbR;
+        const h = th.orbHue + center * 12 + (rnd() - 0.5) * 12;
+        const lum = 66 + center * 24;
+        paintBristle(
+          g, pts, 3.4 + rnd() * 3.2,
+          `hsla(${h},86%,${lum}%,${(0.32 + center * 0.42).toFixed(3)})`,
+          `hsla(${h + 8},95%,${Math.min(96, lum + 10)}%,${(0.28 + center * 0.36).toFixed(3)})`,
+          null, rnd
+        );
+      }
     }
 
     // 柔和油画暗角收束视心

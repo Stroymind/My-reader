@@ -740,6 +740,59 @@ try {
   report.checks.push('Desktop 1100 px panorama: edge-to-edge cosmos, every star in view after 适应, no overflow');
   await page.setViewport({ width: 390, height: 844, isMobile: true, hasTouch: true });
 
+  // ---- Natural-language & voice direct-control bar (zero AI-slop, compound actions + undo + reader control) ----
+  assert.equal(await page.$eval('#command-mask', el => el.classList.contains('hidden')), true);
+  await page.evaluate(async () => { const w = await import('./workspace.js'); w.showPane('shelf'); });
+  await sleep(250);
+  // Long-press bottom breathing hairline opens the command whisper bar
+  const barPt = await page.$eval('#spatial-bar', el => { const r = el.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
+  await page.mouse.move(barPt.x, barPt.y); await page.mouse.down(); await sleep(540); await page.mouse.up();
+  await page.waitForFunction(() => !document.querySelector('#command-mask').classList.contains('hidden'));
+  await sleep(360);
+  await page.screenshot({ path: path.resolve(root, 'test-results/zone-command-bar.png') });
+  // Compound natural-language command: dark mode + 星海 + 暮色 + 2.5D
+  await page.type('#cmd-input', '深色模式，去星海看暮色并开立体');
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(() => document.querySelector('#command-mask').classList.contains('hidden')
+    && document.documentElement.dataset.appearance === 'dark'
+    && document.querySelector('#pane-graph').classList.contains('on')
+    && document.querySelector('#graph-stage').classList.contains('tilt')
+    && document.querySelector('#graph-mood .menu-label').textContent === '天色 · 暮色'
+    && !!document.querySelector('#toast .toast-undo'));
+  // One-tap Undo reverts the whole compound command cleanly
+  await page.click('#toast .toast-undo');
+  await page.waitForFunction(() => document.documentElement.dataset.appearance !== 'dark'
+    && !document.querySelector('#graph-stage').classList.contains('tilt')
+    && document.querySelector('#pane-shelf').classList.contains('on'));
+
+  // Reader direct voice/natural-language control: open book -> enlarge font + eye-care sepia + kai + loose line-height -> next page -> close -> quick note
+  await page.evaluate(async () => {
+    const { db } = window.__app;
+    await db.put('books', { id: 'z-v', title: '原则 Principles', author: 'Ray Dalio', type: 'txt', progress: 0, addedAt: Date.now(), lastOpened: 0, pos: null, bookmarks: [], highlights: [] });
+    await db.put('files', { id: 'z-v', blob: new Blob(['第一章\n\n' + '自然交互让阅读设置不再藏在层层菜单里。\n'.repeat(60)], { type: 'text/plain' }) });
+    await window.__app.renderLibrary();
+  });
+  await page.evaluate(() => window.__app.runCommand('打开原则'));
+  await page.waitForFunction(() => document.querySelector('#reader').classList.contains('active') && document.querySelector('#loading').classList.contains('hidden'));
+  const beforeSize = await page.evaluate(async () => (await import('./settings.js')).settings.size);
+  await page.evaluate(() => window.__app.runCommand('字大一点，开护眼模式，换楷体，行距宽一点'));
+  const readerAfter = await page.evaluate(async () => {
+    const { settings } = await import('./settings.js');
+    return { size: settings.size, theme: settings.theme, font: settings.font, lh: settings.lh, sepiaCls: document.body.classList.contains('theme-sepia') };
+  });
+  assert.equal(readerAfter.size, beforeSize + 2);
+  assert.equal(readerAfter.theme, 'sepia'); assert.equal(readerAfter.sepiaCls, true);
+  assert.equal(readerAfter.font, 'kai'); assert.equal(readerAfter.lh, 2.1);
+  await page.evaluate(() => window.__app.runCommand('下一页'));
+  await sleep(250);
+  await page.evaluate(() => window.__app.runCommand('返回列表'));
+  await page.waitForFunction(() => document.querySelector('#library').classList.contains('active'));
+  const beforeNotes = await page.evaluate(async () => (await (await import('./knowledge.js')).listNotes()).length);
+  await page.evaluate(() => window.__app.runCommand('记笔记：自然指令比翻菜单更直觉'));
+  const afterNotes = await page.evaluate(async () => (await (await import('./knowledge.js')).listNotes()).length);
+  assert.equal(afterNotes, beforeNotes + 1);
+  report.checks.push('Long-press bottom hairline opens whisper command bar; compound natural commands (dark + 星海 + 暮色 + 2.5D, 1-tap undo, open book, enlarge font + eye-care + kai + loose line-height + page turn + quick note) execute offline with zero AI clutter');
+
   for (const width of [390, 1100]) {
     await page.setViewport({ width, height: 844 });
     for (const pane of ['knowledge', 'graph', 'shelf']) {

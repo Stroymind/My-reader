@@ -2,18 +2,34 @@ import * as pdfjsLib from './vendor/pdf.min.mjs';
 import { db } from './db.js';
 import { importFiles, parseManifest, applyManifestToLibrary } from './importer.js';
 import { EpubEngine, PdfEngine, TxtEngine } from './engines.js';
-import { settings, saveSettings, applyBodyTheme, applyAppearance, cycleAppearance, FONTS, THEMES } from './settings.js';
+import { settings, saveSettings, applyBodyTheme, applyAppearance, appearancePref, cycleAppearance, FONTS, THEMES } from './settings.js';
 import { isMostlyCjk, translateVisible } from './bilingual.js';
-import { backfillFromBooks, deleteBookBundle, parseTags, syncBook } from './knowledge.js';
+import { backfillFromBooks, createNote, deleteBookBundle, parseTags, syncBook } from './knowledge.js';
 import { addToStack, createStack, defaultStackName, dissolveStack, getStack, listStacks, reconcileStacks, removeFromStacks, renameStack, setStackCollapsed } from './stacks.js';
-import { dismissAssistant, initWorkspace, openAssistant, refreshWorkspace, setGraphSearch, setKnowledgeFind, showPane, workspaceHandleBack } from './workspace.js';
+import { dismissAssistant, fitGraph, getGraphMood, getGraphTilt, initWorkspace, openAiSettingsDialog, openAssistant, refreshWorkspace, searchGraph, setGraphMood, setGraphSearch, setGraphTilt, setKnowledgeFind, showPane, workspaceHandleBack } from './workspace.js';
+import { createCommandController, speechSupported } from './command.js';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = './vendor/pdf.worker.min.mjs';
 const $ = s => document.querySelector(s);
 const coverUrls = new Map();
 const KIND = { highlight: '划线', excerpt: '摘录', copy: '复制', annotation: '批注' };
 
-function toast(msg, ms = 2200) { const t = $('#toast'); t.textContent = msg; t.classList.remove('hidden'); clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.add('hidden'), ms); }
+function toast(msg, ms = 2200, onUndo = null) {
+  const t = $('#toast');
+  t.replaceChildren(document.createTextNode(msg));
+  t.classList.toggle('has-undo', typeof onUndo === 'function');
+  if (typeof onUndo === 'function') {
+    const u = document.createElement('button');
+    u.type = 'button';
+    u.className = 'toast-undo';
+    u.textContent = '撤销';
+    u.onclick = () => { clearTimeout(toast.t); t.classList.add('hidden'); onUndo(); };
+    t.appendChild(u);
+  }
+  t.classList.remove('hidden');
+  clearTimeout(toast.t);
+  toast.t = setTimeout(() => t.classList.add('hidden'), ms);
+}
 function hueFor(s) { let h = 0; for (const c of s) h = (h * 31 + c.codePointAt(0)) % 360; return h; }
 const fmtPct = p => (p == null ? '' : (p * 100).toFixed(p < 0.1 && p > 0 ? 1 : 0) + '%');
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
@@ -606,19 +622,33 @@ $('#btn-import').onclick = () => $('#file-input').click();
 $('#btn-empty-import').onclick = () => $('#file-input').click();
 $('#btn-select-mode').onclick = () => startPick(null);
 
-// 底部呼吸细线：轻点/上滑开意图层，左右滑切换空间
+// 底部呼吸细线：轻点/上滑开意图层，左右滑切换空间，长按直接说指令
+let command = null;
 (function bindSpatialBar() {
   const bar = $('#spatial-bar');
   if (!bar) return;
-  let sx = 0, sy = 0, pid = null, swiped = false;
+  let sx = 0, sy = 0, pid = null, swiped = false, hold = null;
+  const cancelHold = () => { clearTimeout(hold); hold = null; };
   bar.addEventListener('pointerdown', e => {
     if (e.button != null && e.button !== 0) return;
     sx = e.clientX; sy = e.clientY; pid = e.pointerId; swiped = false;
     try { bar.setPointerCapture(e.pointerId); } catch {}
+    cancelHold();
+    hold = setTimeout(() => {
+      hold = null;
+      swiped = true;
+      command?.openBar({ listen: speechSupported() });
+    }, 460);
+  });
+  bar.addEventListener('pointermove', e => {
+    if (pid !== e.pointerId || !hold) return;
+    if (Math.hypot(e.clientX - sx, e.clientY - sy) > 12) cancelHold();
   });
   bar.addEventListener('pointerup', e => {
     if (pid !== e.pointerId) return;
     pid = null;
+    cancelHold();
+    if (swiped) return;
     const dx = e.clientX - sx, dy = e.clientY - sy;
     if (Math.abs(dx) > 36 && Math.abs(dx) > Math.abs(dy) * 1.2) {
       swiped = true;
@@ -628,7 +658,7 @@ $('#btn-select-mode').onclick = () => startPick(null);
       openIntent();
     }
   });
-  bar.addEventListener('pointercancel', () => { pid = null; });
+  bar.addEventListener('pointercancel', () => { pid = null; cancelHold(); });
   bar.onclick = () => {
     if (swiped) { swiped = false; return; }
     if (intentOpen()) closeIntent(); else openIntent();
@@ -641,7 +671,7 @@ $('#btn-select-mode').onclick = () => startPick(null);
   if (!lib) return;
   let sx = 0, sy = 0, st = 0, pid = null, atTop = false, edge = false;
   const blocked = () => pickMode || !lib.classList.contains('active')
-    || ['#ai-mask', '#note-mask', '#settings-mask', '#stack-mask', '#intent-mask', '#lib-panel', '#note-editor']
+    || ['#ai-mask', '#note-mask', '#settings-mask', '#stack-mask', '#intent-mask', '#command-mask', '#lib-panel', '#note-editor']
       .some(sel => { const el = document.querySelector(sel); return el && !el.classList.contains('hidden'); });
   lib.addEventListener('pointerdown', e => {
     if (e.button != null && e.button !== 0) return;
@@ -675,6 +705,11 @@ $('#btn-select-mode').onclick = () => startPick(null);
 
 // 菜单上下键 + 快捷键（Ctrl+K / Alt+左右 / 1-3 / /）
 document.addEventListener('keydown', e => {
+  if ((e.altKey && e.code === 'Space') || ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'j')) {
+    e.preventDefault();
+    if (command?.isOpen()) command.closeBar(true); else command?.openBar();
+    return;
+  }
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k' && $('#library')?.classList.contains('active')) {
     e.preventDefault();
     if (intentOpen()) closeIntent(); else openIntent();
@@ -692,7 +727,7 @@ document.addEventListener('keydown', e => {
   }
   if (!$('#library')?.classList.contains('active') || engine) return;
   if (e.target.closest?.('input, textarea, select')) return;
-  const modalUp = ['#ai-mask', '#note-mask', '#settings-mask', '#stack-mask', '#intent-mask', '#lib-panel', '#note-editor']
+  const modalUp = ['#ai-mask', '#note-mask', '#settings-mask', '#stack-mask', '#intent-mask', '#command-mask', '#lib-panel', '#note-editor']
     .some(sel => { const el = document.querySelector(sel); return el && !el.classList.contains('hidden'); });
   if (modalUp) return;
   if (e.altKey && e.key === 'ArrowLeft') { e.preventDefault(); stepSpace(-1); return; }
@@ -1267,6 +1302,7 @@ $('#btn-aa').onclick = () => { const s = $('#settings'); const show = s.classLis
 let rz; window.addEventListener('resize', () => { clearTimeout(rz); rz = setTimeout(() => engine?.resize(), 250); });
 
 function handleBack() {
+  if (command?.closeBar(true)) return true;
   if (dismissAssistant()) return true;
   if (closeStackDialog()) return true;
   if (closeIntent()) return true;
@@ -1307,4 +1343,192 @@ if (nativeApp && 'serviceWorker' in navigator) {
   navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadCtrl && !reloaded) { reloaded = true; location.reload(); } });
   navigator.serviceWorker.register('sw.js').catch(() => {});
 }
-window.__app = { db, openBook, closeBook, importFiles, handleBack, get engine() { return engine; }, renderLibrary, stacks: { list: listStacks } };
+async function applyReaderPrefs() {
+  saveSettings();
+  applyBodyTheme();
+  if (!$('#settings').classList.contains('hidden')) buildSettings();
+  if (cur?.type === 'pdf' && engine) {
+    engine.reflow = true;
+    await engine.render();
+  }
+  await engine?.applySettings?.();
+  refreshBilingual();
+}
+
+command = createCommandController({
+  toast,
+  closeMenus: () => { closeIntent(false); closeStackMenus(false); },
+  context: () => ({ reading: !!engine && $('#reader').classList.contains('active'), pane: currentPane() }),
+  snapshot: () => ({
+    settings: { ...settings },
+    appearance: appearancePref(),
+    pane: currentPane(),
+    mood: getGraphMood(),
+    tilt: getGraphTilt()
+  }),
+  async restore(snap) {
+    Object.assign(settings, snap.settings);
+    localStorage.setItem('rr-appearance', snap.appearance);
+    applyAppearance();
+    await applyReaderPrefs();
+    setGraphMood(snap.mood, true);
+    setGraphTilt(snap.tilt);
+    if (!engine && snap.pane) showPane(snap.pane, { whisper: false });
+  },
+  async exec(a) {
+    const reading = !!engine && $('#reader').classList.contains('active');
+    switch (a.op) {
+      case 'fontSize': {
+        const next = a.value != null ? a.value : Math.max(12, Math.min(40, settings.size + (a.delta || 0)));
+        settings.size = next;
+        await applyReaderPrefs();
+        return { label: `字号 ${next}`, undoable: true };
+      }
+      case 'font': {
+        if (!FONTS[a.value]) return null;
+        settings.font = a.value;
+        await applyReaderPrefs();
+        return { label: FONTS[a.value].label, undoable: true };
+      }
+      case 'lineHeight': {
+        settings.lh = a.value;
+        await applyReaderPrefs();
+        return { label: a.value > 1.9 ? '宽松行距' : a.value < 1.65 ? '紧凑行距' : '适中行距', undoable: true };
+      }
+      case 'readTheme': {
+        if (!THEMES[a.value]) return null;
+        settings.theme = a.value;
+        await applyReaderPrefs();
+        return { label: THEMES[a.value].label + '模式', undoable: true };
+      }
+      case 'appearance': {
+        localStorage.setItem('rr-appearance', a.value);
+        applyAppearance();
+        const nm = a.value === 'dark' ? '深色外观' : a.value === 'light' ? '浅色外观' : '自动外观';
+        return { label: nm, undoable: true };
+      }
+      case 'bilingual': {
+        settings.bilingual = !!a.on;
+        saveSettings();
+        if (!$('#settings').classList.contains('hidden')) buildSettings();
+        refreshBilingual();
+        return { label: a.on ? '已开中英对照' : '只看原文', undoable: true };
+      }
+      case 'turn': {
+        if (!reading) return { label: '打开一本书后即可语音翻页' };
+        await turn(a.delta > 0 ? 1 : -1);
+        return { label: a.delta > 0 ? '下一页' : '上一页' };
+      }
+      case 'seek': {
+        if (!reading) return { label: '打开一本书后即可跳转进度' };
+        await engine.goToFraction(a.fraction);
+        return { label: `已跳到 ${Math.round(a.fraction * 100)}%` };
+      }
+      case 'bookmark': {
+        if (!reading) return { label: '打开一本书后即可加书签' };
+        $('#btn-bm')?.click();
+        return { label: '已切换书签' };
+      }
+      case 'toc': {
+        if (!reading) return { label: '打开一本书后即可看目录' };
+        $('#btn-toc')?.click();
+        return { label: '已打开目录' };
+      }
+      case 'closeBook': {
+        if (!reading) return null;
+        await closeBook();
+        return { label: '已返回列表' };
+      }
+      case 'pane': {
+        if (reading) await closeBook();
+        showPane(a.value, { whisper: true });
+        const nm = a.value === 'graph' ? '星海' : a.value === 'knowledge' ? '知识' : '流';
+        return { label: nm, undoable: true };
+      }
+      case 'graphTilt': {
+        if (reading) await closeBook();
+        showPane('graph', { whisper: false });
+        setGraphTilt(a.on);
+        return { label: a.on ? '2.5D 立体' : '平视星图', undoable: true };
+      }
+      case 'graphFit': {
+        if (reading) await closeBook();
+        showPane('graph', { whisper: false });
+        fitGraph();
+        return { label: '适应全图' };
+      }
+      case 'graphMood': {
+        if (reading) await closeBook();
+        showPane('graph', { whisper: false });
+        setGraphMood(a.value, true);
+        const nm = { auto: '天色随时辰', dawn: '晨曦', day: '晴蓝', dusk: '暮色', night: '星夜' }[a.value] || '星海';
+        return { label: nm, undoable: true };
+      }
+      case 'openBook': {
+        const q = a.query.toLowerCase();
+        const books = await db.all('books');
+        const hit = books.find(b => (b.title || '').toLowerCase().includes(q))
+          || books.find(b => (b.author || '').toLowerCase().includes(q));
+        if (!hit) return { label: `没有找到「${a.query}」` };
+        await openBook(hit.id);
+        return { label: `已打开《${hit.title.slice(0, 14)}》` };
+      }
+      case 'createNote': {
+        if (!a.text) {
+          if (reading) await closeBook();
+          $('#btn-new-note')?.click();
+          return { label: '新建笔记' };
+        }
+        const title = Array.from(a.text).slice(0, 18).join('');
+        await createNote({ title, body: a.text, tags: [], kind: 'note' });
+        await refreshWorkspace();
+        return { label: `已记笔记「${title}」` };
+      }
+      case 'newDecision': {
+        if (reading) await closeBook();
+        $('#btn-new-decision')?.click();
+        return { label: '新建判断' };
+      }
+      case 'search': {
+        if (reading) await closeBook();
+        const pane = currentPane();
+        if (pane === 'graph') {
+          searchGraph(a.query);
+        } else if (pane === 'knowledge') {
+          setKnowledgeFind(true);
+          const inp = $('#note-search');
+          if (inp) { inp.value = a.query; inp.dispatchEvent(new Event('input', { bubbles: true })); }
+        } else {
+          openShelfFind();
+          const inp = $('#search');
+          if (inp) { inp.value = a.query; inp.dispatchEvent(new Event('input', { bubbles: true })); }
+        }
+        return { label: `查找「${a.query}」` };
+      }
+      case 'selectMode': {
+        if (reading) await closeBook();
+        showPane('shelf');
+        startPick(null);
+        return { label: '进入整理' };
+      }
+      case 'excerpts': {
+        if (reading) await closeBook();
+        await openLibraryExcerpts();
+        return { label: '已打开摘录' };
+      }
+      case 'aiSettings': {
+        openAiSettingsDialog();
+        return { label: 'AI 设置' };
+      }
+      default:
+        return null;
+    }
+  }
+});
+
+$('#intent-cmd-btn')?.addEventListener('click', () => command.openBar({ listen: false }));
+$('#intent-mic')?.addEventListener('click', () => command.openBar({ listen: true }));
+$('#reader-cmd-bar')?.addEventListener('click', () => command.openBar({ listen: false }));
+$('#btn-reader-cmd')?.addEventListener('click', () => { setBars(false); command.openBar({ listen: speechSupported() }); });
+
+window.__app = { db, openBook, closeBook, importFiles, handleBack, get engine() { return engine; }, renderLibrary, stacks: { list: listStacks }, runCommand: text => command.run(text), openCommand: opts => command.openBar(opts) };

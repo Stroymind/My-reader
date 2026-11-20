@@ -380,6 +380,28 @@ function syncMoodButton() {
   if (lbl) lbl.textContent = `天色 · ${MOOD_NAME[graphMood] || '随时辰'}`;
 }
 
+export function getGraphMood() { return graphMood; }
+export function getGraphTilt() { return $('#graph-tilt')?.getAttribute('aria-pressed') === 'true'; }
+export function setGraphTilt(on) {
+  const btn = $('#graph-tilt');
+  const next = !!on;
+  if (btn) {
+    btn.setAttribute('aria-pressed', next ? 'true' : 'false');
+    const lbl = btn.querySelector('.menu-label');
+    if (lbl) lbl.textContent = next ? '平视星图' : '2.5D 立体';
+  }
+  ensureCosmos()?.setTilt(next);
+}
+export function openAiSettingsDialog() { openAiSettings(); }
+export function searchGraph(q) {
+  const input = $('#graph-search');
+  if (!input) return false;
+  setGraphSearch(true);
+  input.value = String(q || '');
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  return true;
+}
+
 export function setGraphMood(mood, animate = true) {
   graphMood = MOOD_CYCLE.includes(mood) ? mood : 'auto';
   try { localStorage.setItem(MOOD_KEY, graphMood); } catch {}

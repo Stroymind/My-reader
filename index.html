@@ -131,10 +131,12 @@
     <div id="bi-body"></div>
   </aside>
   <div class="run run-bottom" id="run-pct"></div>
+  <button id="reader-cmd-bar" class="reader-cmd-bar" type="button" aria-label="语音或文字控制阅读" title="轻点或长按底线直接说出指令（Alt+Space）"><span class="reader-cmd-line" aria-hidden="true"></span></button>
   <div id="bars" class="hidden">
     <header class="rbar top">
       <button id="btn-back" class="icon" type="button" aria-label="返回"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></button>
       <div id="r-title" class="rtitle"></div>
+      <button id="btn-reader-cmd" class="icon" type="button" aria-label="语音指令"><svg viewBox="0 0 24 24"><path d="M5 12v0M9 8v8M12 5v14M15 8v8M19 12v0"/></svg></button>
       <button id="btn-select" class="icon" type="button" aria-label="选择文字"><svg viewBox="0 0 24 24"><path d="M4 20l3.2-.8L18.5 8a1.8 1.8 0 0 0-2.5-2.5L4.7 16.8 4 20z"/><path d="M13.5 6.5l4 4"/></svg></button>
       <button id="btn-bm" class="icon star" type="button" aria-label="书签">☆</button>
     </header>
@@ -231,6 +233,15 @@
         <span>星海</span>
       </button>
     </nav>
+    <div class="intent-cmd-row">
+      <button id="intent-cmd-btn" class="intent-cmd-btn" type="button">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12v0M9 8.5v7M12 6v12M15 8.5v7M19 12v0"/></svg>
+        <span>说一句直接做，如「开护眼」「看暮色」</span>
+      </button>
+      <button id="intent-mic" class="intent-mic" type="button" aria-label="语音指令" title="直接说话">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="4" width="6" height="10" rx="3"/><path d="M6.5 11.5a5.5 5.5 0 0 0 11 0M12 17v3.2M9 20.2h6"/></svg>
+      </button>
+    </div>
     <div class="intent-grid" role="menu" aria-label="操作">
       <button id="btn-intent-search" class="menu-item intent-tile" data-for="shelf knowledge graph" role="menuitem" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.4"/><path d="M20 20l-4.3-4.3"/></svg><span class="menu-label">搜索</span></button>
       <button id="btn-import" class="menu-item intent-tile" data-for="shelf" role="menuitem" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4.5v10.5M7.6 10.8 12 15.2l4.4-4.4"/><path d="M5 19.5h14"/></svg><span class="menu-label">导入</span></button>
@@ -261,6 +272,17 @@
       <button type="submit" class="btn primary" id="stack-save">完成</button>
     </div>
   </form>
+</div>
+<div id="command-mask" class="command-mask hidden">
+  <div id="command-bar" class="command-bar" role="dialog" aria-modal="true" aria-label="自然指令与语音控制">
+    <form id="command-form" class="command-form">
+      <button id="cmd-mic" class="cmd-mic" type="button" aria-label="开始或停止语音输入" aria-pressed="false">
+        <span class="cmd-wave" aria-hidden="true"><i></i><i></i><i></i></span>
+      </button>
+      <input id="cmd-input" type="text" placeholder="说一句即可，如「字大一点、开护眼」" aria-label="输入或说出指令" autocomplete="off" enterkeyhint="go">
+      <button id="cmd-wake" class="cmd-wake" type="button" aria-pressed="false" title="开启后可直接说「Zone…」唤醒">唤醒</button>
+    </form>
+  </div>
 </div>
 <div id="toast" class="toast hidden" role="status"></div>
 <script type="module" src="app.js"></script>
