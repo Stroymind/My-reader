@@ -7,7 +7,8 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const dest = path.join(root, 'www');
 const files = [
   'index.html', 'app.css', 'app.js', 'db.js', 'engines.js', 'importer.js',
-  'settings.js', 'sw.js', 'manifest.webmanifest'
+  'settings.js', 'bilingual.js', 'epub-repair.js', 'knowledge.js', 'ai.js', 'workspace.js',
+  'sw.js', 'manifest.webmanifest'
 ];
 const dirs = ['fonts', 'icons', 'vendor'];
 

@@ -1,5 +1,5 @@
 // 极简 IndexedDB 封装
-const DB_NAME = 'shufang', DB_VER = 2;
+const DB_NAME = 'shufang', DB_VER = 3;
 let dbp;
 function open() {
   if (!dbp) dbp = new Promise((res, rej) => {
@@ -10,6 +10,8 @@ function open() {
       if (!db.objectStoreNames.contains('files')) db.createObjectStore('files', { keyPath: 'id' });
       if (!db.objectStoreNames.contains('meta')) db.createObjectStore('meta', { keyPath: 'key' });
       if (!db.objectStoreNames.contains('xlate')) db.createObjectStore('xlate', { keyPath: 'key' });
+      if (!db.objectStoreNames.contains('notes')) db.createObjectStore('notes', { keyPath: 'id' });
+      if (!db.objectStoreNames.contains('links')) db.createObjectStore('links', { keyPath: 'id' });
     };
     r.onsuccess = () => res(r.result);
     r.onerror = () => rej(r.error);
@@ -42,9 +44,20 @@ export const db = {
       r.onsuccess = () => {
         const cur = r.result; if (!cur) return;
         next = typeof patch === 'function' ? patch(cur) : Object.assign(cur, patch);
-        s.put(next);
+        if (next) s.put(next);
       };
       t.oncomplete = () => res(next);
+      t.onerror = () => rej(t.error);
+      t.onabort = () => rej(t.error || new Error('事务中止'));
+    }));
+  },
+  // 跨表事务。fn 里发起的请求要在事务结束前完成。
+  run(stores, fn) {
+    return open().then(database => new Promise((res, rej) => {
+      const t = database.transaction(stores, 'readwrite');
+      try { fn(t); }
+      catch (err) { try { t.abort(); } catch {} rej(err); return; }
+      t.oncomplete = () => res();
       t.onerror = () => rej(t.error);
       t.onabort = () => rej(t.error || new Error('事务中止'));
     }));
