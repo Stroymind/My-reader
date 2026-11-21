@@ -1345,7 +1345,7 @@ function closeBook() {
     biToken++;
     document.body.classList.remove('bi');
     $('#bilingual')?.classList.add('hidden');
-    $('#panel').classList.add('hidden'); $('#note-mask').classList.add('hidden');
+    $('#panel').classList.add('hidden'); $('#reader')?.classList.remove('bird-eye'); $('#note-mask').classList.add('hidden');
     showView('library');
     showPane(returnPane || 'shelf');
     const memory = shelfMemory; shelfMemory = null;
@@ -1372,23 +1372,28 @@ async function bumpSize(delta) {
   } finally { pinchLock = false; }
   refreshBilingual();
 }
-// 点按 / 滑动翻页；长按进入选择
+// 点按 / 滑动翻页；长按进入选择；双指捏合拉远 = 鸟瞰全书目录（Z 轴穿层统一）
 (function gestures() {
-  const tap = $('#tap'), viewer = $('#viewer');
+  const tap = $('#tap'), viewer = $('#viewer'), stage = $('#stage'), readerEl = $('#reader');
   let sx = 0, sy = 0, st = 0, pid = null, timer = null, suppressUp = false, moved = false;
   const pointers = new Map();
-  let pinchDist = 0;
+  let pinchDist = 0, pinchScale = 1, zoomingOut = false;
   const pinchSpan = () => {
     const pts = [...pointers.values()];
     if (pts.length < 2) return 0;
     return Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+  };
+  const resetStageZoom = () => {
+    zoomingOut = false;
+    pinchScale = 1;
+    if (stage) { stage.style.transition = ''; stage.style.transform = ''; stage.style.opacity = ''; stage.style.borderRadius = ''; }
   };
   const clearTimer = () => { clearTimeout(timer); timer = null; };
   const down = e => {
     if (e.button != null && e.button !== 0) return;
     sx = e.clientX; sy = e.clientY; st = Date.now(); pid = e.pointerId; moved = false;
     pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    if (pointers.size >= 2) { pinchDist = pinchSpan(); moved = true; clearTimer(); return; }
+    if (pointers.size >= 2) { pinchDist = pinchSpan(); pinchScale = 1; zoomingOut = false; moved = true; clearTimer(); return; }
     clearTimer();
     if (!engine) return;
     timer = setTimeout(() => {
@@ -1402,8 +1407,30 @@ async function bumpSize(delta) {
     if (pointers.has(e.pointerId)) pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (pointers.size >= 2 && pinchDist) {
       const d = pinchSpan();
-      if (d > pinchDist * 1.18) { pinchDist = d; suppressUp = true; bumpSize(2); }
-      else if (d < pinchDist * 0.84) { pinchDist = d; suppressUp = true; bumpSize(-2); }
+      const ratio = d / pinchDist;
+      pinchScale = ratio;
+      if (ratio < 0.96 && !document.body.classList.contains('pdf-zoom')) {
+        zoomingOut = true;
+        suppressUp = true;
+        const clamped = Math.max(0.74, Math.min(1, ratio));
+        const prog = Math.min(1, (1 - ratio) / 0.24);
+        if (stage) {
+          stage.style.transition = 'none';
+          stage.style.transform = `scale(${clamped.toFixed(3)})`;
+          stage.style.opacity = String(Math.max(0.35, 1 - prog * 0.62));
+          stage.style.borderRadius = Math.round(prog * 24) + 'px';
+        }
+        if (ratio <= 0.78) {
+          pinchDist = 0;
+          resetStageZoom();
+          openReaderPanel('toc');
+        }
+      } else if (ratio > 1.18) {
+        resetStageZoom();
+        pinchDist = d;
+        suppressUp = true;
+        bumpSize(2);
+      }
       return;
     }
     if (pid !== e.pointerId) return;
@@ -1411,7 +1438,12 @@ async function bumpSize(delta) {
   };
   const up = e => {
     pointers.delete(e.pointerId);
-    if (pointers.size < 2) pinchDist = 0;
+    if (pointers.size < 2) {
+      const triggerBirdEye = zoomingOut && pinchScale <= 0.84;
+      pinchDist = 0;
+      resetStageZoom();
+      if (triggerBirdEye) { openReaderPanel('toc'); return; }
+    }
     clearTimer();
     if (pid != null && pid !== e.pointerId) return;
     pid = null;
@@ -1458,8 +1490,19 @@ async function bumpSize(delta) {
     el.addEventListener('pointerdown', down);
     el.addEventListener('pointermove', move);
     el.addEventListener('pointerup', up);
-    el.addEventListener('pointercancel', e => { pointers.delete(e.pointerId); pinchDist = 0; clearTimer(); pid = null; });
+    el.addEventListener('pointercancel', e => { pointers.delete(e.pointerId); pinchDist = 0; resetStageZoom(); clearTimer(); pid = null; });
   }
+  // 桌面端 Ctrl+滚轮在阅读器内同样支持 Z 轴穿层：拉远鸟瞰全书目录，拉近潜回正文
+  let rWheelLock = 0;
+  readerEl?.addEventListener('wheel', e => {
+    if (!e.ctrlKey || !engine) return;
+    e.preventDefault();
+    const now = Date.now();
+    if (now - rWheelLock < 380) return;
+    const panelOpen = !$('#panel').classList.contains('hidden');
+    if (e.deltaY > 12 && !panelOpen) { rWheelLock = now; openReaderPanel('toc'); }
+    else if (e.deltaY < -12 && panelOpen) { rWheelLock = now; closeReaderPanel(); }
+  }, { passive: false });
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape') {
       const field = e.target.closest?.('input, textarea, select');
@@ -1502,7 +1545,14 @@ document.addEventListener('selectionchange', () => {
   if (sel?.text) snap = sel;
 });
 
-/* 面板：目录 / 书签 / 划线（三合一抽屉） */
+/* 面板：目录 / 书签 / 划线（Z 轴鸟瞰全书索引） */
+function closeReaderPanel() {
+  const p = $('#panel');
+  if (!p || p.classList.contains('hidden')) return false;
+  p.classList.add('hidden');
+  $('#reader')?.classList.remove('bird-eye');
+  return true;
+}
 function openPanel(title, nodes, tab = 'toc') {
   if ($('#panel-title')) $('#panel-title').textContent = title;
   document.querySelectorAll('#panel-tabs [data-ptab]').forEach(btn => {
@@ -1512,6 +1562,8 @@ function openPanel(title, nodes, tab = 'toc') {
   });
   $('#panel-body').replaceChildren(...nodes);
   $('#panel').classList.remove('hidden');
+  $('#reader')?.classList.add('bird-eye');
+  setBars(false);
 }
 async function openReaderPanel(tab = 'toc') {
   if (!engine || !cur) return;
@@ -1522,18 +1574,18 @@ async function openReaderPanel(tab = 'toc') {
       const b = document.createElement('button'); b.className = 'item';
       b.textContent = bm.text || bm.label || '书签';
       const sm = document.createElement('small'); sm.textContent = [bm.label, fmtPct(bm.progress), new Date(bm.at).toLocaleDateString('zh-CN')].filter(Boolean).join(' · '); b.appendChild(sm);
-      b.onclick = async () => { $('#panel').classList.add('hidden'); setBars(false); await engine.goTo(bm.pos); };
+      b.onclick = async () => { closeReaderPanel(); setBars(false); await engine.goTo(bm.pos); };
       const x = document.createElement('button'); x.className = 'x'; x.textContent = '删除';
       x.onclick = async () => { cur.bookmarks.splice(cur.bookmarks.indexOf(bm), 1); await db.update('books', cur.id, { bookmarks: cur.bookmarks }); row.remove(); updateBmIcon(); };
       row.append(b, x); return row;
-    }) : [emptyNote('还没有书签。点右上角 ☆ 或直接说「加书签」即可收藏当前页。')];
+    }) : [emptyNote('还没有书签。直接说「加书签」即可收藏当前页。')];
     openPanel('书签', nodes, 'bms');
     return;
   }
   if (tab === 'hls') {
     const list = (cur.highlights || []).slice().sort((a, b) => b.createdAt - a.createdAt);
     const nodes = list.length ? list.map(item => passageRow(cur, item, {
-      onOpen: async () => { $('#panel').classList.add('hidden'); setBars(false); try { if (item.pos) await engine.goTo(item.pos); } catch {} },
+      onOpen: async () => { closeReaderPanel(); setBars(false); try { if (item.pos) await engine.goTo(item.pos); } catch {} },
       onDelete: () => deletePassage(cur.id, item)
     })) : [emptyNote('还没有划线。长按文字或说「把第2行划线」即可高亮并同步到知识与星海。')];
     openPanel('划线', nodes, 'hls');
@@ -1541,13 +1593,13 @@ async function openReaderPanel(tab = 'toc') {
   }
   const toc = await engine.toc();
   const curLabel = lastState?.label;
-  const nodes = toc.length ? toc.map(t => { const b = document.createElement('button'); b.className = 'item' + (t.label === curLabel ? ' cur' : ''); b.style.paddingLeft = 16 + t.depth * 18 + 'px'; b.textContent = t.label || '（无标题）'; b.onclick = async () => { $('#panel').classList.add('hidden'); setBars(false); await engine.goToc(t.target); }; return b; })
+  const nodes = toc.length ? toc.map(t => { const b = document.createElement('button'); b.className = 'item' + (t.label === curLabel ? ' cur' : ''); b.style.paddingLeft = 16 + t.depth * 18 + 'px'; b.textContent = t.label || '（无标题）'; b.onclick = async () => { closeReaderPanel(); setBars(false); await engine.goToc(t.target); }; return b; })
     : [emptyNote('这本书没有目录')];
   openPanel('目录', nodes, 'toc');
   $('#panel-body').querySelector('.cur')?.scrollIntoView({ block: 'center' });
 }
-$('#panel-close')?.addEventListener('click', () => $('#panel').classList.add('hidden'));
-$('#panel-backdrop')?.addEventListener('click', () => $('#panel').classList.add('hidden'));
+$('#panel-close')?.addEventListener('click', () => closeReaderPanel());
+$('#panel-backdrop')?.addEventListener('click', () => closeReaderPanel());
 (function bindPanelSwipeClose() {
   const head = document.querySelector('#panel .panel-head');
   const grip = $('#panel-grip');
@@ -1569,7 +1621,7 @@ $('#panel-backdrop')?.addEventListener('click', () => $('#panel').classList.add(
     pid = null;
     sheet.style.transition = '';
     sheet.style.transform = '';
-    if (e.type === 'pointerup' && dy > 76) $('#panel').classList.add('hidden');
+    if (e.type === 'pointerup' && dy > 76) closeReaderPanel();
   };
   for (const h of [head, grip].filter(Boolean)) {
     h.addEventListener('pointerdown', onDown);

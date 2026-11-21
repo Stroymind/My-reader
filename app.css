@@ -124,6 +124,7 @@ html.mode-eink{--app-bg:#fff;--app-fg:#000;--app-muted:#444;--app-card:#fff;--ap
 html.mode-eink body{--bg:#fff;--fg:#000;--muted:#444;--card:#fff;--bar:#fff;--line:#1a1a1a;--soft:#efefef;--accent:#000;filter:grayscale(100%) contrast(1.06)}
 html.mode-eink *,html.mode-eink *::before,html.mode-eink *::after{animation:none!important;transition:none!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important;text-shadow:none!important}
 html.mode-eink .stack-card,html.mode-eink .note-card,html.mode-eink .intent-sheet,html.mode-eink .command-bar,html.mode-eink .peek-card,html.mode-eink .selectbar,html.mode-eink .note-dialog{box-shadow:none!important;border:1px solid #1a1a1a}
+html.mode-eink .stack.is-open .stack-card{border:0!important}
 html.mode-eink .avatar{box-shadow:none!important;border:1px solid #222}
 @media (hover:hover){.book:hover{background:color-mix(in srgb,var(--app-fill) 70%,transparent)}}
 .book:active{transform:scale(.985)}
@@ -490,7 +491,8 @@ body.selecting .reader-cmd-bar,#bars:not(.hidden) ~ .reader-cmd-bar{opacity:0;po
 /* 阅读器 */
 #reader{position:fixed;inset:0;z-index:25;overflow:hidden;background:var(--bg);color:var(--fg)}
 body.theme-night #reader{color-scheme:dark}
-#stage{position:absolute;inset:0;padding:calc(env(safe-area-inset-top) + 38px) 22px calc(env(safe-area-inset-bottom) + 36px)}
+#stage{position:absolute;inset:0;padding:calc(env(safe-area-inset-top) + 38px) 22px calc(env(safe-area-inset-bottom) + 36px);transform-origin:50% 48%;transition:transform .38s var(--spring),opacity .3s ease,border-radius .3s ease}
+#reader.bird-eye #stage{transform:scale(.9);opacity:.38;border-radius:24px;overflow:hidden;pointer-events:none}
 body.bi #stage{bottom:46%}
 body.bi .run-bottom{bottom:calc(46% + 8px)}
 .bilingual{position:absolute;left:0;right:0;bottom:0;height:46%;z-index:4;display:flex;flex-direction:column;background:var(--bg);box-shadow:0 -1px 0 var(--line)}

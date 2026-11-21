@@ -939,6 +939,17 @@ try {
   assert.ok(darkHl.totalChars > 20, `multi-paragraph highlight covers full selection (${darkHl.totalChars} chars), never 1 char`);
   assert.ok(darkHl.bg && darkHl.bg !== 'rgba(0, 0, 0, 0)', 'highlight is visibly rendered on dark theme');
 
+  // Reader Z-Axis Bird's-Eye Zoom: Ctrl+Wheel / pinch out opens full-book index with #reader.bird-eye, reverse dives back in
+  await page.evaluate(() => {
+    document.querySelector('#reader').dispatchEvent(new WheelEvent('wheel', { deltaY: 120, ctrlKey: true, bubbles: true, cancelable: true }));
+  });
+  await page.waitForFunction(() => !document.querySelector('#panel').classList.contains('hidden') && document.querySelector('#reader').classList.contains('bird-eye'));
+  await sleep(420);
+  await page.evaluate(() => {
+    document.querySelector('#reader').dispatchEvent(new WheelEvent('wheel', { deltaY: -120, ctrlKey: true, bubbles: true, cancelable: true }));
+  });
+  await page.waitForFunction(() => document.querySelector('#panel').classList.contains('hidden') && !document.querySelector('#reader').classList.contains('bird-eye'));
+
   // 6) Reader ergonomic modes: E-Ink, Left-Hand, Scrolled vertical, Traditional Vertical-RL (台湾竖排)
   await page.evaluate(() => window.__app.runCommand('开墨水屏'));
   assert.equal(await page.evaluate(() => document.documentElement.classList.contains('mode-eink')), true);
