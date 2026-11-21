@@ -507,41 +507,38 @@ export function parseNaturalCommands(raw, ctx = {}) {
 
 const SAFE_OPS = new Set([
   'undo', 'wake', 'fontSize', 'font', 'lineHeight', 'readTheme', 'appearance',
-  'eink', 'leftHand', 'flow', 'writing',
+  'eink', 'leftHand', 'flow', 'writing', 'eyeComfort', 'eyeRest', 'tts',
   'bilingual', 'autoPace', 'turn', 'seek', 'goPage', 'goChapter', 'voiceMark', 'bookmark', 'toc', 'bookmarks', 'highlights', 'closeBook', 'openSettings',
   'pane', 'graphTilt', 'graphFit', 'graphMood', 'openBook', 'createNote', 'search', 'exportOutline', 'importBooks',
+  'findBook', 'importUrl', 'setOpds', 'stackCreate', 'stackRemove', 'stackMerge', 'stackDissolve',
+  'openSichao', 'setSichaoApi', 'askAi', 'styleUi', 'resetUi',
   'cosmosExplore', 'cosmosNeighbors', 'cosmosFocus', 'cosmosLink', 'cosmosZoom'
 ]);
 
 async function aiFallbackPlan(text, ctx) {
   if (!aiConfigured()) return [];
-  const sys = `你是 Zone 应用的静默意图解析器。把用户的话翻译成严格 JSON 数组（只输出 JSON，不要解释）。
-允许的 op：
-- {"op":"fontSize","delta":2} 或 {"op":"fontSize","value":22}
-- {"op":"font","value":"serif"|"kai"|"sans"|"original"}
-- {"op":"lineHeight","value":1.5|1.8|2.1}
-- {"op":"readTheme","value":"paper"|"white"|"sepia"|"night"}
-- {"op":"appearance","value":"light"|"dark"|"system"}
-- {"op":"bilingual","on":true|false}
-- {"op":"turn","delta":1|-1} / {"op":"seek","fraction":0..1} / {"op":"goPage","page":12} / {"op":"goChapter","index":3}
-- {"op":"voiceMark","kind":"highlight"|"excerpt"|"annotation","query":"关键词","line":2,"paragraph":1,"note":"批注"}
-- {"op":"bookmark"} / {"op":"toc"} / {"op":"bookmarks"} / {"op":"highlights"} / {"op":"closeBook"} / {"op":"openSettings"}
-- {"op":"pane","value":"shelf"|"knowledge"|"graph"} / {"op":"importBooks"}
-- {"op":"graphTilt","on":true|false} / {"op":"graphFit"} / {"op":"graphMood","value":"auto"|"dawn"|"day"|"dusk"|"night"}
-- {"op":"cosmosExplore","mode":"tour"|"next"|"frontier"} / {"op":"cosmosFocus","query":"关键词"} / {"op":"cosmosNeighbors"} / {"op":"cosmosLink","target":"目标星"} / {"op":"cosmosZoom","factor":1.45}
-- {"op":"openBook","query":"书名"} / {"op":"createNote","text":"内容"} / {"op":"search","query":"词"} / {"op":"exportOutline"} / {"op":"undo"}
-若无法映射到上述操作，返回 []。`;
+  const sys = `你是 Zone 的全能自主 AI 语音中枢。无论用户提出什么自然语言需求（即使没有预设固定口令），都请拆解成严格 JSON 数组执行（只输出 JSON，不要解释）。
+可用能力：
+- 阅读与排版：{"op":"fontSize","delta":2} / {"op":"font","value":"serif"|"kai"|"sans"|"custom"|"original"} / {"op":"lineHeight","value":1.5|1.8|2.1} / {"op":"readTheme","value":"paper"|"white"|"sepia"|"night"} / {"op":"appearance","value":"light"|"dark"|"system"} / {"op":"eink","on":true|false} / {"op":"leftHand","on":true|false} / {"op":"flow","value":"scrolled"|"paginated"} / {"op":"writing","value":"vertical-rl"|"horizontal"}
+- 护眼与听书：{"op":"eyeComfort"} / {"op":"eyeRest"} / {"op":"tts","on":true|false} / {"op":"bilingual","on":true|false} / {"op":"autoPace","on":true|false,"speed":"auto"|"slower"|"faster"}
+- 翻页与标注：{"op":"turn","delta":1|-1} / {"op":"seek","fraction":0..1} / {"op":"goPage","page":12} / {"op":"goChapter","index":3} / {"op":"voiceMark","kind":"highlight"|"excerpt"|"annotation","query":"词","line":2,"paragraph":1,"note":"批注"} / {"op":"bookmark"} / {"op":"toc"} / {"op":"closeBook"}
+- 卡片堆与书库：{"op":"openBook","query":"书名"} / {"op":"openBook","ordinal":1} / {"op":"stackCreate","ordinals":[1,2],"name":"堆名"} / {"op":"stackRemove","stackIndex":1,"itemIndex":1} / {"op":"stackMerge","a":1,"b":2} / {"op":"stackDissolve","stackIndex":1} / {"op":"findBook","query":"书名"} / {"op":"importUrl","url":"https://..."} / {"op":"importBooks"} / {"op":"search","query":"词"}
+- 知识与星海与思潮：{"op":"pane","value":"shelf"|"knowledge"|"graph"} / {"op":"createNote","text":"内容"} / {"op":"openSichao"} / {"op":"cosmosExplore","mode":"tour"|"next"|"frontier"} / {"op":"cosmosFocus","query":"词"} / {"op":"graphMood","value":"auto"|"dawn"|"day"|"dusk"|"night"} / {"op":"graphTilt","on":true|false} / {"op":"undo"}
+- 实时改界面：任何对颜色/间距/圆角/风格的定制诉求 -> {"op":"styleUi","prompt":"用户的界面修改描述"}；还原 -> {"op":"resetUi"}
+- 万能问答/总结/思考：任何开放式提问、总结、解释、头脑风暴 -> {"op":"askAi","question":"用户的完整问题"}
+原则：尽量把用户的意图落地为可执行操作；若是开放性需求或聊天提问，用 askAi 或 styleUi 兜底，绝不轻易返回空数组。`;
   try {
     const out = await complete([
       { role: 'system', content: sys },
       { role: 'user', content: `当前状态：${ctx.reading ? '阅读中' : '主界面(' + (ctx.pane || 'shelf') + ')'}\n用户说：${text}` }
     ]);
     const m = out.match(/\[[\s\S]*\]/);
-    if (!m) return [];
+    if (!m) return [{ op: 'askAi', question: text }];
     const parsed = JSON.parse(m[0]);
-    return Array.isArray(parsed) ? parsed.filter(a => a && SAFE_OPS.has(a.op)).slice(0, 6) : [];
+    const valid = Array.isArray(parsed) ? parsed.filter(a => a && SAFE_OPS.has(a.op)).slice(0, 8) : [];
+    return valid.length ? valid : [{ op: 'askAi', question: text }];
   } catch {
-    return [];
+    return [{ op: 'askAi', question: text }];
   }
 }
 
