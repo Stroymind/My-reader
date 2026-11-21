@@ -6,12 +6,12 @@ import { fetchLiveSignals, getSichaoApi, initSichao, setSichaoApi } from './sich
 import { getPhoneUseStatus, openPhoneUseSettings, runPhoneUseTask } from './phone-use.js';
 import { closeMicroApp, consumeLaunchDeepLink, craftMicroApp, isMicroAppOpen, listMicroApps, openMicroApp, pinToDesktop } from './agent-surface.js';
 import { applyThemePlugin, closeBotStudio, getActiveBot, getActiveThemePlugin, getBotPlugins, getPrimaryBot, isPluginEnabled, isPluginMountedOnBot, listBots, listGroups, listPlugins, openBotStudio, renderBotSvg, renderGroupAvatarHtml, setActiveBot, syncToAndroidWidget, toggleBotPlugin } from './bots.js';
-import { buildMemoryContextForBot, closeImportMemorySheet, listMemories, openImportMemorySheet } from './memory.js';
+import { buildMemoryContextForBot, closeImportMemorySheet, importMemoryText, listMemories, openImportMemorySheet } from './memory.js';
 import { BookletEngine, EpubEngine, PdfEngine, TxtEngine } from './engines.js';
 import { aiConfigured, complete as aiComplete, fetchLiveBalance, getAiConfig, getAiUsage, getModelPricing, recordAiUsage, resetAiUsage, setAiBudget, setRechargeBalance } from './ai.js';
 import { settings, saveSettings, applyBodyTheme, applyAppearance, appearancePref, cycleAppearance, applyCustomFontBlob, FONTS, THEMES } from './settings.js';
 import { isMostlyCjk, translateVisible } from './bilingual.js';
-import { backfillFromBooks, createNote, deleteBookBundle, parseTags, syncBook } from './knowledge.js';
+import { backfillFromBooks, createNote, deleteBookBundle, listNotes, parseTags, syncBook } from './knowledge.js';
 import { addToStack, createStack, defaultStackName, dissolveStack, getStack, listStacks, reconcileStacks, removeFromStacks, renameStack, setStackCollapsed } from './stacks.js';
 import { createDecisionNote, dismissAssistant, exploreCosmos, exportOutline, fitGraph, focusGraphNeighborhood, focusStarByQuery, getGraphMood, getGraphTilt, initWorkspace, linkFocusedStarTo, openAiSettingsDialog, openAssistant, refreshWorkspace, searchGraph, setGraphMood, setGraphSearch, setGraphTilt, setKnowledgeFind, showPane, workspaceHandleBack, zoomGraph } from './workspace.js';
 import { createCommandController, fuzzyScore, parseNaturalCommands, speechSupported } from './command.js';
@@ -1248,7 +1248,18 @@ async function rememberReading(id) {
   await db.update('books', id, { lastOpened: now });
 }
 async function openBook(id) {
-  if (engine && cur?.id === id) return;
+  closeBotPluginsSheet();
+  closeBotReaderSheet();
+  closeProfileSheet();
+  closeImportMemorySheet();
+  closeBotStudio();
+  if (!$('#zone-chat-modal')?.classList.contains('hidden')) {
+    if (!readerReturnBotId) readerReturnBotId = getActiveBot()?.id || '';
+    $('#zone-chat-modal').classList.add('hidden');
+    document.documentElement.classList.add('in-bot-reader');
+    $('#bot-reader-bar')?.classList.remove('hidden');
+  }
+  if (engine && cur?.id === id) { showView('reader'); return; }
   const gen = ++viewGen;
   if (engine) {
     clearTimeout(saveTimer); await persist(); exitSelect();
@@ -1268,7 +1279,18 @@ async function openBook(id) {
     returnPane = currentPane();
     shelfMemory = { scroll: $('#pane-shelf').scrollTop, focus: focusKey() || 'book:' + id };
   }
-  showView('reader'); setBars(false); exitSelect(); $('#loading').classList.remove('hidden');
+  closeBotPluginsSheet();
+  closeBotReaderSheet();
+  closeProfileSheet();
+  closeImportMemorySheet();
+  closeBotStudio();
+  if (!$('#zone-chat-modal')?.classList.contains('hidden')) {
+    if (!readerReturnBotId) readerReturnBotId = getActiveBot()?.id || '';
+    $('#zone-chat-modal').classList.add('hidden');
+    document.documentElement.classList.add('in-bot-reader');
+    $('#bot-reader-bar')?.classList.remove('hidden');
+  }
+  showView('reader'); applyAppearance(); setBars(false); exitSelect(); $('#loading').classList.remove('hidden');
   $('#r-title').textContent = rec.title; $('#run-title').textContent = rec.title;
   if (history.state?.reader) history.replaceState({ reader: id }, ''); else history.pushState({ reader: id }, '');
   const el = $('#viewer'); el.innerHTML = '';
@@ -1966,6 +1988,7 @@ function exitBotReaderWorkspace({ returnToBot = true } = {}) {
   document.documentElement.classList.remove('in-bot-reader');
   $('#bot-reader-bar')?.classList.add('hidden');
   showPane('shelf', { instant: true });
+  applyAppearance();
   const backBotId = readerReturnBotId;
   readerReturnBotId = '';
   if (returnToBot && backBotId) {
@@ -1984,21 +2007,23 @@ function closeBotReaderSheet() {
   return false;
 }
 
-async function openBotReaderSheet(bot = getActiveBot()) {
-  if (!isPluginEnabled('reading-cosmos')) {
-    toast('请先在插件中开启「阅读器」开关');
+async function openBotReaderSheet(bot = getActiveBot(), { initialPane = 'shelf', fromHome = false } = {}) {
+  if (initialPane === 'shelf' && !isPluginEnabled('reading-cosmos')) {
+    toast('请先在插件中开启「阅读器」');
     return;
   }
-  const targetBot = bot || getActiveBot();
+  const targetBot = fromHome ? null : (bot || getActiveBot());
   readerReturnBotId = targetBot?.id || '';
   const nameEl = $('#reader-return-name');
-  if (nameEl) nameEl.textContent = targetBot?.name || '返回对话';
+  if (nameEl) nameEl.textContent = targetBot?.name || '返回';
   $('#zone-chat-modal')?.classList.add('hidden');
   document.documentElement.classList.add('in-bot-reader');
   $('#bot-reader-bar')?.classList.remove('hidden');
-  showPane('shelf', { instant: true });
+  showPane(initialPane || 'shelf', { instant: true });
   syncBotReaderBarPane();
+  applyAppearance();
   await renderLibrary();
+  if (initialPane === 'graph' || initialPane === 'knowledge') await refreshWorkspace();
 }
 
 $('#btn-reader-return-bot')?.addEventListener('click', () => exitBotReaderWorkspace({ returnToBot: true }));
@@ -2064,12 +2089,17 @@ function openBotPluginsSheet(bot = getActiveBot()) {
           }).join('')}
         </div>
         <div style="display:flex;flex-direction:column;gap:8px">
-          <button type="button" class="bots-secondary" data-bp-act="memory">导入外部记忆（当前 Bot / 全局 · ${listMemories().length} 条）</button>
-          <button type="button" class="bots-secondary" data-bp-act="manage">前往插件中心管理或安装远程 MCP ›</button>
+          <button type="button" class="bots-secondary" data-bp-act="cosmos">星海 · 第二大脑</button>
+          <button type="button" class="bots-secondary" data-bp-act="memory">导入记忆（${listMemories().length}）</button>
+          <button type="button" class="bots-secondary" data-bp-act="manage">插件中心与远程 MCP ›</button>
         </div>
       </div>`;
     mask.onclick = e => { if (e.target === mask) closeBotPluginsSheet(); };
     mask.querySelector('[data-bp-act="close"]').onclick = () => closeBotPluginsSheet();
+    mask.querySelector('[data-bp-act="cosmos"]').onclick = () => {
+      closeBotPluginsSheet();
+      openBotReaderSheet(bot, { initialPane: 'graph' });
+    };
     mask.querySelector('[data-bp-act="memory"]').onclick = () => {
       closeBotPluginsSheet();
       openZoneMemorySheet(bot.id);
@@ -3624,6 +3654,21 @@ function renderChatBox(thread, pendingText = '') {
         cta.onclick = () => openAiSettingsDialog();
         bub.appendChild(document.createElement('br'));
         bub.appendChild(cta);
+      } else if (m.role === 'assistant' && !m.pending && raw.length >= 6) {
+        const saveBtn = document.createElement('button');
+        saveBtn.type = 'button';
+        saveBtn.className = 'chat-mem-btn' + (m.inCosmos ? ' saved' : '');
+        saveBtn.textContent = m.inCosmos ? '已存星海 ✓' : '存入星海';
+        saveBtn.onclick = async () => {
+          if (m.inCosmos) { openBotReaderSheet(senderBot || bot, { initialPane: 'graph' }); return; }
+          const cleanTxt = raw.replace(/^<think>[\s\S]*?<\/think>\s*/, '').trim();
+          await saveBotInsightToCosmos(senderBot || bot, cleanTxt);
+          m.inCosmos = true;
+          saveTaskThreads();
+          renderChatBox(thread);
+        };
+        bub.appendChild(document.createElement('br'));
+        bub.appendChild(saveBtn);
       }
       if (isGroup && m.role !== 'user') {
         const col = document.createElement('div');
@@ -3724,6 +3769,59 @@ async function inspectExternalPluginRemote({ url, token = '' } = {}) {
   }
 }
 
+async function buildSecondBrainContext(botId = '', query = '') {
+  const parts = [];
+  const memText = buildMemoryContextForBot(botId, query, 1000);
+  if (memText) parts.push(`[个人与 Bot 记忆]\n${memText}`);
+  try {
+    const notes = await listNotes();
+    if (notes.length) {
+      const qTokens = String(query || '')
+        .toLowerCase()
+        .split(/[\s,，。！？、；;:/()（）]+/)
+        .filter(w => w.length >= 2);
+      const scored = notes.map((n, idx) => {
+        const hay = `${n.title || ''} ${(n.tags || []).join(' ')} ${n.bookTitle || ''} ${n.quote || ''} ${n.body || ''}`.toLowerCase();
+        let score = 1;
+        for (const tk of qTokens) { if (hay.includes(tk)) score += 5; }
+        if (n.kind === 'memory' || (n.tags || []).includes('记忆')) score += 2;
+        score += Math.max(0, 1 - idx * 0.015);
+        return { n, score };
+      });
+      scored.sort((a, b) => b.score - a.score);
+      const lines = [];
+      let used = 0;
+      for (const { n } of scored.slice(0, 10)) {
+        const src = n.bookTitle ? `《${n.bookTitle}》` : ((n.tags || []).slice(0, 2).join('/') || '笔记');
+        const snippet = String(n.quote || n.body || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+        const line = `- [${src}] ${n.title}${snippet ? `：${snippet}` : ''}`;
+        if (used + line.length + 1 > 900) break;
+        lines.push(line);
+        used += line.length + 1;
+      }
+      if (lines.length) parts.push(`[星海知识库（书籍摘录 / 笔记 / 共享记忆）]\n${lines.join('\n')}`);
+    }
+  } catch {}
+  return parts.join('\n\n');
+}
+
+async function saveBotInsightToCosmos(bot, text) {
+  const clean = String(text || '').trim();
+  if (!clean) return null;
+  const botName = bot?.name || 'Zone';
+  importMemoryText(clean.slice(0, 320), { source: `${botName} 对话`, scope: 'global' });
+  const firstLine = (clean.split(/[。！？!?\n]/).map(s => s.trim()).find(Boolean) || clean).slice(0, 24);
+  const note = await createNote({
+    title: firstLine || `${botName} 记忆`,
+    body: clean.slice(0, 2400),
+    tags: ['记忆', botName],
+    kind: 'memory'
+  });
+  await refreshWorkspace();
+  toast('已存入星海并共享给所有 Bot', 2400);
+  return note;
+}
+
 function openZoneMemorySheet(defaultScope = 'global') {
   openImportMemorySheet({
     bots: listBots(),
@@ -3732,13 +3830,24 @@ function openZoneMemorySheet(defaultScope = 'global') {
     onToast: (msg, ms) => toast(msg, ms),
     onChanged: () => renderAgentHub(),
     onSyncToKnowledge: async items => {
-      const body = items.map(m => `- ${m.text}（来源：${m.source}）`).join('\n');
-      await createNote({
-        title: `我的外部记忆归档（${items.length} 条）`,
-        body: body || '暂无外部记忆',
-        tags: ['个人记忆', 'ImportMemory']
-      });
+      const existing = await listNotes();
+      const seenBodies = new Set(existing.map(n => String(n.body || n.title || '').trim().toLowerCase()));
+      let added = 0;
+      for (const m of items.slice(0, 30)) {
+        const body = String(m.text || '').trim();
+        if (!body || seenBodies.has(body.toLowerCase())) continue;
+        seenBodies.add(body.toLowerCase());
+        const title = (body.split(/[。！？!?\n]/).map(s => s.trim()).find(Boolean) || body).slice(0, 22);
+        await createNote({
+          title,
+          body,
+          tags: ['记忆', m.source || '导入'],
+          kind: 'memory'
+        });
+        added++;
+      }
       await refreshWorkspace();
+      toast(added ? `已将 ${added} 条记忆点亮到「星海」第二大脑` : '这些记忆已在「星海」中', 2600);
     }
   });
 }
@@ -3844,14 +3953,14 @@ async function chatWithActiveGroup(text) {
       const b = queue[idx];
       if (respondedIds.has(b.id)) continue;
       respondedIds.add(b.id);
-      const memCtx = buildMemoryContextForBot(b.id, q);
+      const memCtx = await buildSecondBrainContext(b.id, q);
       const extPlugs = mountedExtPluginsFor(b.id);
       const useCloud = (isPluginMountedOnBot(b.id, 'mcp-bridge') || extPlugs.length > 0) && getSichaoApi() && q.length >= 6;
       renderChatBox(thread, `${b.name} ${useCloud ? '正在联网协同思考…' : '正在群内回复…'}`);
       const peers = members.filter(x => x.id !== b.id).map(x => `${x.name}${x.rules ? `(${x.rules.slice(0, 20)})` : ''}`).join('、');
       const sysPrompt = [
         b.rules ? b.rules : `你是群聊中的智能体「${b.name}」。`,
-        memCtx ? `[用户已导入的个人记忆]\n${memCtx}` : '',
+        memCtx ? `[共享第二大脑（记忆与星海知识库）]\n${memCtx}` : '',
         `当前你在多 Bot 群聊「${group.name}」中，同群成员有：${peers || '无'}。`,
         '请站在你的职责与视角简洁发言，不要重复前面同事已说过的观点；若本轮无需你发言，请仅回复 [[PASS]]。',
         '如需交接给同群某位成员继续，可在回复中 @对方名字；如需用户确认某项操作，可输出 [[CONFIRM:标题|目标|说明|指令]]；如需输出卡片，可输出 [[CARD:来源|标题|副标题|详情|https://链接]]。'
@@ -3917,6 +4026,24 @@ async function chatWithActiveBot(text) {
   thread.updatedAt = Date.now();
   saveTaskThreads();
 
+  // 自然语言直接记住或存入星海第二大脑（无需联网、零 Token 即可写入共享记忆与星海）
+  const memMatch = q.match(/^(?:帮我记住|请记住|记住|存入星海|存进星海)[：:\s]+([\s\S]+)$/);
+  if (memMatch && memMatch[1].trim()) {
+    const fact = memMatch[1].trim();
+    await saveBotInsightToCosmos(bot, fact);
+    thread.messages.push({
+      role: 'assistant',
+      content: `已记住并存入「星海」第二大脑：「${fact.slice(0, 80)}」。后续你和任意 Bot 对话，都能自动共享这条记忆。`,
+      inCosmos: true,
+      at: Date.now()
+    });
+    thread.updatedAt = Date.now();
+    saveTaskThreads();
+    renderChatBox(thread);
+    renderBotRoster();
+    return;
+  }
+
   if (!aiConfigured()) {
     thread.messages.push({
       role: 'assistant',
@@ -3929,7 +4056,7 @@ async function chatWithActiveBot(text) {
     renderBotRoster();
     return;
   }
-  const memoryCtx = buildMemoryContextForBot(bot.id, q);
+  const memoryCtx = await buildSecondBrainContext(bot.id, q);
   const extPlugs = mountedExtPluginsFor(bot.id);
   const canUseCloudEngine = (isPluginMountedOnBot(bot.id, 'mcp-bridge') || extPlugs.length > 0) && !!getSichaoApi() && (q.length >= 4 || extPlugs.length > 0);
   renderChatBox(thread, canUseCloudEngine ? '云端多步 Agent 思考与按需联网中…' : '思考中…');
@@ -4309,33 +4436,32 @@ function openProfileSheet() {
     const appMap = { system: '跟随系统', light: '浅色', dark: '深色' };
     const memCount = listMemories().length;
     const balLine = u.liveBalance != null
-      ? `${u.liveProvider || '官方'}实测余额 ${liveSym}${Number(u.liveBalance).toFixed(2)} · 累计估算已花 ${sym}${spent.toFixed(4)}`
+      ? `${u.liveProvider || '官方'}余额 ${liveSym}${Number(u.liveBalance).toFixed(2)} · 本月 ${formatTokens(u.monthTokens)}`
       : estRemain != null
-        ? `充值 ${sym}${recharge.toFixed(2)} · 预估已花 ${sym}${spent.toFixed(4)} · 估算剩余 ${sym}${estRemain.toFixed(2)}`
-        : `未填充值金额 · 当前按「${pr.label}」估算已花 ${sym}${spent.toFixed(4)}（${pr.currency === 'USD' ? '$' : '¥'}${pr.inPerM}/${pr.outPerM} 每百万）`;
+        ? `剩余 ${sym}${estRemain.toFixed(2)} · 本月 ${formatTokens(u.monthTokens)} tokens`
+        : `今日 ${formatTokens(u.todayTokens)} · 本月 ${formatTokens(u.monthTokens)} tokens`;
 
     mask.innerHTML = `
-      <div class="bots-sheet" role="dialog" aria-label="Zone 账号与 API 用量">
+      <div class="bots-sheet" role="dialog" aria-label="我的 Zone">
         <div class="bots-head">
           <div>
             <h3>我的 Zone</h3>
-            <p>纯 BYOK · 所有 AI 额度均来自你自己的 API Key</p>
+            <p>自有密钥 · 本地隐私</p>
           </div>
           <button type="button" class="bots-close" data-p-act="close">完成</button>
         </div>
         <div class="prof-group">
           <button type="button" class="prof-row" data-p-act="ai-cfg">
             <div class="prof-row-main">
-              <strong>AI 模型与密钥（BYOK）</strong>
-              <span>${aiConfigured() ? `${cfg.model} · 已配置自有密钥` : '未配置密钥 · 点此填入'}</span>
+              <strong>模型与密钥</strong>
+              <span>${aiConfigured() ? cfg.model : '未配置'}</span>
             </div>
             <span class="prof-row-val">配置 ›</span>
           </button>
           <button type="button" class="prof-row" data-p-act="edit-recharge">
             <div class="prof-row-main">
-              <strong>API 余额与用量估算</strong>
+              <strong>用量</strong>
               <span>${balLine}</span>
-              <span>今日 ${formatTokens(u.todayTokens)} · 本月 ${formatTokens(u.monthTokens)} tokens（${u.calls} 次调用）</span>
             </div>
             <span class="prof-row-val">${estRemain != null ? `${sym}${estRemain.toFixed(2)}` : `${pct}%`} ›</span>
           </button>
@@ -4343,47 +4469,54 @@ function openProfileSheet() {
           ${editingRecharge ? `
             <div class="prof-recharge-box">
               <div class="prof-recharge-row">
-                <button type="button" class="bot-edit" data-p-cur="CNY" style="${u.currency === 'CNY' ? 'background:var(--app-fg);color:var(--app-bg)' : ''}">¥ 人民币</button>
-                <button type="button" class="bot-edit" data-p-cur="USD" style="${u.currency === 'USD' ? 'background:var(--app-fg);color:var(--app-bg)' : ''}">$ 美元</button>
-                <input id="prof-recharge-inp" type="number" step="0.01" min="0" placeholder="输入充值余额，如 50" value="${recharge || ''}">
+                <button type="button" class="bot-edit" data-p-cur="CNY" style="${u.currency === 'CNY' ? 'background:var(--app-fg);color:var(--app-bg)' : ''}">¥</button>
+                <button type="button" class="bot-edit" data-p-cur="USD" style="${u.currency === 'USD' ? 'background:var(--app-fg);color:var(--app-bg)' : ''}">$</button>
+                <input id="prof-recharge-inp" type="number" step="0.01" min="0" placeholder="输入充值金额，如 50" value="${recharge || ''}">
               </div>
-              <button type="button" class="bots-primary" style="height:38px;font-size:14px" data-p-act="save-recharge">保存充值基数并开始实时估算</button>
+              <button type="button" class="bots-primary" style="height:38px;font-size:14px" data-p-act="save-recharge">保存余额基数</button>
             </div>
           ` : ''}
           <button type="button" class="prof-row" data-p-act="refresh-bal">
             <div class="prof-row-main">
-              <strong>${checkingLive ? '正在查询官方余额…' : '刷新官方实时余额'}</strong>
-              <span>支持 DeepSeek / OpenRouter / 硅基流动直查；其他服务商按充值额自动估算</span>
+              <strong>${checkingLive ? '查询中…' : '刷新余额'}</strong>
+              <span>DeepSeek · OpenRouter · 硅基流动</span>
             </div>
             <span class="prof-row-val">${checkingLive ? '…' : '刷新 ›'}</span>
           </button>
           <button type="button" class="prof-row" data-p-act="usage-reset">
             <div class="prof-row-main">
-              <strong>重置用量统计</strong>
-              <span>清零本机记录的 Token 计数与估算花费</span>
+              <strong>重置用量</strong>
+              <span>清零本机计数</span>
             </div>
             <span class="prof-row-val">清零</span>
           </button>
         </div>
         <div class="prof-group">
+          <button type="button" class="prof-row" data-p-act="cosmos">
+            <div class="prof-row-main">
+              <strong>星海</strong>
+              <span>书籍 · 笔记 · Bot 共享第二大脑</span>
+            </div>
+            <span class="prof-row-val">进入 ›</span>
+          </button>
           <button type="button" class="prof-row" data-p-act="import-mem">
             <div class="prof-row-main">
-              <strong>导入外部记忆（Import Memory）</strong>
-              <span>一键迁移 ChatGPT / Claude / DeepSeek / Grok 记忆到 Bot 对话</span>
+              <strong>导入记忆</strong>
+              <span>从其他 AI 迁入并同步至星海</span>
             </div>
             <span class="prof-row-val">${memCount ? `${memCount} 条 ›` : '导入 ›'}</span>
           </button>
           <button type="button" class="prof-row" data-p-act="plugins">
             <div class="prof-row-main">
-              <strong>连接应用、远程 MCP 与主题</strong>
-              <span>Phone-Use · Computer-Use · 远程 MCP · 阅读器</span>
+              <strong>插件</strong>
+              <span>MCP · 电脑 · 控屏 · 阅读器</span>
             </div>
             <span class="prof-row-val">›</span>
           </button>
           <button type="button" class="prof-row" data-p-act="automations">
             <div class="prof-row-main">
-              <strong>定时任务与新闻推送</strong>
-              <span>自定义周期运行与推送任务</span>
+              <strong>定时任务</strong>
+              <span>周期运行与推送</span>
             </div>
             <span class="prof-row-val">›</span>
           </button>
@@ -4392,14 +4525,14 @@ function openProfileSheet() {
           <button type="button" class="prof-row" data-p-act="appearance">
             <div class="prof-row-main">
               <strong>外观</strong>
-              <span>界面浅色 / 深色 / 跟随系统</span>
+              <span>浅色 · 深色 · 跟随系统</span>
             </div>
             <span class="prof-row-val">${appMap[appearancePref()] || '跟随系统'} ›</span>
           </button>
           <div class="prof-row">
             <div class="prof-row-main">
-              <strong>安全与权限审批</strong>
-              <span>付款 / 删除 / 正式发送卡片拦截 · 内网 SSRF 防护</span>
+              <strong>权限</strong>
+              <span>敏感操作卡片确认</span>
             </div>
             <span class="prof-row-val">已开启</span>
           </div>
@@ -4408,6 +4541,7 @@ function openProfileSheet() {
     mask.onclick = e => { if (e.target === mask) closeProfileSheet(); };
     mask.querySelector('[data-p-act="close"]').onclick = () => closeProfileSheet();
     mask.querySelector('[data-p-act="ai-cfg"]').onclick = () => { closeProfileSheet(); openAiSettingsDialog(); };
+    mask.querySelector('[data-p-act="cosmos"]').onclick = () => { closeProfileSheet(); openBotReaderSheet(null, { initialPane: 'graph', fromHome: true }); };
     mask.querySelector('[data-p-act="edit-recharge"]').onclick = () => { editingRecharge = !editingRecharge; draw(); };
     mask.querySelectorAll('[data-p-cur]').forEach(btn => {
       btn.onclick = () => { setRechargeBalance(u.rechargeAmount, btn.dataset.pCur); draw(); };
@@ -4583,4 +4717,4 @@ renderAgentHub();
 consumeLaunchDeepLink(openDeepLink);
 syncToAndroidWidget();
 
-window.__app = { db, openBook, closeBook, importFiles, importBlob, importArticleUrl, handleBack, openDeepLink, openMicroApp, closeMicroApp, isMicroAppOpen, pinToDesktop, postChatCard, requestChatConfirm, openBotConversation, openGroupConversation, relayBotToBotMessage, get engine() { return engine; }, renderLibrary, stacks: { list: listStacks }, runCommand: text => command.run(text), openCommand: opts => command.openBar(opts), openPeek: openBookPeek, closePeek: closeBookPeek, openAuthGate, getAuthUser, getOpdsUrl, setOpdsUrl };
+window.__app = { db, openBook, closeBook, importFiles, importBlob, importArticleUrl, handleBack, openDeepLink, openMicroApp, closeMicroApp, isMicroAppOpen, pinToDesktop, postChatCard, requestChatConfirm, openBotConversation, openGroupConversation, relayBotToBotMessage, buildSecondBrainContext, get engine() { return engine; }, renderLibrary, stacks: { list: listStacks }, runCommand: text => command.run(text), openCommand: opts => command.openBar(opts), openPeek: openBookPeek, closePeek: closeBookPeek, openAuthGate, getAuthUser, getOpdsUrl, setOpdsUrl };

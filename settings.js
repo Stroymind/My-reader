@@ -38,15 +38,16 @@ export function appearancePref() {
 export function applyAppearance() {
   const pref = appearancePref();
   const systemDark = !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
-  const dark = !settings.eink && (pref === 'dark' || (pref === 'system' && systemDark));
+  const reading = !!document.getElementById('reader')?.classList.contains('active');
+  const inReaderPlugin = !!(reading || document.documentElement.classList.contains('in-bot-reader') || document.documentElement.classList.contains('legacy-reader-home'));
+  const dark = !(settings.eink && inReaderPlugin) && (pref === 'dark' || (pref === 'system' && systemDark));
   document.documentElement.classList.toggle('appearance-dark', dark);
   document.documentElement.classList.toggle('mode-eink', !!settings.eink);
   document.documentElement.classList.toggle('left-hand', !!settings.leftHand);
   document.documentElement.dataset.appearance = pref;
   document.body?.classList.toggle('flow-scrolled', settings.flow === 'scrolled');
   document.body?.classList.toggle('writing-vrl', settings.writing === 'vertical-rl');
-  const reading = document.getElementById('reader')?.classList.contains('active');
-  const bg = settings.eink ? '#ffffff' : (reading ? (THEMES[settings.theme]?.bg || '#faf9f6') : (dark ? '#000000' : '#f5f5f7'));
+  const bg = (settings.eink && inReaderPlugin) ? '#ffffff' : (reading ? (THEMES[settings.theme]?.bg || '#faf9f6') : (dark ? '#000000' : '#f5f5f7'));
   document.querySelector('meta[name=theme-color]')?.setAttribute('content', bg);
   const btn = document.getElementById('btn-appearance');
   if (btn) {

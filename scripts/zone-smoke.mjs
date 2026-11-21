@@ -70,6 +70,17 @@ try {
   });
   assert.equal(memCtx.count, 2, 'Import Memory parsed 2 clean facts');
   assert.ok(memCtx.ctx.includes('苹果极简设计') && memCtx.ctx.includes('Android Capacitor'), `Memory injected into Bot prompt: ${memCtx.ctx}`);
+  // Verify E-Ink mode strictly isolates to Reader plugin (NEVER grayscale-filters Agent Home!)
+  const einkIso = await page.evaluate(() => {
+    document.documentElement.classList.add('mode-eink');
+    const homeFilter = getComputedStyle(document.querySelector('#library')).filter;
+    document.documentElement.classList.add('in-bot-reader');
+    const readerFilter = getComputedStyle(document.querySelector('#library')).filter;
+    document.documentElement.classList.remove('in-bot-reader', 'mode-eink');
+    return { homeFilter, readerFilter };
+  });
+  assert.equal(einkIso.homeFilter, 'none', `E-Ink must NOT filter Agent Home: ${einkIso.homeFilter}`);
+  assert.ok(einkIso.readerFilter.includes('grayscale'), `E-Ink MUST filter Reader plugin: ${einkIso.readerFilter}`);
   await page.screenshot({ path: path.resolve(root, 'test-results/zone-import-memory.png') });
   await page.click('#zone-memory-mask [data-m-act="close"]');
   await page.waitForFunction(() => document.querySelector('#zone-memory-mask').classList.contains('hidden'));
@@ -278,6 +289,9 @@ try {
     return { a: a.id, b: b.id, links: await k.listLinks(), notes: await k.listNotes() };
   });
   assert.equal(ids.notes.length, 2); assert.equal(ids.links.length, 1);
+  // Verify unified Second Brain: Bot context reads BOTH Import Memory AND 星海/知识库 notes!
+  const sbCtx = await page.evaluate(() => window.__app.buildSecondBrainContext('zone-chief', 'Zone test'));
+  assert.ok(sbCtx.includes('苹果极简设计') && sbCtx.includes('Zone test A'), `Second Brain unifies Memory + 星海 notes: ${sbCtx}`);
   await page.reload(); await page.waitForFunction(() => window.__app);
   await page.evaluate(() => document.documentElement.classList.add('legacy-reader-home'));
   assert.equal(await page.evaluate(async () => (await (await import('./knowledge.js')).listNotes()).length), 2);

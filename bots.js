@@ -35,11 +35,11 @@ const DEFAULT_AUTOMATIONS = [
 ];
 
 const DEFAULT_PLUGINS = [
-  { id: 'reading-cosmos', name: '阅读器', short: '阅读器', desc: '仅在已加载此插件的 Bot 对话中展示书籍、文档与知识星海', enabled: true, launchable: true },
-  { id: 'phone-use', name: 'Phone-Use 手机操控', short: '手机控屏', desc: 'Android 原生无障碍跨 App 执行、卡片确认与悬浮急停', enabled: true, launchable: true },
-  { id: 'computer-use', name: 'Computer-Use 本地电脑', short: '本地电脑', desc: '对接本地桌面桥接节点（OpenClaw / Codex / 桌面操控），卡片确认执行', enabled: true, launchable: true },
-  { id: 'mcp-bridge', name: '云端 Skills / MCP 联网', short: '云端联网', desc: '实时联网检索、GitHub / ArXiv 调研与外部 MCP 技能互通', enabled: true, launchable: false },
-  { id: 'sichao', name: '思潮新闻推送', short: '思潮', desc: '在 Bot 对话中拉取全球 AI 与科技前沿信号卡片', enabled: true, launchable: true }
+  { id: 'reading-cosmos', name: '阅读器', short: '阅读器', desc: '卡片堆 · 沉浸阅读 · 星海第二大脑', enabled: true, launchable: true },
+  { id: 'phone-use', name: '手机控屏', short: '手机控屏', desc: '跨应用执行与敏感确认', enabled: true, launchable: true },
+  { id: 'computer-use', name: '连接电脑', short: '连接电脑', desc: '遥控本地桌面与工作节点', enabled: true, launchable: true },
+  { id: 'mcp-bridge', name: '联网与 MCP', short: '联网与 MCP', desc: '实时检索与远程技能调用', enabled: true, launchable: false },
+  { id: 'sichao', name: '思潮', short: '思潮', desc: 'AI 与科技前沿信号卡', enabled: true, launchable: true }
 ];
 
 const THEME_PLUGINS = [
@@ -613,10 +613,10 @@ export function openBotStudio({ onSelect, onSelectGroup, onStatus, onLaunchPlugi
     }
 
     const subtitle = tab === 'bots'
-      ? '点击任意 Bot 直接进入专属对话，形象与规则由你定义'
+      ? '选择或定制你的专属 Bot'
       : tab === 'automations'
-        ? '自定义周期采集、分析与新闻推送'
-        : '像开关一样插拔系统能力、外部 MCP/DeepSeek 插件与主题';
+        ? '周期采集与自动推送'
+        : '按 Bot 分配插件、远程 MCP 与主题';
 
     mask.innerHTML = `
       <div class="bots-sheet" role="dialog" aria-label="Zone 控制台">
@@ -697,7 +697,7 @@ export function openBotStudio({ onSelect, onSelectGroup, onStatus, onLaunchPlugi
               ${THEME_PLUGINS.map(t => `<button type="button" class="theme-plug-chip ${curTheme === t.id ? 'on' : ''}" data-theme-plug="${t.id}"><i style="background:${t.accent}"></i>${t.name}</button>`).join('')}
             </div>
           </div>
-          <button type="button" class="bots-primary" data-act="add-plug">+ 安装外部插件 / MCP / 技能</button>
+          <button type="button" class="bots-primary" data-act="add-plug">+ 安装远程 MCP / 技能</button>
         `}
       </div>`;
 

@@ -238,11 +238,11 @@ export function openImportMemorySheet({ bots = [], defaultScope = 'global', onCo
   const draw = () => {
     const items = listMemories();
     mask.innerHTML = `
-      <div class="bots-sheet" role="dialog" aria-label="导入外部记忆">
+      <div class="bots-sheet" role="dialog" aria-label="导入记忆">
         <div class="bots-head">
           <div>
-            <h3>导入外部记忆</h3>
-            <p>把你在 ChatGPT / Claude / DeepSeek / Grok 里的习惯与背景迁入 Zone（仅存本机，对话时自动生效）</p>
+            <h3>导入记忆</h3>
+            <p>存入本地并共享至星海，所有 Bot 均可按需读取</p>
           </div>
           <button type="button" class="bots-close" data-m-act="close">完成</button>
         </div>
@@ -250,17 +250,17 @@ export function openImportMemorySheet({ bots = [], defaultScope = 'global', onCo
         <div class="prof-group">
           <button type="button" class="prof-row" data-m-act="copy-prompt">
             <div class="prof-row-main">
-              <strong>第 1 步 · 复制记忆导出提示词</strong>
-              <span>发给 ChatGPT / Claude / 豆包 / DeepSeek，让它汇总关于你的要点</span>
+              <strong>复制导出提示词</strong>
+              <span>发给 ChatGPT / Claude / DeepSeek 提取记忆</span>
             </div>
             <span class="prof-row-val">复制 ›</span>
           </button>
           <button type="button" class="prof-row" data-m-act="pick-file">
             <div class="prof-row-main">
-              <strong>或直接导入导出文件</strong>
-              <span>支持 ChatGPT conversations.json / Claude memories.json / MD / TXT</span>
+              <strong>导入文件</strong>
+              <span>支持 JSON / Markdown / TXT</span>
             </div>
-            <span class="prof-row-val">选文件 ›</span>
+            <span class="prof-row-val">选择 ›</span>
           </button>
           <input id="zone-mem-file" type="file" accept=".json,.md,.txt,.markdown,text/plain,application/json" class="sr">
         </div>
@@ -269,21 +269,21 @@ export function openImportMemorySheet({ bots = [], defaultScope = 'global', onCo
           <div class="plugin-assign" style="border-top:0;padding:0">
             <span class="plugin-assign-lbl">生效范围：</span>
             <div class="plugin-assign-chips">
-              <button type="button" class="plugin-bot-chip ${scope === 'global' ? 'on' : ''}" data-m-scope="global">全部 Bot 共享${scope === 'global' ? ' ✓' : ''}</button>
+              <button type="button" class="plugin-bot-chip ${scope === 'global' ? 'on' : ''}" data-m-scope="global">全部 Bot${scope === 'global' ? ' ✓' : ''}</button>
               ${bots.map(b => `<button type="button" class="plugin-bot-chip ${scope === b.id ? 'on' : ''}" data-m-scope="${esc(b.id)}">仅 ${esc(b.name)}${scope === b.id ? ' ✓' : ''}</button>`).join('')}
             </div>
           </div>
-          <textarea id="zone-mem-input" rows="4" placeholder="第 2 步：把其他 AI 导出的个人背景、偏好、项目或规则粘贴在这里，每行一条要点…"></textarea>
-          <button type="button" class="bots-primary" data-m-act="import-text">导入到 Zone 记忆库</button>
+          <textarea id="zone-mem-input" rows="4" placeholder="粘贴其他 AI 整理的要点，每行一条…"></textarea>
+          <button type="button" class="bots-primary" data-m-act="import-text">导入记忆</button>
         </div>
 
         <div class="prof-group">
           <div class="prof-row" style="cursor:default">
             <div class="prof-row-main">
-              <strong>已保存记忆（${items.length} 条）</strong>
-              <span>每次发消息时自动按相关性注入到对应 Bot 的上下文中</span>
+              <strong>记忆库（${items.length}）</strong>
+              <span>对话自动调用 · 可一键点亮至星海</span>
             </div>
-            ${items.length ? `<button type="button" class="bot-edit" data-m-act="sync-k">同步星海</button>` : ''}
+            ${items.length ? `<button type="button" class="bot-edit" data-m-act="sync-k">点亮星海</button>` : ''}
           </div>
           ${items.length ? items.slice(0, 30).map(m => `
             <div class="mem-row">
@@ -293,9 +293,9 @@ export function openImportMemorySheet({ bots = [], defaultScope = 'global', onCo
               </div>
               <button type="button" class="mem-del" data-m-del="${esc(m.id)}" aria-label="删除此记忆">×</button>
             </div>
-          `).join('') : '<p class="sc-empty" style="padding:18px 12px">还没有导入外部记忆。复制上方提示词发给旧 AI，粘贴回来即可一键迁移。</p>'}
+          `).join('') : '<p class="sc-empty" style="padding:18px 12px">暂无记忆，复制提示词或导入文件即可迁入。</p>'}
         </div>
-        ${items.length ? '<button type="button" class="bots-danger" data-m-act="clear-all">清空全部记忆</button>' : ''}
+        ${items.length ? '<button type="button" class="bots-danger" data-m-act="clear-all">清空记忆</button>' : ''}
       </div>`;
 
     mask.onclick = e => { if (e.target === mask) closeImportMemorySheet(); };
