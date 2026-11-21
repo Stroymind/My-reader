@@ -5,6 +5,7 @@
 
 const BOTS_KEY = 'zone-bots-v3';
 const ACTIVE_KEY = 'zone-active-bot-id';
+const PRIMARY_KEY = 'zone-primary-bot-id';
 const PLUGINS_KEY = 'zone-skill-plugins-v4';
 const AUTO_KEY = 'zone-automations-v2';
 const THEME_PLUG_KEY = 'zone-theme-plugin-v1';
@@ -126,6 +127,19 @@ export function applyThemePlugin(id) {
   return hit;
 }
 
+export function getPrimaryBot() {
+  const list = listBots();
+  const id = (() => { try { return localStorage.getItem(PRIMARY_KEY) || ''; } catch { return ''; } })();
+  return list.find(b => b.id === id) || list[0];
+}
+
+export function setPrimaryBot(id) {
+  const list = listBots();
+  const bot = list.find(b => b.id === id) || list[0];
+  try { localStorage.setItem(PRIMARY_KEY, bot.id); } catch {}
+  return bot;
+}
+
 export function getActiveBot() {
   const list = listBots();
   const id = (() => { try { return localStorage.getItem(ACTIVE_KEY) || ''; } catch { return ''; } })();
@@ -211,10 +225,18 @@ export function openBotStudio({ onSelect, onStatus, onLaunchPlugin, onRunAutomat
             </div>
             <textarea id="bot-f-rules" rows="3" placeholder="由你自由定义它的规则、风格或边界（留空则无预设限制）">${esc(editing.rules)}</textarea>
             <button type="button" class="bots-primary" data-act="save">${editing.isNew ? '创建' : '保存'}</button>
+            ${!editing.isNew && editing.id !== getPrimaryBot().id ? `<button type="button" class="bots-secondary" data-act="pin-primary">设为顶部固定主位 ★</button>` : ''}
             ${!editing.isNew && list.length > 1 ? `<button type="button" class="bots-danger" data-act="del">删除此 Bot</button>` : ''}
           </div>
         </div>`;
       mask.querySelector('[data-act="cancel"]').onclick = () => { editing = null; draw(); };
+      const pinBtn = mask.querySelector('[data-act="pin-primary"]');
+      if (pinBtn) pinBtn.onclick = () => {
+        setPrimaryBot(editing.id);
+        editing = null;
+        mask.classList.add('hidden');
+        onStatus?.('已将该 Bot 设为顶部固定主位');
+      };
       const delBtn = mask.querySelector('[data-act="del"]');
       if (delBtn) delBtn.onclick = () => {
         const nextList = listBots().filter(x => x.id !== editing.id);

@@ -2,10 +2,10 @@ import * as pdfjsLib from './vendor/pdf.min.mjs';
 import { db } from './db.js';
 import { importArticleUrl, importBlob, importFiles, parseManifest, applyManifestToLibrary } from './importer.js';
 import { findAndFetchBook, getOpdsUrl, setOpdsUrl } from './book-finder.js';
-import { fetchLiveSignals, initSichao, setSichaoApi } from './sichao.js';
+import { fetchLiveSignals, getSichaoApi, initSichao, setSichaoApi } from './sichao.js';
 import { getPhoneUseStatus, openPhoneUseSettings, runPhoneUseTask } from './phone-use.js';
 import { closeMicroApp, consumeLaunchDeepLink, craftMicroApp, isMicroAppOpen, listMicroApps, openMicroApp, pinToDesktop } from './agent-surface.js';
-import { applyThemePlugin, closeBotStudio, getActiveBot, getActiveThemePlugin, isPluginEnabled, listBots, openBotStudio, renderBotSvg, setActiveBot, syncToAndroidWidget } from './bots.js';
+import { applyThemePlugin, closeBotStudio, getActiveBot, getActiveThemePlugin, getPrimaryBot, isPluginEnabled, listBots, openBotStudio, renderBotSvg, setActiveBot, syncToAndroidWidget } from './bots.js';
 import { BookletEngine, EpubEngine, PdfEngine, TxtEngine } from './engines.js';
 import { aiConfigured, complete as aiComplete, getAiConfig } from './ai.js';
 import { settings, saveSettings, applyBodyTheme, applyAppearance, appearancePref, cycleAppearance, applyCustomFontBlob, FONTS, THEMES } from './settings.js';
@@ -3030,12 +3030,49 @@ async function chatWithActiveBot(text) {
     renderBotRoster();
     return;
   }
-  renderChatBox(thread, '思考中…');
+  const wantsCloudTools = isPluginEnabled('mcp-bridge') && getSichaoApi()
+    && /(https?:\/\/|搜索|查一下|帮我查|帮我搜|帮我找|联网|最新|github|arxiv|论文|调研|汇总|对比|新闻|网页|分析这个链接)/i.test(q);
+  renderChatBox(thread, wantsCloudTools ? '正在联网检索与多步推理…' : '思考中…');
   $('#zone-chat-modal')?.classList.add('thinking');
   try {
-    const sys = bot.rules ? [{ role: 'system', content: bot.rules }] : [];
     const ctxMsgs = thread.messages.filter(m => !m.needKey).slice(-14).map(m => ({ role: m.role, content: m.content }));
-    const ans = await aiComplete([...sys, ...ctxMsgs]);
+    let ans = '';
+    if (wantsCloudTools) {
+      try {
+        const cfg = getAiConfig();
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 38000);
+        try {
+          const r = await fetch(`${getSichaoApi()}/api/agent/run`, {
+            method: 'POST',
+            signal: ctrl.signal,
+            headers: {
+              'Content-Type': 'application/json',
+              'X-User-Api-Key': cfg.apiKey || '',
+              'X-User-Base-Url': cfg.baseUrl || '',
+              'X-User-Model': cfg.model || ''
+            },
+            body: JSON.stringify({ messages: ctxMsgs, rules: bot.rules || '', max_steps: 3 })
+          });
+          if (r.ok) {
+            const data = await r.json();
+            if (data?.ok && data.reply) {
+              const steps = Array.isArray(data.steps) ? data.steps : [];
+              if (steps.length) {
+                const trace = steps.map((st, i) => `${i + 1}. [${st.tool}] ${st.arg}\n${st.preview}`).join('\n\n');
+                ans = `<think>已通过云端多步引擎执行 ${steps.length} 次真实联网工具：\n${trace}</think>\n${data.reply}`;
+              } else {
+                ans = data.reply;
+              }
+            }
+          }
+        } finally { clearTimeout(timer); }
+      } catch {}
+    }
+    if (!ans) {
+      const sys = bot.rules ? [{ role: 'system', content: bot.rules }] : [];
+      ans = await aiComplete([...sys, ...ctxMsgs]);
+    }
     thread.messages.push({ role: 'assistant', content: String(ans || '未收到回复') });
     thread.updatedAt = Date.now();
     saveTaskThreads();
@@ -3154,8 +3191,14 @@ function renderBotRoster() {
   const roster = $('#zone-bot-roster');
   if (!roster) return;
   const bots = listBots();
-  const active = getActiveBot();
-  const others = bots.filter(b => b.id !== active.id);
+  const primary = getPrimaryBot();
+  const others = bots.filter(b => b.id !== primary.id);
+  // 其它 Bot 按最近对话时间自然排序，顶部主位永不移动
+  others.sort((a, b) => {
+    const ta = taskThreads.find(t => t.botId === a.id)?.updatedAt || 0;
+    const tb = taskThreads.find(t => t.botId === b.id)?.updatedAt || 0;
+    return tb - ta;
+  });
   roster.replaceChildren();
   if (!others.length) { roster.classList.add('hidden'); return; }
   roster.classList.remove('hidden');
@@ -3184,17 +3227,11 @@ function renderBotRoster() {
 
 function renderAgentHub() {
   syncPluginStates();
-  const bot = getActiveBot();
+  const primary = getPrimaryBot();
   const glyphEl = $('#zone-hero-glyph');
-  if (glyphEl) glyphEl.innerHTML = renderBotSvg(bot.shape, bot.accent);
-  const auraEl = $('#zone-hero-aura');
-  if (auraEl) auraEl.style.backgroundColor = bot.accent || '#007AFF';
+  if (glyphEl) glyphEl.innerHTML = renderBotSvg(primary.shape, primary.accent);
   const nameEl = $('#zone-hero-name');
-  if (nameEl) nameEl.textContent = bot.name;
-  const th = taskThreads.find(t => t.botId === bot.id);
-  const lastMsg = th?.messages?.[th.messages.length - 1]?.content || '';
-  const roleEl = $('#zone-hero-role');
-  if (roleEl) roleEl.textContent = lastMsg ? String(lastMsg).replace(/<think>[\s\S]*?<\/think>\s*/, '').slice(0, 18) : '轻触开始对话';
+  if (nameEl) nameEl.textContent = primary.name;
   renderBotRoster();
 
   const strip = $('#zone-microapp-strip');
@@ -3272,7 +3309,7 @@ const openBotsFromHub = (opts = {}) => openBotStudio({
   onRunAutomation: runAutomationItem,
   ...opts
 });
-$('#zone-hero-card')?.addEventListener('click', () => openBotConversation(getActiveBot()));
+$('#zone-hero-card')?.addEventListener('click', () => openBotConversation(getPrimaryBot()));
 $('#btn-hub-newbot')?.addEventListener('click', () => openBotsFromHub({ startNew: true }));
 $('#btn-hub-plugins')?.addEventListener('click', () => openBotsFromHub({ initialTab: 'plugins' }));
 $('#btn-chat-back')?.addEventListener('click', () => closeBotChat());

@@ -13,6 +13,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+from .agent import TOOL_REGISTRY, run_byok_agent_loop
 from .db import Database
 from .discovery import build_coverage_map, cluster_unassigned_documents, content_hash, seed_default_sources
 from .gateway import ModelGateway
@@ -57,6 +58,12 @@ class MissedEventAuditReq(BaseModel):
     reason_code: str = "UNMONITORED_SOURCE"
     notes: str = ""
     recommendation: str = ""
+
+
+class AgentRunReq(BaseModel):
+    messages: list[dict[str, str]] = Field(default_factory=list)
+    rules: str = ""
+    max_steps: int = Field(default=3, ge=1, le=5)
 
 
 def _seed_initial_event_if_empty(db: Database) -> None:
@@ -199,11 +206,18 @@ def create_app(db_path: str | None = None, enable_scheduler: bool = True) -> Fas
     def health() -> dict[str, Any]:
         return {
             "status": "ok",
-            "version": "2.0.0",
+            "version": "2.1.0",
             "byok_mode": True,
             "platform_token_used": False,
+            "agent_tools": sorted(TOOL_REGISTRY.keys()),
             "runtime_paused": runtime.paused,
         }
+
+    @app.post("/api/agent/run")
+    async def agent_run(req: AgentRunReq, request: Request) -> dict[str, Any]:
+        """Zone 手机端 Bot 多步联网工具调用引擎（纯 BYOK：仅透传用户请求头 API Key）。"""
+        user_gw = ModelGateway.from_user_headers(request.headers)
+        return await run_byok_agent_loop(user_gw, req.messages, rules=req.rules, max_steps=req.max_steps)
 
     @app.get("/api/events")
     def list_events(limit: int = 20) -> dict[str, Any]:

@@ -126,3 +126,22 @@ def test_agent_runtime_recovery_pause_and_audit(tmp_path: Path) -> None:
     aud = client.post("/api/audits/missed-event", json={"event_title": "某实验室提前发布论文", "reason_code": "UNMONITORED_SOURCE", "recommendation": "新增该实验室 RSS"})
     assert aud.status_code == 200
     assert len(client.get("/api/audits").json()["audits"]) == 1
+
+
+def test_byok_agent_endpoint_and_ssrf_guard(tmp_path: Path) -> None:
+    from sichao.agent import tool_fetch_url
+
+    client = make_client(tmp_path)
+    h = client.get("/api/health").json()
+    assert h["byok_mode"] is True
+    assert "web_search" in h["agent_tools"] and "github_search" in h["agent_tools"]
+
+    # 无用户自带 Key 时绝不消耗平台 Token
+    r = client.post("/api/agent/run", json={"messages": [{"role": "user", "content": "搜一下最新论文"}]})
+    assert r.status_code == 200
+    assert r.json()["ok"] is False
+    assert r.json()["error"] == "BYOK_KEY_REQUIRED"
+
+    # SSRF 安全边界：禁止访问内网地址
+    blocked = asyncio.run(tool_fetch_url("http://127.0.0.1:8080/secret"))
+    assert "安全拦截" in blocked
