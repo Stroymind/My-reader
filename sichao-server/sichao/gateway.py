@@ -22,6 +22,14 @@ class ModelGateway:
     def configured(self) -> bool:
         return bool(self.api_key)
 
+    @classmethod
+    def from_user_headers(cls, headers: Any) -> "ModelGateway":
+        """BYOK：仅使用用户请求头透传的自有 API 额度，绝不落盘、绝不消耗平台 Token。"""
+        key = (headers.get("x-user-api-key") or "").strip()
+        base = (headers.get("x-user-base-url") or "").strip() or "https://api.openai.com/v1"
+        model = (headers.get("x-user-model") or "").strip() or "gpt-4o-mini"
+        return cls(api_key=key, base_url=base, model=model)
+
     async def complete(self, messages: list[dict[str, str]], temperature: float = 0.2) -> str | None:
         if not self.configured:
             return None

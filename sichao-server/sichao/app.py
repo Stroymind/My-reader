@@ -9,7 +9,7 @@ import uuid
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -114,7 +114,8 @@ def _seed_initial_event_if_empty(db: Database) -> None:
 
 def create_app(db_path: str | None = None, enable_scheduler: bool = True) -> FastAPI:
     db = Database(db_path or os.getenv("SICHAO_DB_PATH", "data/sichao.db"))
-    gateway = ModelGateway()
+    # 纯 BYOK 模式：服务端绝不消耗平台自身 Token，所有 AI 推理均由用户自有 API Key 承担
+    gateway = ModelGateway(api_key="")
     runtime = AgentRuntime(db, gateway)
     seed_default_sources(db)
     _seed_initial_event_if_empty(db)
@@ -199,7 +200,8 @@ def create_app(db_path: str | None = None, enable_scheduler: bool = True) -> Fas
         return {
             "status": "ok",
             "version": "2.0.0",
-            "ai_configured": gateway.configured,
+            "byok_mode": True,
+            "platform_token_used": False,
             "runtime_paused": runtime.paused,
         }
 
@@ -249,13 +251,14 @@ def create_app(db_path: str | None = None, enable_scheduler: bool = True) -> Fas
         return {"ok": True, "new_events": new_events, "task_id": task_id}
 
     @app.post("/api/events/{event_id}/recon")
-    async def run_recon(event_id: str, req: ReconReq) -> dict[str, Any]:
+    async def run_recon(event_id: str, req: ReconReq, request: Request) -> dict[str, Any]:
         with db.connect() as conn:
             r = conn.execute("SELECT * FROM events WHERE event_id = ?", (event_id,)).fetchone()
             if not r:
                 raise HTTPException(status_code=404, detail="Event not found")
             ev = dict(r)
-        ans = await gateway.complete(
+        user_gw = ModelGateway.from_user_headers(request.headers)
+        ans = await user_gw.complete(
             [
                 {
                     "role": "system",
@@ -264,8 +267,8 @@ def create_app(db_path: str | None = None, enable_scheduler: bool = True) -> Fas
                 {"role": "user", "content": f"事件：{ev['title']}\n摘要：{ev['summary']}\n侦察方向：{req.query}"},
             ]
         )
-        reply = ans or f"关于「{req.query}」的离线侦察提示：请核查是否存在独立第三方复现、真实部署成本与 30 天后的采用数据（配置 SICHAO_API_KEY 可启用在线深度侦察）。"
-        return {"event_id": event_id, "query": req.query, "result": reply}
+        reply = ans or f"关于「{req.query}」的零 Token 侦察提示：请核查是否存在独立第三方复现、真实部署成本与 30 天后的采用数据（在 Zone 中填入你自己的 AI API Key 即可用自有额度启用深度侦察）。"
+        return {"event_id": event_id, "query": req.query, "result": reply, "byok_used": user_gw.configured}
 
     @app.post("/api/events/{event_id}/judge")
     def submit_initial_judgment(event_id: str, req: InitialJudgmentReq) -> dict[str, Any]:

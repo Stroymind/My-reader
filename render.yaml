@@ -9,9 +9,3 @@ services:
     envVars:
       - key: SICHAO_DB_PATH
         value: /tmp/sichao.db
-      - key: SICHAO_API_KEY
-        sync: false
-      - key: SICHAO_BASE_URL
-        value: https://api.openai.com/v1
-      - key: SICHAO_MODEL
-        value: gpt-4o-mini
