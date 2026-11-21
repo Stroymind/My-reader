@@ -4,4 +4,5 @@
     <string name="title_activity_main">Zone</string>
     <string name="package_name">io.github.stroymind.myreader</string>
     <string name="custom_url_scheme">io.github.stroymind.myreader</string>
+    <string name="zone_accessibility_description">允许 Zone 在你语音授权下读取屏幕控件并代为点击、滑动与输入，配合你自己的 AI API Key 完成跨应用任务（付款、删除、发送等敏感操作前会自动暂停确认）。</string>
 </resources>

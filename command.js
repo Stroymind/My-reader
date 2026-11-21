@@ -145,6 +145,18 @@ function parseSingleClause(rawClause, ctx = {}) {
     return [{ op: 'openSichao' }];
   }
 
+  // 1a. 手机控屏 (Phone-Use) 权限设置与跨 App 自主操作
+  if (/^(?:开启|打开|设置|配置)?(?:手机控屏|控屏权限|无障碍权限|无障碍服务|控屏设置)$/.test(text)) {
+    return [{ op: 'phoneUseSetup' }];
+  }
+  const phoneUseM = text.match(/^(?:手机控屏|控屏|操作手机|用手机|替我操作|帮我操作手机|跨应用)[：:，,\s]*(.+)$/);
+  if (phoneUseM && phoneUseM[1].trim()) {
+    return [{ op: 'phoneUse', goal: phoneUseM[1].trim() }];
+  }
+  if (/^(?:打开|去|进)(?:微信|小红书|抖音|B站|哔哩哔哩|知乎|微博|淘宝|支付宝|高德|美团|WPS|Notion|Obsidian|谷歌浏览器|Chrome|系统设置)/i.test(text)) {
+    return [{ op: 'phoneUse', goal: text }];
+  }
+
   // 1b. 语音直接改界面（AI 实时生成安全 CSS 定制层）
   const styleM = text.match(/^(?:改界面|修改界面|改造界面|定制界面|定制样式|调整样式)[：:，,\s]*(.+)$/);
   if (styleM && styleM[1].trim()) {
@@ -514,6 +526,7 @@ const SAFE_OPS = new Set([
   'pane', 'graphTilt', 'graphFit', 'graphMood', 'openBook', 'createNote', 'search', 'exportOutline', 'importBooks',
   'findBook', 'importUrl', 'setOpds', 'stackCreate', 'stackRemove', 'stackMerge', 'stackDissolve',
   'openSichao', 'setSichaoApi', 'askAi', 'styleUi', 'resetUi', 'exportVault', 'exportWord',
+  'phoneUse', 'phoneUseSetup',
   'cosmosExplore', 'cosmosNeighbors', 'cosmosFocus', 'cosmosLink', 'cosmosZoom'
 ]);
 
@@ -525,7 +538,8 @@ async function aiFallbackPlan(text, ctx) {
 - 护眼与听书：{"op":"eyeComfort"} / {"op":"eyeRest"} / {"op":"tts","on":true|false} / {"op":"bilingual","on":true|false} / {"op":"autoPace","on":true|false,"speed":"auto"|"slower"|"faster"}
 - 翻页与标注：{"op":"turn","delta":1|-1} / {"op":"seek","fraction":0..1} / {"op":"goPage","page":12} / {"op":"goChapter","index":3} / {"op":"voiceMark","kind":"highlight"|"excerpt"|"annotation","query":"词","line":2,"paragraph":1,"note":"批注"} / {"op":"bookmark"} / {"op":"toc"} / {"op":"closeBook"}
 - 卡片堆与书库：{"op":"openBook","query":"书名"} / {"op":"openBook","ordinal":1} / {"op":"stackCreate","ordinals":[1,2],"name":"堆名"} / {"op":"stackRemove","stackIndex":1,"itemIndex":1} / {"op":"stackMerge","a":1,"b":2} / {"op":"stackDissolve","stackIndex":1} / {"op":"findBook","query":"书名"} / {"op":"importUrl","url":"https://..."} / {"op":"importBooks"} / {"op":"search","query":"词"}
-- 知识与星海与思潮：{"op":"pane","value":"shelf"|"knowledge"|"graph"} / {"op":"createNote","text":"内容"} / {"op":"openSichao"} / {"op":"cosmosExplore","mode":"tour"|"next"|"frontier"} / {"op":"cosmosFocus","query":"词"} / {"op":"graphMood","value":"auto"|"dawn"|"day"|"dusk"|"night"} / {"op":"graphTilt","on":true|false} / {"op":"undo"}
+- 知识与星海与思潮与导出：{"op":"pane","value":"shelf"|"knowledge"|"graph"} / {"op":"createNote","text":"内容"} / {"op":"openSichao"} / {"op":"exportVault"} / {"op":"exportWord"} / {"op":"cosmosExplore","mode":"tour"|"next"|"frontier"} / {"op":"cosmosFocus","query":"词"} / {"op":"graphMood","value":"auto"|"dawn"|"day"|"dusk"|"night"} / {"op":"graphTilt","on":true|false} / {"op":"undo"}
+- 手机控屏 (Phone-Use)：当用户要打开/操作手机上其他 App（如微信/小红书/抖音/浏览器/WPS/Notion 等）或在手机上执行跨应用操作 -> {"op":"phoneUse","goal":"完整操作目标"}；开启控屏权限 -> {"op":"phoneUseSetup"}
 - 实时改界面：任何对颜色/间距/圆角/风格的定制诉求 -> {"op":"styleUi","prompt":"用户的界面修改描述"}；还原 -> {"op":"resetUi"}
 - 万能问答/总结/思考：任何开放式提问、总结、解释、头脑风暴 -> {"op":"askAi","question":"用户的完整问题"}
 原则：尽量把用户的意图落地为可执行操作；若是开放性需求或聊天提问，用 askAi 或 styleUi 兜底，绝不轻易返回空数组。`;

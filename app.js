@@ -3,6 +3,7 @@ import { db } from './db.js';
 import { importArticleUrl, importBlob, importFiles, parseManifest, applyManifestToLibrary } from './importer.js';
 import { findAndFetchBook, getOpdsUrl, setOpdsUrl } from './book-finder.js';
 import { initSichao, setSichaoApi } from './sichao.js';
+import { getPhoneUseStatus, openPhoneUseSettings, runPhoneUseTask } from './phone-use.js';
 import { BookletEngine, EpubEngine, PdfEngine, TxtEngine } from './engines.js';
 import { aiConfigured, complete as aiComplete } from './ai.js';
 import { settings, saveSettings, applyBodyTheme, applyAppearance, appearancePref, cycleAppearance, applyCustomFontBlob, FONTS, THEMES } from './settings.js';
@@ -2605,6 +2606,26 @@ command = createCommandController({
         if (reading) await closeBook();
         await openLibraryExcerpts();
         return { label: '已打开摘录' };
+      }
+      case 'phoneUseSetup': {
+        const st = await getPhoneUseStatus();
+        if (!st.available) return { label: '手机控屏需在 Android 版 Zone 中开启' };
+        if (st.enabled) return { label: 'Zone 手机控屏无障碍服务已开启，直接说出任务即可' };
+        const go = await showConfirmSheet('去系统设置开启「Zone 手机控屏 (Phone-Use)」无障碍服务？开启后即可用你自己的 AI 语音跨 App 办事。', '去开启');
+        if (go) await openPhoneUseSettings();
+        return { label: go ? '已打开系统无障碍设置' : '已取消' };
+      }
+      case 'phoneUse': {
+        const goal = String(a.goal || '').trim();
+        if (!goal) return { label: '请说出要帮你在手机上执行的任务' };
+        toast(`控屏启动：${goal.slice(0, 18)}…`);
+        const res = await runPhoneUseTask(goal, {
+          onStatus: msg => toast(msg, 3400),
+          onConfirm: msg => showConfirmSheet(msg, '允许继续'),
+          onNeedAi: () => openAiSettingsDialog(),
+          onNoteSaved: () => refreshWorkspace()
+        });
+        return { label: res.summary || (res.ok ? '控屏完成' : '控屏已暂停') };
       }
       case 'aiSettings': {
         openAiSettingsDialog();
