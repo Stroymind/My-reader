@@ -73,8 +73,10 @@ function parseCnNum(raw) {
 function splitClauses(raw) {
   const s = String(raw || '').trim().replace(/[。！？!?]+$/g, '').trim();
   if (!s) return [];
-  // 整句记想法/笔记时保留完整正文，不被句中逗号切碎
-  if (/^(?:帮我|请)?(?:记一条?笔记|写一条?笔记|记笔记|记一下|记下来|我有?个?想法|写一条?想法|写个?想法|想法|灵感|批注|记录)[：:，,\s]+/.test(s)) {
+  // 整句记想法/笔记/问AI/改界面/卡片堆操纵时保留完整句子，不被逗号切碎
+  if (/^(?:帮我|请)?(?:记一条?笔记|写一条?笔记|记笔记|记一下|记下来|我有?个?想法|写一条?想法|写个?想法|想法|灵感|批注|记录)[：:，,\s]+/.test(s)
+    || /(?:卡片堆|建堆|合并.{0,8}堆)/.test(s)
+    || /^(?:帮我|请)?(?:问一下?AI|问AI|让AI|叫AI|AI帮我|改界面|定制样式|修改界面|改造界面)/i.test(s)) {
     return [s];
   }
   // 引号感知分句：保护「」『』“”""《》内部不被切开
@@ -125,9 +127,54 @@ function parseSingleClause(rawClause, ctx = {}) {
   const reading = !!ctx.reading;
   const inGraph = !reading && ctx.pane === 'graph';
 
-  // 1. 撤销
+  // 1. 撤销 / 恢复默认界面
   if (/^(?:撤销|撤回|恢复刚才|恢复原样|改回去|算了|undo)$/i.test(text)) {
     return [{ op: 'undo' }];
+  }
+  if (/^(?:恢复默认界面|重置界面|清除自定义样式|还原界面)$/.test(text)) {
+    return [{ op: 'resetUi' }];
+  }
+
+  // 1b. 语音直接改界面（AI 实时生成安全 CSS 定制层）
+  const styleM = text.match(/^(?:改界面|修改界面|改造界面|定制界面|定制样式|调整样式)[：:，,\s]*(.+)$/);
+  if (styleM && styleM[1].trim()) {
+    return [{ op: 'styleUi', prompt: styleM[1].trim() }];
+  }
+
+  // 1c. 语音直接唤醒 AI 对话 / 总结 / 解释当前页
+  const askAiM = text.match(/^(?:问一下?\s*AI|问\s*AI|让\s*AI|叫\s*AI|AI\s*帮我|AI\s*请)[：:，,\s]*(.+)$/i);
+  if (askAiM && askAiM[1].trim()) {
+    return [{ op: 'askAi', question: askAiM[1].trim() }];
+  }
+
+  // 1d. 语音全能操纵卡片堆（建堆 / 拿出一本 / 合并两个堆 / 解散堆）
+  if (/(?:卡片堆|建堆)/.test(text)) {
+    // 合并两个卡片堆：把第一个卡片堆和第二个卡片堆合并
+    if (/合并/.test(text)) {
+      const nums = [...text.matchAll(/(?:第|卡片堆\s*)([0-9一二两三四五六七八九十百]+)/g)].map(m => parseCnNum(m[1])).filter(Boolean);
+      if (nums.length >= 2) return [{ op: 'stackMerge', a: nums[0], b: nums[1] }];
+    }
+    // 解散卡片堆
+    if (/(?:解散|散开|拆开)/.test(text)) {
+      const m = text.match(/(?:第|卡片堆\s*)([0-9一二两三四五六七八九十百]+)/);
+      return [{ op: 'stackDissolve', stackIndex: m ? parseCnNum(m[1]) : 1 }];
+    }
+    // 从卡片堆拿出/移出指定书：把第一个卡片堆的第一本书拿出来
+    if (/(?:拿出|移出|取出来?|删掉|踢出)/.test(text)) {
+      const sm = text.match(/(?:第|卡片堆\s*)([0-9一二两三四五六七八九十百]+)\s*(?:个|号)?\s*(?:卡片堆|堆)/);
+      const bm = text.match(/第\s*([0-9一二两三四五六七八九十百]+)\s*(?:本|项|张|个)/g);
+      const stackIndex = sm ? parseCnNum(sm[1]) : 1;
+      const lastBm = bm && bm.length ? bm[bm.length - 1].match(/([0-9一二两三四五六七八九十百]+)/) : null;
+      const itemIndex = lastBm ? parseCnNum(lastBm[1]) : 1;
+      return [{ op: 'stackRemove', stackIndex, itemIndex }];
+    }
+    // 按序数新建卡片堆：把第一本书、第二本书、第三本书新建一个卡片堆（叫xxx）
+    const ords = [...text.matchAll(/第\s*([0-9一二两三四五六七八九十百]+)\s*(?:本|项|张)/g)]
+      .map(m => parseCnNum(m[1])).filter(Boolean);
+    if (ords.length >= 2) {
+      const nameM = text.match(/(?:叫|名为|命名为?|起名)\s*[《「]?([^，。！？,!?》」]{1,20})[》」]?$/);
+      return [{ op: 'stackCreate', ordinals: [...new Set(ords)], name: nameM ? nameM[1].trim() : '' }];
+    }
   }
 
   // 2. 语音唤醒开关

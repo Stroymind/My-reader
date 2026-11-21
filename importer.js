@@ -2,9 +2,10 @@
 import { db } from './db.js';
 import { decodeText, htmlToPlain } from './engines.js';
 import { repairEpub } from './epub-repair.js';
-import { extractEpubFallback, fetchArticleUrl, parseDocx, parseMarkdown, parseMobi } from './formats.js';
+import { aiConfigured, transcribeAudio } from './ai.js';
+import { extractEpubFallback, fetchArticleUrl, parseDocx, parseMarkdown, parseMobi, parseSubtitle } from './formats.js';
 
-const BOOK_EXT = /\.(epub|pdf|txt|text|html|htm|xhtml|mobi|azw|azw3|prc|docx|md|markdown)$/i;
+const BOOK_EXT = /\.(epub|pdf|txt|text|html|htm|xhtml|mobi|azw|azw3|prc|docx|md|markdown|png|jpe?g|webp|gif|srt|vtt|lrc|mp3|m4a|wav|ogg|aac|mp4|webm)$/i;
 
 export function extOf(name) { const m = /\.([a-z0-9]+)$/i.exec(name || ''); return m ? m[1].toLowerCase() : ''; }
 export function baseName(p) { return (p || '').split('/').pop(); }
@@ -16,8 +17,14 @@ async function sniffType(blob, name) {
   if (e === 'mobi' || e === 'azw' || e === 'azw3' || e === 'prc') return 'mobi';
   if (e === 'md' || e === 'markdown') return 'md';
   if (e === 'docx') return 'docx';
+  if (e === 'png' || e === 'jpg' || e === 'jpeg' || e === 'webp' || e === 'gif') return 'image';
+  if (e === 'srt' || e === 'vtt' || e === 'lrc') return 'subtitle';
+  if (e === 'mp3' || e === 'm4a' || e === 'wav' || e === 'ogg' || e === 'aac') return 'audio';
+  if (e === 'mp4' || e === 'webm') return 'video';
   if (e === 'epub' || e === 'pdf' || e === 'txt' || e === 'html') return e;
   const head = new Uint8Array(await blob.slice(0, 80).arrayBuffer());
+  if (head[0] === 0x89 && head[1] === 0x50 && head[2] === 0x4e && head[3] === 0x47) return 'image';
+  if (head[0] === 0xff && head[1] === 0xd8 && head[2] === 0xff) return 'image';
   if (head[0] === 0x25 && head[1] === 0x50 && head[2] === 0x44 && head[3] === 0x46) return 'pdf';
   if (head.length >= 68) {
     const ident = String.fromCharCode(...head.subarray(60, 68));
@@ -86,7 +93,16 @@ async function pdfMeta(blob, pdfjsLib) {
   } finally { doc.destroy(); }
 }
 
-function cleanTitle(name) { return baseName(name).replace(/\.(epub|pdf|txt|text|html|htm|xhtml|mobi|azw|azw3|prc|docx|md|markdown)$/i, '').replace(/\s*\([0-9a-z]{26}\)\s*$/, '').trim(); }
+function cleanTitle(name) { return baseName(name).replace(/\.(epub|pdf|txt|text|html|htm|xhtml|mobi|azw|azw3|prc|docx|md|markdown|png|jpe?g|webp|gif|srt|vtt|lrc|mp3|m4a|wav|ogg|aac|mp4|webm)$/i, '').replace(/\s*\([0-9a-z]{26}\)\s*$/, '').trim(); }
+
+function blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result || ''));
+    r.onerror = () => reject(new Error('图片读取失败'));
+    r.readAsDataURL(blob);
+  });
+}
 
 // 导入单个文件。返回 {status:'added'|'dup'|'fail', title, id?}
 export async function importBlob(blob, name, ctx = {}) {
@@ -132,6 +148,44 @@ export async function importBlob(blob, name, ctx = {}) {
       meta = { title: parsed.title, author: parsed.author };
       storeBlob = new Blob([parsed.text], { type: 'text/plain;charset=utf-8' });
       storeType = 'txt';
+    } else if (type === 'image') {
+      const dataUrl = await blobToDataUrl(blob);
+      const cover = await shrinkImage(blob, 360);
+      const title = cleanTitle(name) || '图片小册子';
+      meta = { title, author: '视觉小册子', cover };
+      storeBlob = new Blob([`<h1>${title.replace(/</g, '&lt;')}</h1><figure><img src="${dataUrl}" alt=""></figure>`], { type: 'text/html;charset=utf-8' });
+      storeType = 'booklet';
+    } else if (type === 'subtitle') {
+      const parsed = await parseSubtitle(blob);
+      meta = { title: cleanTitle(name) || '字幕逐字稿', author: parsed.author };
+      storeBlob = new Blob([parsed.text], { type: 'text/plain;charset=utf-8' });
+      storeType = 'txt';
+    } else if (type === 'audio' || type === 'video') {
+      const title = cleanTitle(name) || (type === 'video' ? '视频逐字稿' : '播客逐字稿');
+      let transcript = '';
+      if (aiConfigured() && blob.size <= 24 * 1024 * 1024) {
+        try {
+          const dataUrl = await blobToDataUrl(blob);
+          const b64 = dataUrl.split(',')[1] || '';
+          if (b64) transcript = await transcribeAudio(b64, blob.type || (type === 'video' ? 'video/mp4' : 'audio/mpeg'));
+        } catch {}
+      }
+      if (transcript) {
+        meta = { title, author: type === 'video' ? '视频逐字稿' : '播客逐字稿' };
+        storeBlob = new Blob([transcript], { type: 'text/plain;charset=utf-8' });
+        storeType = 'txt';
+      } else {
+        const dataUrl = blob.size <= 16 * 1024 * 1024 ? await blobToDataUrl(blob) : '';
+        const player = dataUrl
+          ? (type === 'video'
+            ? `<video controls playsinline style="width:100%;border-radius:14px;margin:12px 0" src="${dataUrl}"></video>`
+            : `<audio controls style="width:100%;margin:16px 0" src="${dataUrl}"></audio>`)
+          : '';
+        const tip = '<p>已导入音视频。配置 AI 密钥后重新导入即可自动生成逐字稿；也可直接导入同名字幕（.srt / .vtt）用于逐句翻译与划线。</p>';
+        meta = { title, author: type === 'video' ? '视频小册子' : '音频播客' };
+        storeBlob = new Blob([`<h1>${title.replace(/</g, '&lt;')}</h1>${player}${tip}`], { type: 'text/html;charset=utf-8' });
+        storeType = 'booklet';
+      }
     } else if (type === 'html') {
       const parsed = htmlToPlain(decodeText(await blob.arrayBuffer()));
       if (!parsed.text.trim()) return { status: 'fail', title: cleanTitle(name), reason: 'HTML 里没有可读的正文' };
@@ -155,13 +209,14 @@ export async function importBlob(blob, name, ctx = {}) {
 
 export async function importArticleUrl(url) {
   const art = await fetchArticleUrl(url);
-  const blob = new Blob([art.text], { type: 'text/plain;charset=utf-8' });
+  const isRich = !!art.richHtml;
+  const blob = new Blob([isRich ? art.richHtml : art.text], { type: isRich ? 'text/html;charset=utf-8' : 'text/plain;charset=utf-8' });
   const id = await fingerprint(blob);
   const existing = await db.get('books', id);
   if (existing) return { status: 'dup', title: existing.title, id: existing.id };
   const rec = {
-    id, type: 'txt', origType: 'url', fileName: art.title + '.txt', size: blob.size,
-    title: art.title, author: art.author || '', cover: null,
+    id, type: isRich ? 'booklet' : 'txt', origType: 'url', fileName: art.title + (isRich ? '.html' : '.txt'), size: blob.size,
+    title: art.title, author: art.author || '图文小册子', cover: null,
     addedAt: Date.now(), lastOpened: 0, progress: 0, pos: null, bookmarks: [], highlights: []
   };
   await db.put('files', { id, blob });

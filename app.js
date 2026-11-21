@@ -2,7 +2,8 @@ import * as pdfjsLib from './vendor/pdf.min.mjs';
 import { db } from './db.js';
 import { importArticleUrl, importBlob, importFiles, parseManifest, applyManifestToLibrary } from './importer.js';
 import { findAndFetchBook, getOpdsUrl, setOpdsUrl } from './book-finder.js';
-import { EpubEngine, PdfEngine, TxtEngine } from './engines.js';
+import { BookletEngine, EpubEngine, PdfEngine, TxtEngine } from './engines.js';
+import { aiConfigured, complete as aiComplete } from './ai.js';
 import { settings, saveSettings, applyBodyTheme, applyAppearance, appearancePref, cycleAppearance, applyCustomFontBlob, FONTS, THEMES } from './settings.js';
 import { isMostlyCjk, translateVisible } from './bilingual.js';
 import { backfillFromBooks, createNote, deleteBookBundle, parseTags, syncBook } from './knowledge.js';
@@ -1263,7 +1264,7 @@ async function openBook(id) {
   $('#r-title').textContent = rec.title; $('#run-title').textContent = rec.title;
   if (history.state?.reader) history.replaceState({ reader: id }, ''); else history.pushState({ reader: id }, '');
   const el = $('#viewer'); el.innerHTML = '';
-  const Eng = rec.type === 'epub' ? EpubEngine : rec.type === 'pdf' ? PdfEngine : TxtEngine;
+  const Eng = rec.type === 'epub' ? EpubEngine : rec.type === 'pdf' ? PdfEngine : rec.type === 'booklet' ? BookletEngine : TxtEngine;
   engine = new Eng(el, rec, onRelocate, pdfjsLib);
   engine.onSelectionChange = () => {
     const sel = engine.getSelection?.();
@@ -2298,6 +2299,106 @@ command = createCommandController({
           return { label: err?.message || '找书失败，请检查网络或书源地址' };
         }
       }
+      case 'askAi': {
+        const pageTxt = reading ? (engine?.pageText?.() || '').trim().slice(0, 1200) : '';
+        const q = a.question || '总结这一段';
+        openAssistant({
+          title: q.slice(0, 18),
+          quote: pageTxt || q,
+          context: reading && cur ? `来自《${cur.title}》${lastState?.label ? ' · ' + lastState.label : ''}` : '语音直连 AI 提问',
+          bookId: cur?.id || null,
+          bookTitle: cur?.title || ''
+        });
+        if (pageTxt && q) {
+          setTimeout(() => {
+            const inp = $('#ai-q');
+            if (inp) { inp.value = q; $('#ai-ask')?.requestSubmit?.(); }
+          }, 180);
+        }
+        return { label: '已唤醒 AI 助手' };
+      }
+      case 'resetUi': {
+        try { localStorage.removeItem('zone-custom-css'); } catch {}
+        document.getElementById('zone-user-style')?.remove();
+        return { label: '已恢复 Zone 默认界面风格' };
+      }
+      case 'styleUi': {
+        const prevCss = localStorage.getItem('zone-custom-css') || '';
+        const applyCss = css => {
+          let tag = document.getElementById('zone-user-style');
+          if (!tag) { tag = document.createElement('style'); tag.id = 'zone-user-style'; document.head.appendChild(tag); }
+          tag.textContent = css;
+          try { if (css) localStorage.setItem('zone-custom-css', css); else localStorage.removeItem('zone-custom-css'); } catch {}
+        };
+        let css = '';
+        if (aiConfigured()) {
+          toast('AI 正在实时定制界面…', 2400);
+          try {
+            const raw = await aiComplete([
+              { role: 'system', content: '你是 Zone 界面样式师。只输出合法的纯 CSS 代码（不要 markdown 代码块、不要解释、不要 @import 或 url()）。常用变量：--app-bg, --app-fg, --app-muted, --app-card, --app-elev, --app-accent, --bg, --fg。' },
+              { role: 'user', content: a.prompt }
+            ]);
+            css = String(raw || '').replace(/^```(?:css)?\s*/i, '').replace(/```\s*$/i, '').replace(/@import|url\s*\(/gi, '').trim();
+          } catch {}
+        }
+        if (!css) {
+          // 离线自然语言即时换肤兜底
+          const p = a.prompt;
+          const rules = [];
+          if (/墨绿|森绿|豆沙绿|绿/.test(p)) rules.push(':root,body{--app-bg:#eef3ef;--bg:#eef3ef;--app-fg:#1d2b22;--fg:#1d2b22}');
+          else if (/灰蓝|雾蓝|淡蓝|蓝/.test(p)) rules.push(':root,body{--app-bg:#eef2f7;--bg:#eef2f7;--app-fg:#1c2533;--fg:#1c2533}');
+          else if (/暖黄|米黄|羊皮|暖/.test(p)) rules.push(':root,body{--app-bg:#f6efe2;--bg:#f6efe2;--app-fg:#3b2f21;--fg:#3b2f21}');
+          if (/圆角|圆润/.test(p)) rules.push('.book,.stack-card,.note-card{border-radius:26px!important}');
+          if (/紧凑/.test(p)) rules.push('.book{padding-top:8px!important;padding-bottom:8px!important}');
+          css = rules.join('\n');
+        }
+        if (!css) return { label: '配置 AI 密钥后可按任意描述实时改造界面（离线支持颜色/圆角/紧凑调节）' };
+        applyCss(css);
+        return { label: '已实时应用自定义界面（说「恢复默认界面」可一键还原）' };
+      }
+      case 'stackCreate': {
+        if (reading) await closeBook();
+        showPane('shelf');
+        await renderLibrary();
+        const ids = a.ordinals.map(n => shelfOrder[n - 1]).filter(Boolean);
+        if (ids.length < 2) return { label: '至少需要 2 本有效书籍才能建卡片堆' };
+        const s = createStack(a.name || defaultStackName(listStacks()), ids);
+        if (!s) return { label: '建堆失败' };
+        await renderLibrary({ focus: 'stack:' + s.id, reveal: true });
+        return { label: `已新建卡片堆「${s.name}」（${s.bookIds.length} 项）` };
+      }
+      case 'stackRemove': {
+        if (reading) await closeBook();
+        showPane('shelf');
+        const stacks = listStacks();
+        const st = stacks[(a.stackIndex || 1) - 1];
+        if (!st) return { label: `找不到第 ${a.stackIndex || 1} 个卡片堆` };
+        const targetId = st.bookIds[(a.itemIndex || 1) - 1];
+        if (!targetId) return { label: `「${st.name}」里没有第 ${a.itemIndex || 1} 项` };
+        removeFromStacks([targetId]);
+        await renderLibrary();
+        return { label: `已从「${st.name}」移出第 ${a.itemIndex || 1} 项` };
+      }
+      case 'stackMerge': {
+        if (reading) await closeBook();
+        showPane('shelf');
+        const stacks = listStacks();
+        const sa = stacks[(a.a || 1) - 1], sb = stacks[(a.b || 2) - 1];
+        if (!sa || !sb || sa.id === sb.id) return { label: '需要至少两个不同的卡片堆才能合并' };
+        const merged = addToStack(sa.id, sb.bookIds);
+        dissolveStack(sb.id);
+        await renderLibrary({ focus: 'stack:' + sa.id });
+        return { label: `已将「${sb.name}」合并进「${merged?.name || sa.name}」` };
+      }
+      case 'stackDissolve': {
+        if (reading) await closeBook();
+        showPane('shelf');
+        const st = listStacks()[(a.stackIndex || 1) - 1];
+        if (!st) return { label: `找不到第 ${a.stackIndex || 1} 个卡片堆` };
+        dissolveStack(st.id);
+        await renderLibrary();
+        return { label: `已解散「${st.name}」` };
+      }
       case 'closeBook': {
         if (!reading) return null;
         await closeBook();
@@ -2541,7 +2642,18 @@ $('#auth-portal')?.addEventListener('keydown', e => {
 $('#btn-auth-account')?.addEventListener('click', () => openAuthGate());
 syncAuthLabel();
 if (!getAuthUser()) openAuthGate();
-// 启动时静默恢复已导入的本地自定义字体
+// 启动时静默恢复已导入的本地自定义字体与自定义界面样式
 db.get('meta', 'custom-font').then(rec => { if (rec?.blob) applyCustomFontBlob(rec.blob, rec.name); }).catch(() => {});
+(() => {
+  try {
+    const css = localStorage.getItem('zone-custom-css');
+    if (css) {
+      const tag = document.createElement('style');
+      tag.id = 'zone-user-style';
+      tag.textContent = css;
+      document.head.appendChild(tag);
+    }
+  } catch {}
+})();
 
 window.__app = { db, openBook, closeBook, importFiles, importBlob, importArticleUrl, handleBack, get engine() { return engine; }, renderLibrary, stacks: { list: listStacks }, runCommand: text => command.run(text), openCommand: opts => command.openBar(opts), openPeek: openBookPeek, closePeek: closeBookPeek, openAuthGate, getAuthUser, getOpdsUrl, setOpdsUrl };

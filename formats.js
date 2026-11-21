@@ -253,6 +253,20 @@ export async function extractEpubFallback(blob) {
   return { title, author, text };
 }
 
+export async function parseSubtitle(blob) {
+  const raw = decodeText(await blob.arrayBuffer()).replace(/\r\n?/g, '\n');
+  const lines = [];
+  for (const line of raw.split('\n')) {
+    const t = line.trim();
+    if (!t || /^WEBVTT/i.test(t) || /^\d+$/.test(t) || /^\d{1,2}:\d{2}(?::\d{2})?[.,]\d+\s*-->/.test(t)) continue;
+    const clean = t.replace(/^\[\d{1,2}:\d{2}(?:\.\d+)?\]\s*/, '').replace(/<[^>]+>/g, '').trim();
+    if (clean) lines.push(clean);
+  }
+  const text = lines.join('\n\n').trim();
+  if (!text) throw new Error('字幕文件里没有可读文字');
+  return { title: '', author: '字幕逐字稿', text };
+}
+
 export async function fetchArticleUrl(rawUrl) {
   const url = String(rawUrl || '').trim();
   if (!/^https?:\/\//i.test(url)) throw new Error('请输入以 http:// 或 https:// 开头的文章链接');
@@ -269,11 +283,34 @@ export async function fetchArticleUrl(rawUrl) {
   if (!res.ok) throw new Error('网页返回错误（' + res.status + '）');
   const html = await res.text();
   const parsed = htmlToPlain(html);
-  if (!parsed.text || parsed.text.trim().length < 20) throw new Error('这个链接里没有提取到可读正文');
   const host = (() => { try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return ''; } })();
+  // 提取图文小册子 HTML（保留文章图片与段落结构）
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  doc.querySelectorAll('script, style, nav, footer, header, aside, iframe, noscript, svg').forEach(n => n.remove());
+  const root = doc.querySelector('article, main, [role="main"]') || doc.body;
+  const parts = [];
+  let imgCount = 0;
+  if (parsed.title) parts.push(`<h1>${parsed.title.replace(/</g, '&lt;')}</h1>`);
+  for (const el of root?.querySelectorAll('h1,h2,h3,p,blockquote,img,figure') || []) {
+    if (el.tagName === 'IMG') {
+      const rawSrc = el.getAttribute('data-src') || el.getAttribute('src') || '';
+      if (!rawSrc || rawSrc.startsWith('data:image/svg')) continue;
+      let abs = rawSrc;
+      try { abs = new URL(rawSrc, url).href; } catch {}
+      parts.push(`<figure><img src="${abs.replace(/"/g, '&quot;')}" alt=""></figure>`);
+      imgCount++;
+    } else if (el.tagName !== 'FIGURE') {
+      const t = (el.textContent || '').replace(/\s+/g, ' ').trim();
+      if (t.length >= 4) parts.push(`<${el.tagName.toLowerCase()}>${t.replace(/</g, '&lt;')}</${el.tagName.toLowerCase()}>`);
+    }
+  }
+  if (!parsed.text || parsed.text.trim().length < 20) {
+    if (imgCount === 0) throw new Error('这个链接里没有提取到可读正文');
+  }
   return {
-    title: (parsed.title || host || '网页文章').trim(),
+    title: (parsed.title || host || '图文小册子').trim(),
     author: parsed.author || host,
-    text: parsed.text.trim()
+    text: (parsed.text || '').trim(),
+    richHtml: imgCount > 0 ? parts.join('\n') : ''
   };
 }

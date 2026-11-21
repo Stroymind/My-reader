@@ -928,3 +928,66 @@ export class TxtEngine {
   resize() { this.applySettings(); }
   destroy() { this.el.innerHTML = ''; }
 }
+
+// 图文小册子引擎（支持手机导入图片画册 & 保留图文的网页/推文小册子）
+export class BookletEngine {
+  constructor(el, rec, onRelocate) { this.el = el; this.rec = rec; this.onRelocate = onRelocate; this.highlights = []; this.wrap = null; }
+  async open(blob) {
+    const html = await blob.text();
+    const wrap = document.createElement('div');
+    wrap.className = 'booklet-view';
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    doc.querySelectorAll('script, iframe, object, embed, form').forEach(n => n.remove());
+    wrap.innerHTML = doc.body?.innerHTML || '';
+    this.el.innerHTML = '';
+    this.el.appendChild(wrap);
+    this.wrap = wrap;
+    this.applySettings();
+    wrap.addEventListener('scroll', () => {
+      const max = Math.max(1, wrap.scrollHeight - wrap.clientHeight);
+      const frac = Math.max(0, Math.min(1, wrap.scrollTop / max));
+      this.onRelocate({ pos: { frac }, progress: frac, label: this.rec.title || '小册子', atEnd: frac >= 0.99 });
+    }, { passive: true });
+    const startFrac = this.rec.pos?.frac || 0;
+    requestAnimationFrame(() => {
+      if (startFrac > 0) wrap.scrollTop = startFrac * Math.max(0, wrap.scrollHeight - wrap.clientHeight);
+      this.onRelocate({ pos: { frac: startFrac }, progress: startFrac, label: this.rec.title || '小册子', atEnd: false });
+    });
+  }
+  applySettings() {
+    if (!this.wrap) return;
+    this.wrap.style.fontSize = settings.size + 'px';
+    this.wrap.style.lineHeight = String(settings.lh);
+    this.wrap.style.fontFamily = fontStack(true) || '';
+    this.paintMarks();
+  }
+  paintMarks() { if (this.wrap) paintDomHighlights(this.wrap, this.highlights); }
+  setHighlights(list) { this.highlights = list || []; this.paintMarks(); }
+  setSelectMode(on) { if (!on) try { window.getSelection()?.removeAllRanges(); } catch {} }
+  getSelection() {
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed || !this.wrap?.contains(sel.anchorNode)) return null;
+    const text = normalizeQuote(sel.toString());
+    if (!text) return null;
+    const max = Math.max(1, this.wrap.scrollHeight - this.wrap.clientHeight);
+    return { text, pos: { frac: this.wrap.scrollTop / max }, cfiRange: null, ch: 0, page: null };
+  }
+  current() {
+    const max = Math.max(1, (this.wrap?.scrollHeight || 1) - (this.wrap?.clientHeight || 0));
+    const frac = Math.max(0, Math.min(1, (this.wrap?.scrollTop || 0) / max));
+    return { pos: { frac }, progress: frac, label: this.rec.title || '小册子', atEnd: frac >= 0.99 };
+  }
+  async snippet() { return (this.wrap?.innerText || '').trim().slice(0, 140) || this.rec.title || '图文小册子'; }
+  pageText() { return (this.wrap?.innerText || '').trim().slice(0, 2400); }
+  hasLocations() { return true; }
+  next() { this.wrap?.scrollBy({ top: Math.round((this.wrap.clientHeight || 500) * 0.85), behavior: settings.eink ? 'auto' : 'smooth' }); }
+  prev() { this.wrap?.scrollBy({ top: -Math.round((this.wrap.clientHeight || 500) * 0.85), behavior: settings.eink ? 'auto' : 'smooth' }); }
+  goTo(pos) { if (this.wrap && pos?.frac != null) this.wrap.scrollTop = pos.frac * Math.max(0, this.wrap.scrollHeight - this.wrap.clientHeight); }
+  goToFraction(f) { this.goTo({ frac: f }); }
+  toc() {
+    return [...(this.wrap?.querySelectorAll('h1,h2,h3') || [])].map((h, i) => ({ label: h.textContent.trim(), target: i, depth: 0 })).filter(x => x.label);
+  }
+  goToc(i) { const hs = this.wrap?.querySelectorAll('h1,h2,h3'); hs?.[i]?.scrollIntoView({ behavior: settings.eink ? 'auto' : 'smooth' }); }
+  resize() {}
+  destroy() { this.el.innerHTML = ''; this.wrap = null; }
+}
