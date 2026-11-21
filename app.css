@@ -787,9 +787,33 @@ body.theme-night .textLayer span.rr-mark.an{background:rgba(10,132,255,.35)}
 .bot-row:active{transform:scale(.98)}
 .bot-avatar{width:48px;height:48px;flex:none;display:grid;place-items:center;border-radius:14px;overflow:hidden}
 .bot-glyph{width:100%;height:100%;display:block;animation:botFloat 4.8s ease-in-out infinite}
-.bot-eyes{transform-box:fill-box;transform-origin:center;animation:botBlink 4.6s ease-in-out infinite}
-@keyframes botFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-2.5px)}}
-@keyframes botBlink{0%,91%,100%{transform:scaleY(1)}95%{transform:scaleY(.08)}}
+.bot-eyes{transform-box:fill-box;transform-origin:center;animation:botEyesAlive 6.8s cubic-bezier(.4,0,.2,1) infinite}
+.agent-hub.typing .bot-eyes{animation:botEyesRead 2.6s ease-in-out infinite}
+.agent-hub.thinking .bot-glyph{animation:botSquish 1.15s ease-in-out infinite}
+.agent-hub.thinking .bot-eyes{animation:botEyesThink 1.35s ease-in-out infinite}
+@keyframes botFloat{0%,100%{transform:translateY(0) scale(1)}50%{transform:translateY(-3px) scale(1.015,.99)}}
+@keyframes botSquish{0%,100%{transform:translateY(0) scale(1,1)}45%{transform:translateY(-5px) scale(.96,1.04)}75%{transform:translateY(1px) scale(1.03,.97)}}
+@keyframes botEyesAlive{
+  0%,22%{transform:translate(0,0) scaleY(1)}
+  24%{transform:translate(0,0) scaleY(.06)}
+  27%,42%{transform:translate(0,0) scaleY(1)}
+  48%,62%{transform:translate(-3.2px,-1.2px) scaleY(1)}
+  64%{transform:translate(-3.2px,-1.2px) scaleY(.06)}
+  67%,74%{transform:translate(2.8px,-1.4px) scaleY(1)}
+  82%,89%{transform:translate(0,0) scaleY(1)}
+  91%{transform:translate(0,0) scaleY(.06)}
+  94%{transform:translate(0,0) scaleY(1)}
+  96%{transform:translate(0,0) scaleY(.08)}
+  100%{transform:translate(0,0) scaleY(1)}
+}
+@keyframes botEyesRead{
+  0%,100%{transform:translate(-1.8px,3.6px) scaleY(.92)}
+  50%{transform:translate(2.2px,3.8px) scaleY(.92)}
+}
+@keyframes botEyesThink{
+  0%,100%{transform:translate(-3.6px,-2.2px) scaleY(.88)}
+  50%{transform:translate(3.6px,-2.2px) scaleY(.88)}
+}
 .bot-meta{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
 .bot-meta strong{font-size:15px;font-weight:650;color:var(--app-fg)}
 .bot-meta span{font-size:12.5px;color:var(--app-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -848,6 +872,18 @@ body.theme-night .textLayer span.rr-mark.an{background:rgba(10,132,255,.35)}
 .chat-think summary{cursor:pointer;font-weight:600;list-style:none}
 .chat-think p{margin:6px 0 0;line-height:1.55;white-space:pre-wrap}
 .chat-cta{margin-top:8px;display:inline-flex;align-items:center;height:30px;padding:0 13px;border-radius:999px;background:var(--app-accent);color:#fff;font-size:12.5px;font-weight:600}
+.bot-roster{display:flex;flex-direction:column;gap:8px;margin-top:2px}
+.bot-roster-head{display:flex;align-items:center;justify-content:space-between;padding:0 4px}
+.bot-roster-head span{font-size:12px;font-weight:620;color:var(--app-muted);letter-spacing:.02em}
+.bot-roster-add{height:26px;padding:0 10px;border-radius:999px;background:var(--app-fill);font-size:12px;font-weight:600;color:var(--app-accent)}
+.roster-item{display:flex;align-items:center;gap:12px;width:100%;padding:10px 13px;border-radius:18px;background:var(--app-elev);box-shadow:0 0 0 .5px var(--app-line);text-align:left;transition:transform .2s var(--spring),box-shadow .2s}
+.roster-item.on{box-shadow:0 0 0 1.5px var(--app-accent)}
+.roster-item:active{transform:scale(.98)}
+.roster-av{width:38px;height:38px;flex:none;display:grid;place-items:center}
+.roster-av .bot-glyph{width:38px;height:38px;animation:none}
+.roster-txt{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.roster-txt strong{font-size:14.5px;font-weight:650;color:var(--app-fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.roster-txt span{font-size:12.5px;color:var(--app-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .plugin-row{display:flex;align-items:center;gap:12px;padding:13px 14px;border-radius:20px;background:var(--app-elev);box-shadow:0 0 0 .5px var(--app-line);cursor:pointer}
 .ios-switch{position:relative;flex:none;width:48px;height:28px;display:inline-block}
 .ios-switch input{opacity:0;width:0;height:0;position:absolute}

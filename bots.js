@@ -208,7 +208,7 @@ export function openBotStudio({ onSelect, onStatus, onLaunchPlugin, onRunAutomat
               ${ACCENTS.map(c => `<button type="button" class="bots-dot ${editing.accent === c ? 'on' : ''}" style="background:${c}" data-accent="${c}" aria-label="${c}"></button>`).join('')}
             </div>
             <textarea id="bot-f-rules" rows="3" placeholder="由你自由定义它的规则、风格或边界（留空则无预设限制）">${esc(editing.rules)}</textarea>
-            <button type="button" class="bots-primary" data-act="save">保存并同步到桌面小组件</button>
+            <button type="button" class="bots-primary" data-act="save">${editing.isNew ? '创建' : '保存'}</button>
             ${!editing.isNew && list.length > 1 ? `<button type="button" class="bots-danger" data-act="del">删除此 Bot</button>` : ''}
           </div>
         </div>`;
@@ -250,7 +250,11 @@ export function openBotStudio({ onSelect, onStatus, onLaunchPlugin, onRunAutomat
           nextList.push(item);
           saveBots(nextList);
           setActiveBot(item.id);
-          onStatus?.(`已创建「${name}」并同步到桌面小组件`);
+          editing = null;
+          mask.classList.add('hidden');
+          onSelect?.(item, { created: true });
+          onStatus?.(`已创建「${name}」，可以直接开始对话`);
+          return;
         } else {
           const idx = nextList.findIndex(x => x.id === editing.id);
           if (idx >= 0) nextList[idx] = { ...nextList[idx], name, role, rules, shape: editing.shape, accent: editing.accent };
@@ -324,7 +328,7 @@ export function openBotStudio({ onSelect, onStatus, onLaunchPlugin, onRunAutomat
     }
 
     const subtitle = tab === 'bots'
-      ? '形象与规则完全由你定义，实时同步到桌面小组件'
+      ? '点击任意 Bot 直接进入专属对话，形象与规则由你定义'
       : tab === 'automations'
         ? '自定义周期采集、分析与新闻推送'
         : '像开关一样插拔系统能力、外部 MCP/DeepSeek 插件与主题';

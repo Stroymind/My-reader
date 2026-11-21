@@ -2681,7 +2681,7 @@ command = createCommandController({
       }
       case 'openBotStudio': {
         openBotStudio({
-          onSelect: () => renderAgentHub(),
+          onSelect: bot => openBotConversation(bot),
           onStatus: msg => { renderAgentHub(); toast(msg, 2600); },
           onLaunchPlugin: launchPluginById,
           onRunAutomation: runAutomationItem,
@@ -2991,6 +2991,7 @@ async function chatWithActiveBot(text) {
     return;
   }
   renderChatBox(thread, '思考中…');
+  $('#zone-agent-hub')?.classList.add('thinking');
   try {
     const sys = bot.rules ? [{ role: 'system', content: bot.rules }] : [];
     const ctxMsgs = thread.messages.filter(m => !m.needKey).slice(-14).map(m => ({ role: m.role, content: m.content }));
@@ -3003,6 +3004,9 @@ async function chatWithActiveBot(text) {
     thread.messages.push({ role: 'assistant', content: `连接模型失败：${err?.message || '请检查 API 地址、模型名或密钥'}`, needKey: true });
     saveTaskThreads();
     renderChatBox(thread);
+  } finally {
+    $('#zone-agent-hub')?.classList.remove('thinking');
+    renderBotRoster();
   }
 }
 
@@ -3123,6 +3127,74 @@ function syncPluginStates() {
   }
 }
 
+function openBotConversation(bot) {
+  if (!bot) return;
+  setActiveBot(bot.id);
+  let thread = taskThreads.find(t => t.botId === bot.id);
+  if (!thread) {
+    thread = {
+      id: `th-${Date.now().toString(36)}`,
+      title: bot.name,
+      botId: bot.id,
+      messages: [],
+      updatedAt: Date.now()
+    };
+    taskThreads.unshift(thread);
+    saveTaskThreads();
+  }
+  activeThreadId = thread.id;
+  renderAgentHub();
+  if (thread.messages.length) {
+    renderChatBox(thread);
+  } else {
+    $('#zone-chat-box')?.classList.add('hidden');
+  }
+  $('#zone-hero-input')?.focus();
+}
+
+function renderBotRoster() {
+  const roster = $('#zone-bot-roster');
+  if (!roster) return;
+  const bots = listBots();
+  const active = getActiveBot();
+  roster.replaceChildren();
+  if (bots.length <= 1) { roster.classList.add('hidden'); return; }
+  roster.classList.remove('hidden');
+
+  const head = document.createElement('div');
+  head.className = 'bot-roster-head';
+  const lbl = document.createElement('span');
+  lbl.textContent = `我的 Bot 对话（${bots.length}）`;
+  const addBtn = document.createElement('button');
+  addBtn.type = 'button';
+  addBtn.className = 'bot-roster-add';
+  addBtn.textContent = '+ 新建 Bot';
+  addBtn.onclick = () => openBotsFromHub();
+  head.append(lbl, addBtn);
+  roster.appendChild(head);
+
+  for (const b of bots) {
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.className = 'roster-item' + (b.id === active.id ? ' on' : '');
+    const av = document.createElement('div');
+    av.className = 'roster-av';
+    av.innerHTML = renderBotSvg(b.shape, b.accent);
+    const txt = document.createElement('div');
+    txt.className = 'roster-txt';
+    const nameEl = document.createElement('strong');
+    nameEl.textContent = b.name;
+    const th = taskThreads.find(t => t.botId === b.id);
+    const lastMsg = th?.messages?.[th.messages.length - 1]?.content || '';
+    const subEl = document.createElement('span');
+    subEl.textContent = lastMsg ? String(lastMsg).replace(/<think>[\s\S]*?<\/think>\s*/, '').slice(0, 40) : (b.rules ? b.rules.slice(0, 32) : '轻触开始新对话');
+    txt.append(nameEl, subEl);
+    item.append(av, txt);
+    item.onclick = () => openBotConversation(b);
+    roster.appendChild(item);
+  }
+}
+
 function renderAgentHub() {
   syncPluginStates();
   const bot = getActiveBot();
@@ -3136,8 +3208,11 @@ function renderAgentHub() {
   const countEl = $('#zone-hero-count');
   if (countEl) countEl.textContent = bots.length > 1 ? `${bots.length} 个 Bot ▾` : '形象 · 任务 · 插件 ▾';
   const roleEl = $('#zone-hero-role');
-  if (roleEl) roleEl.textContent = bot.role || '轻触形象自定义规则、定时任务与插件';
+  if (roleEl) roleEl.textContent = bot.rules ? bot.rules.slice(0, 36) : '轻触形象切换样式、写规则、管定时任务与插件';
+  const heroInp = $('#zone-hero-input');
+  if (heroInp) heroInp.placeholder = `给 ${bot.name} 发消息，或直接说话…`;
   renderTaskThreadUI();
+  renderBotRoster();
 
   const strip = $('#zone-microapp-strip');
   if (strip) {
@@ -3207,7 +3282,7 @@ async function runAutomationItem(auto, opts = {}) {
   }
 }
 const openBotsFromHub = () => openBotStudio({
-  onSelect: () => renderAgentHub(),
+  onSelect: bot => openBotConversation(bot),
   onStatus: msg => { renderAgentHub(); toast(msg, 2600); },
   onLaunchPlugin: launchPluginById,
   onRunAutomation: runAutomationItem
@@ -3215,6 +3290,8 @@ const openBotsFromHub = () => openBotStudio({
 $('#zone-hero-avatar')?.addEventListener('click', openBotsFromHub);
 $('#zone-hero-switch')?.addEventListener('click', openBotsFromHub);
 $('#zone-hero-mic')?.addEventListener('click', () => command.openBar({ listen: true }));
+$('#zone-hero-input')?.addEventListener('focus', () => $('#zone-agent-hub')?.classList.add('typing'));
+$('#zone-hero-input')?.addEventListener('blur', () => $('#zone-agent-hub')?.classList.remove('typing'));
 $('#zone-hero-form')?.addEventListener('submit', async e => {
   e.preventDefault();
   const inp = $('#zone-hero-input');
