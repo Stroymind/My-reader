@@ -37,13 +37,42 @@ try {
   assert.equal(await page.evaluate(() => window.__app.getAuthUser()?.mode), 'guest');
   await sleep(360);
   await page.screenshot({ path: path.resolve(root, 'test-results/zone-agent-home.png') });
-  // Verify top-left Profile & real BYOK API Usage sheet
+  // Verify top-left Profile, Recharge Balance Estimation, and real Import Memory
   await page.click('#btn-hub-profile');
   await page.waitForFunction(() => !document.querySelector('#zone-profile-mask').classList.contains('hidden'));
-  await sleep(240);
-  await page.screenshot({ path: path.resolve(root, 'test-results/zone-profile-usage.png') });
+  await page.click('#zone-profile-mask [data-p-act="edit-recharge"]');
+  await page.waitForSelector('#prof-recharge-inp');
+  await page.type('#prof-recharge-inp', '50');
+  await page.click('#zone-profile-mask [data-p-act="save-recharge"]');
+  await sleep(160);
+  const balCheck = await page.evaluate(async () => {
+    const aiMod = await import('./ai.js');
+    aiMod.recordAiUsage({ promptTokens: 50000, completionTokens: 20000, totalTokens: 70000 }, 'deepseek-chat');
+    return aiMod.getAiUsage();
+  });
+  assert.equal(balCheck.rechargeAmount, 50, 'recharge baseline saved');
+  assert.ok(balCheck.spentEstimated > 0 && balCheck.spentEstimated < 1, `estimated spend computed from real model price: ${balCheck.spentEstimated}`);
   await page.click('#zone-profile-mask [data-p-act="close"]');
   await page.waitForFunction(() => document.querySelector('#zone-profile-mask').classList.contains('hidden'));
+  await page.click('#btn-hub-profile');
+  await page.waitForFunction(() => !document.querySelector('#zone-profile-mask').classList.contains('hidden'));
+  await sleep(200);
+  await page.screenshot({ path: path.resolve(root, 'test-results/zone-profile-usage.png') });
+  // Open Import Memory from Profile, paste real memories, and verify injection into Bot context
+  await page.click('#zone-profile-mask [data-p-act="import-mem"]');
+  await page.waitForFunction(() => !document.querySelector('#zone-memory-mask').classList.contains('hidden'));
+  await page.type('#zone-mem-input', '- 我是独立开发者，偏好苹果极简设计\n- 常用 Python、Android Capacitor 和 DeepSeek');
+  await page.click('#zone-memory-mask [data-m-act="import-text"]');
+  await sleep(180);
+  const memCtx = await page.evaluate(async () => {
+    const m = await import('./memory.js');
+    return { count: m.listMemories().length, ctx: m.buildMemoryContextForBot('zone-chief', '帮我优化 Android 界面') };
+  });
+  assert.equal(memCtx.count, 2, 'Import Memory parsed 2 clean facts');
+  assert.ok(memCtx.ctx.includes('苹果极简设计') && memCtx.ctx.includes('Android Capacitor'), `Memory injected into Bot prompt: ${memCtx.ctx}`);
+  await page.screenshot({ path: path.resolve(root, 'test-results/zone-import-memory.png') });
+  await page.click('#zone-memory-mask [data-m-act="close"]');
+  await page.waitForFunction(() => document.querySelector('#zone-memory-mask').classList.contains('hidden'));
   // Tap + to verify clean Bot Creator
   await page.click('#btn-hub-newbot');
   await page.waitForFunction(() => !document.querySelector('#zone-bots-mask').classList.contains('hidden'));
@@ -819,6 +848,7 @@ try {
   assert.deepEqual(await page.$$eval('#graph-card .gc-actions button', bs => bs.map(b => b.textContent)), ['编辑', '跃迁原文', '聚焦邻域', '问 AI']);
   await page.$eval('#graph-search', el => { el.value = ''; el.dispatchEvent(new Event('input', { bubbles: true })); });
   await page.waitForFunction(() => document.querySelector('#graph-card').classList.contains('hidden'));
+  await sleep(260);
   await page.click('#btn-graph-search-close');
   assert.equal(await page.$eval('#graph-search-row', el => el.hidden), true);
   report.checks.push('星海 contextual Intent Sheet reveals search on demand, flies to matching stars and offers 跃迁原文 for sourced notes');

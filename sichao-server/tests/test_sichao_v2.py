@@ -145,3 +145,62 @@ def test_byok_agent_endpoint_and_ssrf_guard(tmp_path: Path) -> None:
     # SSRF 安全边界：禁止访问内网地址
     blocked = asyncio.run(tool_fetch_url("http://127.0.0.1:8080/secret"))
     assert "安全拦截" in blocked
+
+    # 外部 MCP / Skill 探测接口同样具备 SSRF 强拦截
+    r_mcp = client.post("/api/mcp/inspect", json={"url": "http://192.168.1.1/mcp"})
+    assert r_mcp.status_code == 200
+    assert r_mcp.json()["ok"] is False and "安全拦截" in r_mcp.json()["error"]
+
+    # BYOK 实时余额接口：无 Key 时不扣平台额度并诚实返回
+    r_bal = client.post("/api/byok/balance")
+    assert r_bal.status_code == 200
+    assert r_bal.json()["ok"] is False
+
+
+def test_parallel_agent_loop_memory_and_usage(tmp_path: Path, monkeypatch) -> None:
+    from sichao import agent as agent_mod
+    from sichao.gateway import ModelGateway
+
+    async def fake_web(q: str) -> str:
+        return f"- {q} 官方发布\n  URL: https://example.org/{q}\n  摘要: 2026 最新详情"
+
+    async def fake_gh(q: str) -> str:
+        return f"- demo/{q} (★999, Python)\n  URL: https://github.com/demo/{q}\n  简介: 开源项目"
+
+    monkeypatch.setitem(agent_mod.TOOL_REGISTRY, "web_search", fake_web)
+    monkeypatch.setitem(agent_mod.TOOL_REGISTRY, "github_search", fake_gh)
+
+    turns: list[list[dict[str, str]]] = []
+
+    class FakeGateway(ModelGateway):
+        def __init__(self) -> None:
+            super().__init__(api_key="sk-test-byok", base_url="https://api.example.com/v1", model="test-model")
+
+        async def complete_with_usage(self, messages, temperature=0.2):
+            turns.append(messages)
+            if len(turns) == 1:
+                return (
+                    '{"tools":[{"tool":"web_search","arg":"zone"},{"tool":"github_search","arg":"agent"}]}',
+                    {"prompt_tokens": 120, "completion_tokens": 30, "total_tokens": 150},
+                )
+            return (
+                "已为你并行查完并汇总，详见 https://github.com/demo/agent 。",
+                {"prompt_tokens": 260, "completion_tokens": 80, "total_tokens": 340},
+            )
+
+    res = asyncio.run(
+        agent_mod.run_byok_agent_loop(
+            FakeGateway(),
+            [{"role": "user", "content": "帮我调研开源 agent 框架"}],
+            rules="简洁回答",
+            memory="用户偏好苹果极简风格，使用 Python 与 Android。",
+            ext_plugins=[{"name": "写作规范", "protocol": "skill_md", "instructions": "结论先行，列出参考来源。"}],
+            max_steps=4,
+        )
+    )
+    assert res["ok"] is True
+    assert len(res["steps"]) == 2
+    assert len(res["sources"]) == 2
+    assert res["usage"] == {"prompt_tokens": 380, "completion_tokens": 110, "total_tokens": 490}
+    assert "用户偏好苹果极简风格" in turns[0][0]["content"]
+    assert "写作规范" in turns[0][0]["content"]

@@ -6,8 +6,9 @@ import { fetchLiveSignals, getSichaoApi, initSichao, setSichaoApi } from './sich
 import { getPhoneUseStatus, openPhoneUseSettings, runPhoneUseTask } from './phone-use.js';
 import { closeMicroApp, consumeLaunchDeepLink, craftMicroApp, isMicroAppOpen, listMicroApps, openMicroApp, pinToDesktop } from './agent-surface.js';
 import { applyThemePlugin, closeBotStudio, getActiveBot, getActiveThemePlugin, getBotPlugins, getPrimaryBot, isPluginEnabled, isPluginMountedOnBot, listBots, listGroups, listPlugins, openBotStudio, renderBotSvg, renderGroupAvatarHtml, setActiveBot, syncToAndroidWidget, toggleBotPlugin } from './bots.js';
+import { buildMemoryContextForBot, closeImportMemorySheet, listMemories, openImportMemorySheet } from './memory.js';
 import { BookletEngine, EpubEngine, PdfEngine, TxtEngine } from './engines.js';
-import { aiConfigured, complete as aiComplete, getAiConfig, getAiUsage, recordAiUsage, resetAiUsage, setAiBudget } from './ai.js';
+import { aiConfigured, complete as aiComplete, fetchLiveBalance, getAiConfig, getAiUsage, getModelPricing, recordAiUsage, resetAiUsage, setAiBudget, setRechargeBalance } from './ai.js';
 import { settings, saveSettings, applyBodyTheme, applyAppearance, appearancePref, cycleAppearance, applyCustomFontBlob, FONTS, THEMES } from './settings.js';
 import { isMostlyCjk, translateVisible } from './bilingual.js';
 import { backfillFromBooks, createNote, deleteBookBundle, parseTags, syncBook } from './knowledge.js';
@@ -2062,10 +2063,17 @@ function openBotPluginsSheet(bot = getActiveBot()) {
               </div>`;
           }).join('')}
         </div>
-        <button type="button" class="bots-secondary" data-bp-act="manage">前往插件中心管理或安装 MCP ›</button>
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <button type="button" class="bots-secondary" data-bp-act="memory">导入外部记忆（当前 Bot / 全局 · ${listMemories().length} 条）</button>
+          <button type="button" class="bots-secondary" data-bp-act="manage">前往插件中心管理或安装远程 MCP ›</button>
+        </div>
       </div>`;
     mask.onclick = e => { if (e.target === mask) closeBotPluginsSheet(); };
     mask.querySelector('[data-bp-act="close"]').onclick = () => closeBotPluginsSheet();
+    mask.querySelector('[data-bp-act="memory"]').onclick = () => {
+      closeBotPluginsSheet();
+      openZoneMemorySheet(bot.id);
+    };
     mask.querySelector('[data-bp-act="manage"]').onclick = () => {
       closeBotPluginsSheet();
       openBotsFromHub({ initialTab: 'plugins' });
@@ -2108,6 +2116,7 @@ function openBotPluginsSheet(bot = getActiveBot()) {
 
 function handleBack() {
   if (command?.closeBar(true)) return true;
+  if (closeImportMemorySheet()) return true;
   if (closeBotPluginsSheet()) return true;
   if (closeBotReaderSheet()) return true;
   if (closeProfileSheet()) return true;
@@ -3677,6 +3686,104 @@ async function relayBotToBotMessage(fromBot, targetBot, messageText) {
   return reply;
 }
 
+function mountedExtPluginsFor(botId) {
+  const ids = getBotPlugins(botId);
+  const all = listPlugins();
+  return ids
+    .map(id => all.find(p => p.id === id))
+    .filter(p => p && p.enabled && p.id.startsWith('ext-') && p.verified)
+    .map(p => ({
+      name: p.name,
+      url: p.url || '',
+      token: p.token || '',
+      protocol: p.protocol || '',
+      tools: Array.isArray(p.tools) ? p.tools : [],
+      instructions: p.instructions || ''
+    }));
+}
+
+async function inspectExternalPluginRemote({ url, token = '' } = {}) {
+  const api = getSichaoApi();
+  if (!api) return { ok: false, error: '未配置云端代理地址，无法探测远程 MCP' };
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 45000);
+  try {
+    const r = await fetch(`${api}/api/mcp/inspect`, {
+      method: 'POST',
+      signal: ctrl.signal,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url, token })
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) return { ok: false, error: data?.detail || `HTTP ${r.status}` };
+    return data;
+  } catch (err) {
+    return { ok: false, error: err?.name === 'AbortError' ? '云端节点正在唤醒或目标超时，请稍后再试' : (err?.message || '网络异常') };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function openZoneMemorySheet(defaultScope = 'global') {
+  openImportMemorySheet({
+    bots: listBots(),
+    defaultScope,
+    onCopyPrompt: txt => copyText(txt),
+    onToast: (msg, ms) => toast(msg, ms),
+    onChanged: () => renderAgentHub(),
+    onSyncToKnowledge: async items => {
+      const body = items.map(m => `- ${m.text}（来源：${m.source}）`).join('\n');
+      await createNote({
+        title: `我的外部记忆归档（${items.length} 条）`,
+        body: body || '暂无外部记忆',
+        tags: ['个人记忆', 'ImportMemory']
+      });
+      await refreshWorkspace();
+    }
+  });
+}
+
+async function runCloudByokAgent(bot, ctxMsgs, memoryCtx, extPlugs, rulesOverride = '') {
+  const api = getSichaoApi();
+  if (!api) return null;
+  const cfg = getAiConfig();
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 72000);
+  try {
+    const r = await fetch(`${api}/api/agent/run`, {
+      method: 'POST',
+      signal: ctrl.signal,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-User-Api-Key': cfg.apiKey || '',
+        'X-User-Base-Url': cfg.baseUrl || '',
+        'X-User-Model': cfg.model || ''
+      },
+      body: JSON.stringify({
+        messages: ctxMsgs,
+        rules: rulesOverride || bot.rules || '',
+        memory: memoryCtx || '',
+        ext_plugins: extPlugs || [],
+        max_steps: 4
+      })
+    });
+    if (!r.ok) return null;
+    const data = await r.json().catch(() => null);
+    if (!data?.ok || !data.reply) return null;
+    if (data.usage?.total_tokens > 0) {
+      recordAiUsage(data.usage, cfg.model || '');
+    } else {
+      const stepsLen = Array.isArray(data.steps) ? data.steps.length : 0;
+      recordAiUsage(Math.ceil((JSON.stringify(ctxMsgs).length + data.reply.length + stepsLen * 400) * 0.65), cfg.model || '');
+    }
+    return data;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function chatWithActiveGroup(text) {
   const q = String(text || '').trim();
   if (!q || !activeGroupId) return;
@@ -3737,15 +3844,31 @@ async function chatWithActiveGroup(text) {
       const b = queue[idx];
       if (respondedIds.has(b.id)) continue;
       respondedIds.add(b.id);
-      renderChatBox(thread, `${b.name} 正在群内回复…`);
+      const memCtx = buildMemoryContextForBot(b.id, q);
+      const extPlugs = mountedExtPluginsFor(b.id);
+      const useCloud = (isPluginMountedOnBot(b.id, 'mcp-bridge') || extPlugs.length > 0) && getSichaoApi() && q.length >= 6;
+      renderChatBox(thread, `${b.name} ${useCloud ? '正在联网协同思考…' : '正在群内回复…'}`);
       const peers = members.filter(x => x.id !== b.id).map(x => `${x.name}${x.rules ? `(${x.rules.slice(0, 20)})` : ''}`).join('、');
       const sysPrompt = [
         b.rules ? b.rules : `你是群聊中的智能体「${b.name}」。`,
+        memCtx ? `[用户已导入的个人记忆]\n${memCtx}` : '',
         `当前你在多 Bot 群聊「${group.name}」中，同群成员有：${peers || '无'}。`,
         '请站在你的职责与视角简洁发言，不要重复前面同事已说过的观点；若本轮无需你发言，请仅回复 [[PASS]]。',
         '如需交接给同群某位成员继续，可在回复中 @对方名字；如需用户确认某项操作，可输出 [[CONFIRM:标题|目标|说明|指令]]；如需输出卡片，可输出 [[CARD:来源|标题|副标题|详情|https://链接]]。'
-      ].join('\n');
-      const rawAns = String(await aiComplete([{ role: 'system', content: sysPrompt }, ...buildGroupCtx()]) || '').trim();
+      ].filter(Boolean).join('\n');
+      let rawAns = '';
+      if (useCloud) {
+        const cloudData = await runCloudByokAgent(b, buildGroupCtx(), memCtx, extPlugs, sysPrompt);
+        if (cloudData?.reply) {
+          const steps = Array.isArray(cloudData.steps) ? cloudData.steps : [];
+          rawAns = steps.length
+            ? `<think>已执行 ${steps.length} 次云端联网工具：\n${steps.map((st, i) => `${i + 1}. [${st.tool}] ${st.arg}\n${st.preview}`).join('\n\n')}</think>\n${cloudData.reply}`
+            : cloudData.reply;
+        }
+      }
+      if (!rawAns) {
+        rawAns = String(await aiComplete([{ role: 'system', content: sysPrompt }, ...buildGroupCtx()]) || '').trim();
+      }
       if (!rawAns || /^\[\[PASS\]\]$/i.test(rawAns)) continue;
       const parsed = parseBotCardDirectives(rawAns);
       if (parsed.text) {
@@ -3806,9 +3929,10 @@ async function chatWithActiveBot(text) {
     renderBotRoster();
     return;
   }
-  const wantsCloudTools = isPluginMountedOnBot(bot.id, 'mcp-bridge') && getSichaoApi()
-    && /(https?:\/\/|搜索|查一下|帮我查|帮我搜|帮我找|联网|最新|github|arxiv|论文|调研|汇总|对比|新闻|网页|分析这个链接)/i.test(q);
-  renderChatBox(thread, wantsCloudTools ? '正在联网检索与多步推理…' : '思考中…');
+  const memoryCtx = buildMemoryContextForBot(bot.id, q);
+  const extPlugs = mountedExtPluginsFor(bot.id);
+  const canUseCloudEngine = (isPluginMountedOnBot(bot.id, 'mcp-bridge') || extPlugs.length > 0) && !!getSichaoApi() && (q.length >= 4 || extPlugs.length > 0);
+  renderChatBox(thread, canUseCloudEngine ? '云端多步 Agent 思考与按需联网中…' : '思考中…');
   $('#zone-chat-modal')?.classList.add('thinking');
   try {
     // 只携带最后一条「新话题分割线」之后的上下文，彻底零串味、省 Token
@@ -3817,48 +3941,33 @@ async function chatWithActiveBot(text) {
       if (thread.messages[i]?.role === 'divider') { startIdx = i + 1; break; }
     }
     const ctxMsgs = thread.messages.slice(startIdx).filter(m => !m.needKey && !m.internal && (m.role === 'user' || m.role === 'assistant')).slice(-14).map(m => ({ role: m.role, content: m.content }));
+    const otherBots = listBots().filter(b => b.id !== bot.id);
+    const peerHint = otherBots.length
+      ? `你可后台静默联系的其他 Bot：${otherBots.map(b => `${b.name}${b.rules ? `(${b.rules.slice(0, 22)})` : ''}`).join('、')}。如任务需要交给某位 Bot 协同，可输出 [[MSG_BOT:对方Bot名|具体委托内容]]，系统会后台静默通讯并把结果交回给你，不会打扰用户。`
+      : '';
+    const cardHint = '如需用户点击卡片确认后再执行关键任务，可在回复末尾另起一行输出 [[CONFIRM:标题|目标或链接|简短说明|确认后指令]]；如产出关键链接/PR/报告卡片，可输出 [[CARD:来源|标题|副标题|详情|https://链接]]。';
+    const combinedRules = [bot.rules || '', peerHint, cardHint].filter(Boolean).join('\n\n');
+
     let ans = '';
     let cloudSteps = [];
-    if (wantsCloudTools) {
-      try {
-        const cfg = getAiConfig();
-        const ctrl = new AbortController();
-        const timer = setTimeout(() => ctrl.abort(), 38000);
-        try {
-          const r = await fetch(`${getSichaoApi()}/api/agent/run`, {
-            method: 'POST',
-            signal: ctrl.signal,
-            headers: {
-              'Content-Type': 'application/json',
-              'X-User-Api-Key': cfg.apiKey || '',
-              'X-User-Base-Url': cfg.baseUrl || '',
-              'X-User-Model': cfg.model || ''
-            },
-            body: JSON.stringify({ messages: ctxMsgs, rules: bot.rules || '', max_steps: 3 })
-          });
-          if (r.ok) {
-            const data = await r.json();
-            if (data?.ok && data.reply) {
-              cloudSteps = Array.isArray(data.steps) ? data.steps : [];
-              recordAiUsage(Math.ceil((JSON.stringify(ctxMsgs).length + data.reply.length + cloudSteps.length * 400) * 0.65), cfg.model || '');
-              if (cloudSteps.length) {
-                const trace = cloudSteps.map((st, i) => `${i + 1}. [${st.tool}] ${st.arg}\n${st.preview}`).join('\n\n');
-                ans = `<think>已通过云端多步引擎执行 ${cloudSteps.length} 次真实联网工具：\n${trace}</think>\n${data.reply}`;
-              } else {
-                ans = data.reply;
-              }
-            }
-          }
-        } finally { clearTimeout(timer); }
-      } catch {}
+    let cloudSources = [];
+    if (canUseCloudEngine) {
+      const data = await runCloudByokAgent(bot, ctxMsgs, memoryCtx, extPlugs, combinedRules);
+      if (data?.reply) {
+        cloudSteps = Array.isArray(data.steps) ? data.steps : [];
+        cloudSources = Array.isArray(data.sources) ? data.sources : [];
+        if (cloudSteps.length) {
+          const trace = cloudSteps.map((st, i) => `${i + 1}. [${st.tool}] ${st.arg}\n${st.preview}`).join('\n\n');
+          ans = `<think>已通过云端多步引擎执行 ${cloudSteps.length} 次真实工具：\n${trace}</think>\n${data.reply}`;
+        } else {
+          ans = data.reply;
+        }
+      }
     }
-    const otherBots = listBots().filter(b => b.id !== bot.id);
     if (!ans) {
-      const peerHint = otherBots.length
-        ? `你可后台静默联系的其他 Bot：${otherBots.map(b => `${b.name}${b.rules ? `(${b.rules.slice(0, 22)})` : ''}`).join('、')}。如任务需要交给某位 Bot 协同，可输出 [[MSG_BOT:对方Bot名|具体委托内容]]，系统会后台静默通讯并把结果交回给你，不会打扰用户。`
-        : '';
-      const cardHint = '如需用户点击卡片确认后再执行关键任务，可在回复末尾另起一行输出 [[CONFIRM:标题|目标或链接|简短说明|确认后指令]]；如产出关键链接/PR/报告卡片，可输出 [[CARD:来源|标题|副标题|详情|https://链接]]。';
-      const sysContent = [bot.rules || '', peerHint, cardHint].filter(Boolean).join('\n\n');
+      const skillBlocks = extPlugs.filter(p => p.protocol === 'skill_md' && p.instructions).map(p => `[已挂载 Skill「${p.name}」]\n${p.instructions.slice(0, 1800)}`).join('\n\n');
+      const memBlock = memoryCtx ? `[用户已导入的个人记忆（请自然结合但无需逐条复述）]\n${memoryCtx}` : '';
+      const sysContent = [combinedRules, memBlock, skillBlocks].filter(Boolean).join('\n\n');
       ans = await aiComplete([{ role: 'system', content: sysContent }, ...ctxMsgs]);
     }
     // 处理 Bot 间静默后台通讯（最多 2 次接力，绝不刷屏、绝不死循环）
@@ -3893,8 +4002,13 @@ async function chatWithActiveBot(text) {
       thread.messages.push({ role: 'card', card: { id: `card-${uid()}`, ...c }, at: Date.now() });
     }
     if (cloudSteps.length && !parsed.cards.length) {
+      const topSrc = cloudSources[0] || null;
       const allText = `${parsed.text}\n${cloudSteps.map(s => `${s.arg} ${s.preview}`).join('\n')}`;
-      const urlHit = allText.match(/https?:\/\/[^\s<>"')]+/);
+      const fallbackUrl = allText.match(/https?:\/\/[^\s<>"')]+/)?.[0] || '';
+      const bestUrl = topSrc?.url || fallbackUrl;
+      const srcNote = cloudSources.length > 1
+        ? `已核验 ${cloudSources.length} 个公开来源：${cloudSources.slice(0, 3).map(s => s.title).join(' · ')}`
+        : cloudSteps.map(s => `${s.tool}: ${s.arg}`).join('；');
       thread.messages.push({
         role: 'card',
         card: {
@@ -3904,13 +4018,13 @@ async function chatWithActiveBot(text) {
           provider: '云端 Agent',
           status: 'Done',
           statusTone: 'ok',
-          title: q.slice(0, 36),
-          meta: urlHit ? urlHit[0] : cloudSteps.map(s => s.tool).join(' · '),
+          title: topSrc?.title || q.slice(0, 36),
+          meta: bestUrl || cloudSteps.map(s => s.tool).join(' · '),
           badge: `${cloudSteps.length} 步工具`,
-          detail: cloudSteps.map(s => `${s.tool}: ${s.arg}`).join('；').slice(0, 140),
-          url: urlHit ? urlHit[0] : '',
-          secondaryLabel: urlHit ? '复制链接' : '',
-          primaryLabel: urlHit ? '打开链接' : ''
+          detail: srcNote.slice(0, 160),
+          url: bestUrl,
+          secondaryLabel: bestUrl ? '复制链接' : '',
+          primaryLabel: bestUrl ? '打开链接' : ''
         },
         at: Date.now()
       });
@@ -4178,11 +4292,28 @@ function openProfileSheet() {
     mask.className = 'bots-mask hidden';
     document.body.appendChild(mask);
   }
+  let editingRecharge = false;
+  let checkingLive = false;
   const draw = () => {
     const u = getAiUsage();
     const cfg = getAiConfig();
-    const pct = Math.min(100, Math.round((u.monthTokens / Math.max(1, u.budget)) * 100));
+    const pr = getModelPricing(cfg.model, cfg.baseUrl);
+    const sym = u.currency === 'USD' ? '$' : '¥';
+    const liveSym = u.liveCurrency === 'USD' ? '$' : '¥';
+    const spent = Number(u.spentEstimated || 0);
+    const recharge = Number(u.rechargeAmount || 0);
+    const estRemain = recharge > 0 ? Math.max(0, recharge - spent) : null;
+    const pct = recharge > 0
+      ? Math.min(100, Math.round((spent / recharge) * 100))
+      : Math.min(100, Math.round((u.monthTokens / Math.max(1, u.budget)) * 100));
     const appMap = { system: '跟随系统', light: '浅色', dark: '深色' };
+    const memCount = listMemories().length;
+    const balLine = u.liveBalance != null
+      ? `${u.liveProvider || '官方'}实测余额 ${liveSym}${Number(u.liveBalance).toFixed(2)} · 累计估算已花 ${sym}${spent.toFixed(4)}`
+      : estRemain != null
+        ? `充值 ${sym}${recharge.toFixed(2)} · 预估已花 ${sym}${spent.toFixed(4)} · 估算剩余 ${sym}${estRemain.toFixed(2)}`
+        : `未填充值金额 · 当前按「${pr.label}」估算已花 ${sym}${spent.toFixed(4)}（${pr.currency === 'USD' ? '$' : '¥'}${pr.inPerM}/${pr.outPerM} 每百万）`;
+
     mask.innerHTML = `
       <div class="bots-sheet" role="dialog" aria-label="Zone 账号与 API 用量">
         <div class="bots-head">
@@ -4200,27 +4331,52 @@ function openProfileSheet() {
             </div>
             <span class="prof-row-val">配置 ›</span>
           </button>
-          <button type="button" class="prof-row" data-p-act="usage-budget">
+          <button type="button" class="prof-row" data-p-act="edit-recharge">
             <div class="prof-row-main">
-              <strong>API 用量（本月）</strong>
-              <span>今日 ${formatTokens(u.todayTokens)} · 本月 ${formatTokens(u.monthTokens)} / ${formatTokens(u.budget)}（${u.calls} 次调用）</span>
+              <strong>API 余额与用量估算</strong>
+              <span>${balLine}</span>
+              <span>今日 ${formatTokens(u.todayTokens)} · 本月 ${formatTokens(u.monthTokens)} tokens（${u.calls} 次调用）</span>
             </div>
-            <span class="prof-row-val">${pct}% ›</span>
+            <span class="prof-row-val">${estRemain != null ? `${sym}${estRemain.toFixed(2)}` : `${pct}%`} ›</span>
           </button>
           <div class="prof-usage-bar"><div class="prof-usage-fill" style="width:${pct}%"></div></div>
+          ${editingRecharge ? `
+            <div class="prof-recharge-box">
+              <div class="prof-recharge-row">
+                <button type="button" class="bot-edit" data-p-cur="CNY" style="${u.currency === 'CNY' ? 'background:var(--app-fg);color:var(--app-bg)' : ''}">¥ 人民币</button>
+                <button type="button" class="bot-edit" data-p-cur="USD" style="${u.currency === 'USD' ? 'background:var(--app-fg);color:var(--app-bg)' : ''}">$ 美元</button>
+                <input id="prof-recharge-inp" type="number" step="0.01" min="0" placeholder="输入充值余额，如 50" value="${recharge || ''}">
+              </div>
+              <button type="button" class="bots-primary" style="height:38px;font-size:14px" data-p-act="save-recharge">保存充值基数并开始实时估算</button>
+            </div>
+          ` : ''}
+          <button type="button" class="prof-row" data-p-act="refresh-bal">
+            <div class="prof-row-main">
+              <strong>${checkingLive ? '正在查询官方余额…' : '刷新官方实时余额'}</strong>
+              <span>支持 DeepSeek / OpenRouter / 硅基流动直查；其他服务商按充值额自动估算</span>
+            </div>
+            <span class="prof-row-val">${checkingLive ? '…' : '刷新 ›'}</span>
+          </button>
           <button type="button" class="prof-row" data-p-act="usage-reset">
             <div class="prof-row-main">
               <strong>重置用量统计</strong>
-              <span>清零本机记录的今日与本月 Token 计数</span>
+              <span>清零本机记录的 Token 计数与估算花费</span>
             </div>
             <span class="prof-row-val">清零</span>
           </button>
         </div>
         <div class="prof-group">
+          <button type="button" class="prof-row" data-p-act="import-mem">
+            <div class="prof-row-main">
+              <strong>导入外部记忆（Import Memory）</strong>
+              <span>一键迁移 ChatGPT / Claude / DeepSeek / Grok 记忆到 Bot 对话</span>
+            </div>
+            <span class="prof-row-val">${memCount ? `${memCount} 条 ›` : '导入 ›'}</span>
+          </button>
           <button type="button" class="prof-row" data-p-act="plugins">
             <div class="prof-row-main">
-              <strong>连接应用、插件与主题</strong>
-              <span>Phone-Use · Computer-Use · MCP · 阅读器</span>
+              <strong>连接应用、远程 MCP 与主题</strong>
+              <span>Phone-Use · Computer-Use · 远程 MCP · 阅读器</span>
             </div>
             <span class="prof-row-val">›</span>
           </button>
@@ -4228,13 +4384,6 @@ function openProfileSheet() {
             <div class="prof-row-main">
               <strong>定时任务与新闻推送</strong>
               <span>自定义周期运行与推送任务</span>
-            </div>
-            <span class="prof-row-val">›</span>
-          </button>
-          <button type="button" class="prof-row" data-p-act="import-mem">
-            <div class="prof-row-main">
-              <strong>导入外部记忆（Import Memory）</strong>
-              <span>支持导入 Markdown / TXT / 文档到知识库</span>
             </div>
             <span class="prof-row-val">›</span>
           </button>
@@ -4250,7 +4399,7 @@ function openProfileSheet() {
           <div class="prof-row">
             <div class="prof-row-main">
               <strong>安全与权限审批</strong>
-              <span>付款 / 删除 / 正式发送强拦截 · 内网 SSRF 防护</span>
+              <span>付款 / 删除 / 正式发送卡片拦截 · 内网 SSRF 防护</span>
             </div>
             <span class="prof-row-val">已开启</span>
           </div>
@@ -4259,20 +4408,41 @@ function openProfileSheet() {
     mask.onclick = e => { if (e.target === mask) closeProfileSheet(); };
     mask.querySelector('[data-p-act="close"]').onclick = () => closeProfileSheet();
     mask.querySelector('[data-p-act="ai-cfg"]').onclick = () => { closeProfileSheet(); openAiSettingsDialog(); };
-    mask.querySelector('[data-p-act="usage-budget"]').onclick = () => {
-      const nextBudget = u.budget === 1000000 ? 5000000 : u.budget === 5000000 ? 10000000 : u.budget === 10000000 ? 500000 : 1000000;
-      setAiBudget(nextBudget);
-      toast(`已将月度用量参考上限设为 ${formatTokens(nextBudget)} tokens`, 2400);
+    mask.querySelector('[data-p-act="edit-recharge"]').onclick = () => { editingRecharge = !editingRecharge; draw(); };
+    mask.querySelectorAll('[data-p-cur]').forEach(btn => {
+      btn.onclick = () => { setRechargeBalance(u.rechargeAmount, btn.dataset.pCur); draw(); };
+    });
+    const saveRec = mask.querySelector('[data-p-act="save-recharge"]');
+    if (saveRec) {
+      saveRec.onclick = () => {
+        const val = Number(mask.querySelector('#prof-recharge-inp')?.value || 0);
+        setRechargeBalance(val, u.currency);
+        editingRecharge = false;
+        toast(val > 0 ? `已设定充值基数 ${sym}${val.toFixed(2)}，后续对话自动实时扣减估算` : '已清除充值基数', 2600);
+        draw();
+      };
+    }
+    mask.querySelector('[data-p-act="refresh-bal"]').onclick = async () => {
+      if (checkingLive) return;
+      if (!aiConfigured()) { toast('请先配置你的 API Key'); return; }
+      checkingLive = true; draw();
+      const res = await fetchLiveBalance(getSichaoApi());
+      checkingLive = false;
+      if (res?.ok) {
+        toast(`${res.provider || '官方'}实时余额：${res.currency === 'USD' ? '$' : '¥'}${Number(res.balance).toFixed(2)}`, 3000);
+      } else {
+        toast(res?.reason || '该服务商未开放直接查余额，可点上方填入充值金额估算', 3400);
+      }
       draw();
     };
     mask.querySelector('[data-p-act="usage-reset"]').onclick = () => {
       resetAiUsage();
-      toast('已清零本地 API 用量统计', 2000);
+      toast('已清零本地 API 用量与花费统计', 2000);
       draw();
     };
     mask.querySelector('[data-p-act="plugins"]').onclick = () => { closeProfileSheet(); openBotsFromHub({ initialTab: 'plugins' }); };
     mask.querySelector('[data-p-act="automations"]').onclick = () => { closeProfileSheet(); openBotsFromHub({ initialTab: 'automations' }); };
-    mask.querySelector('[data-p-act="import-mem"]').onclick = () => { closeProfileSheet(); $('#file-input')?.click(); };
+    mask.querySelector('[data-p-act="import-mem"]').onclick = () => { closeProfileSheet(); openZoneMemorySheet('global'); };
     mask.querySelector('[data-p-act="appearance"]').onclick = () => { cycleAppearance(); draw(); };
   };
   draw();
@@ -4367,6 +4537,7 @@ const openBotsFromHub = (opts = {}) => openBotStudio({
   onStatus: msg => { renderAgentHub(); if (!$('#zone-chat-modal')?.classList.contains('hidden')) renderChatBox(taskThreads.find(t => t.id === activeThreadId)); toast(msg, 2600); },
   onLaunchPlugin: launchPluginById,
   onRunAutomation: runAutomationItem,
+  onInspectPlugin: inspectExternalPluginRemote,
   ...opts
 });
 $('#zone-hero-card')?.addEventListener('click', () => openBotConversation(getPrimaryBot()));

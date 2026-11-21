@@ -294,7 +294,7 @@ function esc(s) {
   return String(s || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
-export function openBotStudio({ onSelect, onSelectGroup, onStatus, onLaunchPlugin, onRunAutomation, initialTab = 'bots', startNew = false, startNewGroup = false, editBotId = '', editGroupId = '' } = {}) {
+export function openBotStudio({ onSelect, onSelectGroup, onStatus, onLaunchPlugin, onRunAutomation, onInspectPlugin, initialTab = 'bots', startNew = false, startNewGroup = false, editBotId = '', editGroupId = '' } = {}) {
   let mask = document.getElementById('zone-bots-mask');
   if (!mask) {
     mask = document.createElement('div');
@@ -536,30 +536,78 @@ export function openBotStudio({ onSelect, onSelectGroup, onStatus, onLaunchPlugi
 
     if (addingPlugin) {
       mask.innerHTML = `
-        <div class="bots-sheet" role="dialog" aria-label="安装插件 / MCP">
+        <div class="bots-sheet" role="dialog" aria-label="安装远程 MCP / Skill 插件">
           <div class="bots-head">
-            <h3>安装外部插件 / MCP</h3>
+            <div>
+              <h3>安装远程 MCP / Skill</h3>
+              <p>实测连通远程 Streamable HTTP MCP（自动发现 tools/list 并真实调用）或公开 SKILL.md；本地电脑 stdio MCP 请用「Computer-Use」桥接。</p>
+            </div>
             <button type="button" class="bots-close" data-act="cancel-plug">返回</button>
           </div>
           <div class="bots-form">
-            <input id="plug-f-name" type="text" placeholder="插件名称（兼容 MCP / DeepSeek / OpenClaw 技能）">
-            <input id="plug-f-url" type="url" placeholder="插件地址（https://.../mcp 或 Skill URL）">
-            <input id="plug-f-desc" type="text" placeholder="能力说明">
-            <button type="button" class="bots-primary" data-act="save-plug">安装并开启开关</button>
+            <input id="plug-f-url" type="url" placeholder="必填：远程 MCP 地址 (https://.../mcp) 或 SKILL.md 链接">
+            <input id="plug-f-token" type="password" placeholder="可选：Bearer Token / API Key（无需鉴权可留空）">
+            <input id="plug-f-name" type="text" placeholder="可选：自定义插件名（留空自动读取远端名称）">
+            <p id="plug-f-err" class="sc-empty hidden" style="padding:6px 2px;color:var(--app-danger);text-align:left"></p>
+            <button type="button" class="bots-primary" data-act="save-plug">实测连通并安装</button>
           </div>
         </div>`;
       mask.querySelector('[data-act="cancel-plug"]').onclick = () => { addingPlugin = false; draw(); };
-      mask.querySelector('[data-act="save-plug"]').onclick = () => {
-        const name = mask.querySelector('#plug-f-name').value.trim();
+      mask.querySelector('[data-act="save-plug"]').onclick = async () => {
+        const btn = mask.querySelector('[data-act="save-plug"]');
+        const errEl = mask.querySelector('#plug-f-err');
         const url = mask.querySelector('#plug-f-url').value.trim();
-        const desc = mask.querySelector('#plug-f-desc').value.trim() || url || '外部互通插件';
-        if (!name) return;
-        const next = listPlugins();
-        next.push({ id: `ext-${Date.now().toString(36)}`, name, desc, url, enabled: true, launchable: false });
-        savePlugins(next);
-        addingPlugin = false;
-        onStatus?.(`已安装插件「${name}」`);
-        draw();
+        const token = mask.querySelector('#plug-f-token').value.trim();
+        const customName = mask.querySelector('#plug-f-name').value.trim();
+        if (!/^https?:\/\//i.test(url)) {
+          errEl.textContent = '请输入以 http:// 或 https:// 开头的远程 MCP 或 SKILL.md 链接';
+          errEl.classList.remove('hidden');
+          return;
+        }
+        errEl.classList.add('hidden');
+        btn.disabled = true;
+        btn.textContent = '正在实测连通并探测工具…';
+        try {
+          const res = await onInspectPlugin?.({ url, token });
+          if (!res?.ok) {
+            errEl.textContent = res?.error || '远端探测失败，请检查地址或 Token 是否可用';
+            errEl.classList.remove('hidden');
+            btn.disabled = false;
+            btn.textContent = '实测连通并安装';
+            return;
+          }
+          const finalName = customName || res.name || '外部 MCP';
+          const pid = `ext-${Date.now().toString(36)}`;
+          const toolNames = (res.tools || []).map(t => t.name).slice(0, 4).join(' / ');
+          const desc = res.protocol === 'mcp'
+            ? `已实测连通远程 MCP · ${(res.tools || []).length} 个工具${toolNames ? `（${toolNames}）` : ''}`
+            : (res.summary || '已实测拉取 SKILL.md 技能规范');
+          const next = listPlugins();
+          next.push({
+            id: pid,
+            name: finalName,
+            short: finalName.slice(0, 10),
+            desc,
+            url,
+            token,
+            protocol: res.protocol,
+            tools: res.tools || [],
+            instructions: res.instructions || '',
+            verified: true,
+            enabled: true,
+            launchable: false
+          });
+          savePlugins(next);
+          toggleBotPlugin(getActiveBot().id, pid, true);
+          addingPlugin = false;
+          onStatus?.(`已实测安装「${finalName}」并挂载到「${getActiveBot().name}」`);
+          draw();
+        } catch (err) {
+          errEl.textContent = err?.message || '探测异常，请稍后重试';
+          errEl.classList.remove('hidden');
+          btn.disabled = false;
+          btn.textContent = '实测连通并安装';
+        }
       };
       return;
     }
@@ -636,6 +684,7 @@ export function openBotStudio({ onSelect, onSelectGroup, onStatus, onLaunchPlugi
                         const mounted = getBotPlugins(b.id).includes(pl.id);
                         return `<button type="button" class="plugin-bot-chip ${mounted ? 'on' : ''}" data-assign-bot="${esc(b.id)}" data-assign-plug="${esc(pl.id)}">${esc(b.name)}${mounted ? ' ✓' : ''}</button>`;
                       }).join('')}
+                      ${pl.id.startsWith('ext-') ? `<button type="button" class="plugin-bot-chip" style="color:var(--app-danger)" data-remove-plug="${esc(pl.id)}">卸载</button>` : ''}
                     </div>
                   </div>
                 ` : ''}
@@ -739,6 +788,15 @@ export function openBotStudio({ onSelect, onSelectGroup, onStatus, onLaunchPlugi
           onStatus?.(nowOn
             ? `已将「${plugObj?.short || plugObj?.name || pid}」加载到「${botObj?.name || 'Bot'}」对话`
             : `已从「${botObj?.name || 'Bot'}」对话移除「${plugObj?.short || plugObj?.name || pid}」`);
+          draw();
+        };
+      });
+      mask.querySelectorAll('[data-remove-plug]').forEach(btn => {
+        btn.onclick = e => {
+          e.stopPropagation();
+          const pid = btn.dataset.removePlug;
+          savePlugins(listPlugins().filter(p => p.id !== pid));
+          onStatus?.('已卸载该外部插件');
           draw();
         };
       });

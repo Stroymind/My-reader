@@ -13,7 +13,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from .agent import TOOL_REGISTRY, run_byok_agent_loop
+from .agent import TOOL_REGISTRY, inspect_external_plugin, run_byok_agent_loop
 from .db import Database
 from .discovery import build_coverage_map, cluster_unassigned_documents, content_hash, seed_default_sources
 from .gateway import ModelGateway
@@ -63,7 +63,14 @@ class MissedEventAuditReq(BaseModel):
 class AgentRunReq(BaseModel):
     messages: list[dict[str, str]] = Field(default_factory=list)
     rules: str = ""
-    max_steps: int = Field(default=3, ge=1, le=5)
+    memory: str = ""
+    ext_plugins: list[dict[str, Any]] = Field(default_factory=list)
+    max_steps: int = Field(default=4, ge=1, le=5)
+
+
+class McpInspectReq(BaseModel):
+    url: str = Field(..., min_length=6, max_length=1000)
+    token: str = ""
 
 
 def _seed_initial_event_if_empty(db: Database) -> None:
@@ -206,10 +213,12 @@ def create_app(db_path: str | None = None, enable_scheduler: bool = True) -> Fas
     def health() -> dict[str, Any]:
         return {
             "status": "ok",
-            "version": "2.1.0",
+            "version": "2.2.0",
             "byok_mode": True,
             "platform_token_used": False,
             "agent_tools": sorted(TOOL_REGISTRY.keys()),
+            "mcp_remote_http": True,
+            "byok_balance_check": True,
             "runtime_paused": runtime.paused,
         }
 
@@ -217,7 +226,25 @@ def create_app(db_path: str | None = None, enable_scheduler: bool = True) -> Fas
     async def agent_run(req: AgentRunReq, request: Request) -> dict[str, Any]:
         """Zone 手机端 Bot 多步联网工具调用引擎（纯 BYOK：仅透传用户请求头 API Key）。"""
         user_gw = ModelGateway.from_user_headers(request.headers)
-        return await run_byok_agent_loop(user_gw, req.messages, rules=req.rules, max_steps=req.max_steps)
+        return await run_byok_agent_loop(
+            user_gw,
+            req.messages,
+            rules=req.rules,
+            memory=req.memory,
+            ext_plugins=req.ext_plugins,
+            max_steps=req.max_steps,
+        )
+
+    @app.post("/api/mcp/inspect")
+    async def mcp_inspect(req: McpInspectReq) -> dict[str, Any]:
+        """真实探测外部远程 HTTP MCP 服务（JSON-RPC 2.0 tools/list）或 SKILL.md 技能文件。"""
+        return await inspect_external_plugin(req.url, token=req.token)
+
+    @app.post("/api/byok/balance")
+    async def byok_balance(request: Request) -> dict[str, Any]:
+        """纯 BYOK 实时查询用户自有 API 服务商余额（绝不存 Key、绝不耗平台额度）。"""
+        user_gw = ModelGateway.from_user_headers(request.headers)
+        return await user_gw.check_balance()
 
     @app.get("/api/events")
     def list_events(limit: int = 20) -> dict[str, Any]:
