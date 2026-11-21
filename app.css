@@ -867,23 +867,19 @@ body.theme-night .textLayer span.rr-mark.an{background:rgba(10,132,255,.35)}
 .chat-mini-av .bot-glyph{width:26px;height:26px;animation:none}
 .chat-bubble{max-width:84%;padding:10px 13px;border-radius:18px;font-size:14.5px;line-height:1.58;white-space:pre-wrap;word-break:break-word}
 .chat-row.user .chat-bubble{background:var(--app-accent);color:#fff;border-bottom-right-radius:6px}
-.chat-row.bot .chat-bubble{background:var(--app-bg);color:var(--app-fg);border-bottom-left-radius:6px}
+.chat-row.bot .chat-bubble{background:var(--app-elev);color:var(--app-fg);box-shadow:0 0 0 .5px var(--app-line),0 2px 10px rgba(0,0,0,.03);border-bottom-left-radius:6px}
 .chat-think{margin:0 0 8px;padding:7px 10px;border-radius:12px;background:var(--app-fill);font-size:12.5px;color:var(--app-muted)}
 .chat-think summary{cursor:pointer;font-weight:600;list-style:none}
 .chat-think p{margin:6px 0 0;line-height:1.55;white-space:pre-wrap}
 .chat-cta{margin-top:8px;display:inline-flex;align-items:center;height:30px;padding:0 13px;border-radius:999px;background:var(--app-accent);color:#fff;font-size:12.5px;font-weight:600}
-.bot-roster{display:flex;flex-direction:column;gap:8px;margin-top:2px}
-.bot-roster-head{display:flex;align-items:center;justify-content:space-between;padding:0 4px}
-.bot-roster-head span{font-size:12px;font-weight:620;color:var(--app-muted);letter-spacing:.02em}
-.bot-roster-add{height:26px;padding:0 10px;border-radius:999px;background:var(--app-fill);font-size:12px;font-weight:600;color:var(--app-accent)}
-.roster-item{display:flex;align-items:center;gap:12px;width:100%;padding:10px 13px;border-radius:18px;background:var(--app-elev);box-shadow:0 0 0 .5px var(--app-line);text-align:left;transition:transform .2s var(--spring),box-shadow .2s}
-.roster-item.on{box-shadow:0 0 0 1.5px var(--app-accent)}
-.roster-item:active{transform:scale(.98)}
-.roster-av{width:38px;height:38px;flex:none;display:grid;place-items:center}
-.roster-av .bot-glyph{width:38px;height:38px;animation:none}
-.roster-txt{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
-.roster-txt strong{font-size:14.5px;font-weight:650;color:var(--app-fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.roster-txt span{font-size:12.5px;color:var(--app-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bot-roster{display:flex;flex-direction:column;gap:2px;margin-top:4px}
+.roster-item{display:flex;align-items:center;gap:14px;width:100%;padding:12px 6px;border-radius:16px;background:transparent;box-shadow:none;text-align:left;transition:transform .2s var(--spring),background-color .16s}
+.roster-item:active{background:var(--app-fill);transform:scale(.985)}
+.roster-av{width:44px;height:44px;flex:none;display:grid;place-items:center}
+.roster-av .bot-glyph{width:44px;height:44px;animation:none}
+.roster-txt{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
+.roster-txt strong{font-size:15.5px;font-weight:640;color:var(--app-fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.roster-txt span{font-size:13.5px;color:var(--app-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .plugin-row{display:flex;align-items:center;gap:12px;padding:13px 14px;border-radius:20px;background:var(--app-elev);box-shadow:0 0 0 .5px var(--app-line);cursor:pointer}
 .ios-switch{position:relative;flex:none;width:48px;height:28px;display:inline-block}
 .ios-switch input{opacity:0;width:0;height:0;position:absolute}
@@ -892,24 +888,40 @@ body.theme-night .textLayer span.rr-mark.an{background:rgba(10,132,255,.35)}
 .ios-switch input:checked+span{background:#34c759}
 .ios-switch input:checked+span::after{transform:translateX(20px)}
 
-/* Zone 2.0 苹果极简移动端 Agent 主画布 */
-.agent-hub{display:flex;flex-direction:column;gap:18px;padding:18px 0 22px;animation:rise .42s var(--spring)}
-.agent-hub.compact{padding:8px 0 18px;gap:14px}
-.agent-hero{display:flex;flex-direction:column;align-items:center;text-align:center;gap:8px;padding-top:10px}
-.agent-hub.compact .agent-hero{padding-top:2px;gap:6px}
-.agent-orb-btn{position:relative;isolation:isolate;width:96px;height:96px;padding:0;display:grid;place-items:center;border-radius:28px;background:transparent;box-shadow:none}
-.agent-orb-btn::after{display:none}
-.agent-hub.compact .agent-orb-btn{width:68px;height:68px;border-radius:20px}
-.agent-orb-aura{position:absolute;inset:-6px;z-index:-1;border-radius:36px;opacity:.12;filter:blur(22px);pointer-events:none;transition:background-color .4s ease}
-.agent-orb-glyph{position:relative;z-index:1;width:100%;height:100%;display:grid;place-items:center;border-radius:0;box-shadow:none;filter:drop-shadow(0 12px 24px rgba(0,0,0,.11))}
+/* Zone 2.0 苹果极简移动端 Agent 主画布（零外部多余输入框，点任意 Bot 进全屏对话） */
+.agent-hub{display:flex;flex-direction:column;gap:18px;padding:6px 0 20px;animation:rise .38s var(--spring)}
+.agent-hub.compact{padding:4px 0 16px;gap:14px}
+.agent-top-acts{display:flex;align-items:center;justify-content:flex-end;gap:10px}
+.agent-icon-btn{width:38px;height:38px;padding:0;border-radius:50%;display:grid;place-items:center;background:var(--app-elev);box-shadow:0 0 0 .5px var(--app-line),0 3px 12px rgba(0,0,0,.04);color:var(--app-fg)}
+.agent-icon-btn svg{width:19px;height:19px;stroke-width:1.9}
+.agent-hero{display:flex;flex-direction:column;align-items:center;text-align:center;padding:12px 0 8px}
+.agent-hero-card{display:flex;flex-direction:column;align-items:center;gap:8px;padding:6px 14px;border-radius:0;background:transparent;box-shadow:none;transition:transform .24s var(--spring)}
+.agent-hero-card:active{transform:scale(.94)}
+.agent-orb-glyph{width:92px;height:92px;display:grid;place-items:center}
 .agent-orb-glyph .bot-glyph{width:100%;height:100%}
-.agent-hub.compact .agent-orb-glyph{border-radius:0}
-.agent-hub.compact .agent-orb-glyph .bot-glyph{width:100%;height:100%}
-.agent-title-btn{display:inline-flex;align-items:center;gap:8px;padding:4px 10px;border-radius:999px}
-.agent-name{font-size:22px;font-weight:700;letter-spacing:-.022em;color:var(--app-fg)}
-.agent-hub.compact .agent-name{font-size:19px}
-.agent-badge{padding:3px 9px;border-radius:999px;background:var(--app-fill);font-size:11.5px;font-weight:590;color:var(--app-muted)}
-.agent-role{margin:0;max-width:300px;font-size:13.5px;line-height:1.5;color:var(--app-muted)}
+.agent-hero-name{font-size:14.5px;font-weight:580;letter-spacing:-.01em;color:var(--app-fg);max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* Bot 全屏专属对话空间 */
+.bot-chat-view{position:fixed;inset:0;z-index:155;display:flex;flex-direction:column;background:var(--app-bg);animation:readerIn .28s var(--spring)}
+.bot-chat-bar{flex:none;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:calc(env(safe-area-inset-top) + 10px) 14px 10px;background:var(--glass-strong);backdrop-filter:saturate(180%) blur(24px);-webkit-backdrop-filter:saturate(180%) blur(24px);border-bottom:.5px solid var(--app-line)}
+.bot-chat-back{width:38px;height:38px;padding:0;border-radius:50%;display:grid;place-items:center;color:var(--app-fg)}
+.bot-chat-who{display:inline-flex;align-items:center;gap:8px;padding:4px 12px;border-radius:999px;background:var(--app-elev);box-shadow:0 0 0 .5px var(--app-line);max-width:58%}
+.bot-chat-av{width:24px;height:24px;flex:none;display:grid;place-items:center}
+.bot-chat-av .bot-glyph{width:24px;height:24px;animation:none}
+.bot-chat-name{font-size:14.5px;font-weight:660;color:var(--app-fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bot-chat-pill{height:32px;padding:0 12px;border-radius:999px;background:var(--app-fill);font-size:13px;font-weight:600;color:var(--app-accent);white-space:nowrap}
+.bot-chat-threads{flex:none;display:flex;align-items:center;gap:7px;overflow-x:auto;padding:8px 14px 4px;scrollbar-width:none}
+.bot-chat-threads::-webkit-scrollbar{display:none}
+.bot-chat-messages{flex:1;min-height:0;overflow-y:auto;padding:16px 16px 20px;display:flex;flex-direction:column;gap:12px}
+.bot-chat-empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:10px;padding:24px 16px}
+.bot-chat-empty-av{width:92px;height:92px;display:grid;place-items:center;filter:drop-shadow(0 12px 24px rgba(0,0,0,.10))}
+.bot-chat-empty-av .bot-glyph{width:100%;height:100%}
+.bot-chat-empty h4{margin:4px 0 0;font-size:20px;font-weight:700;color:var(--app-fg)}
+.bot-chat-empty p{margin:0;max-width:280px;font-size:13.5px;line-height:1.55;color:var(--app-muted)}
+.bot-chat-foot{flex:none;padding:10px 14px calc(env(safe-area-inset-bottom) + 12px);background:var(--glass-strong);backdrop-filter:saturate(180%) blur(24px);-webkit-backdrop-filter:saturate(180%) blur(24px);border-top:.5px solid var(--app-line)}
+.bot-chat-view.typing .bot-eyes{animation:botEyesRead 2.6s ease-in-out infinite}
+.bot-chat-view.thinking .bot-glyph{animation:botSquish 1.15s ease-in-out infinite}
+.bot-chat-view.thinking .bot-eyes{animation:botEyesThink 1.35s ease-in-out infinite}
 .agent-capsule{display:flex;align-items:center;gap:8px;height:52px;padding:0 7px 0 18px;border-radius:999px;background:var(--app-elev);box-shadow:0 0 0 .5px var(--app-line),0 8px 28px rgba(0,0,0,.055);transition:box-shadow .24s ease}
 .agent-capsule:focus-within{box-shadow:0 0 0 1.5px color-mix(in srgb,var(--app-accent) 45%,transparent),0 10px 30px rgba(0,122,255,.09)}
 .agent-capsule input{flex:1;min-width:0;height:100%;border:0;background:transparent;padding:0;font-size:15.5px;color:var(--app-fg);outline:none}
@@ -931,12 +943,8 @@ body.theme-night .textLayer span.rr-mark.an{background:rgba(10,132,255,.35)}
 .agent-app-chip{display:inline-flex;align-items:center;gap:6px;height:34px;padding:0 13px;border-radius:999px;background:var(--app-elev);box-shadow:0 0 0 .5px var(--app-line);font-size:13px;font-weight:580;color:var(--app-fg)}
 .agent-app-dot{width:7px;height:7px;border-radius:50%;background:var(--app-accent)}
 .empty.empty-quiet{display:none!important}
-.agent-hub{min-height:calc(100vh - 110px);justify-content:center}
-.agent-hub.compact{min-height:0;justify-content:flex-start}
+.agent-hub{min-height:0;justify-content:flex-start}
 html.plugin-reader-off #grid,html.plugin-reader-off #shelf-sub,html.plugin-reader-off #storage-info,html.plugin-reader-off #find-bar,html.plugin-reader-off .z-depth-track,html.plugin-reader-off #btn-import{display:none!important}
-html.plugin-reader-off .agent-hub{min-height:calc(100vh - 110px)!important;justify-content:center!important}
-html.plugin-reader-off .agent-hub.compact .agent-orb-btn{width:96px;height:96px}
-html.plugin-reader-off .agent-hub.compact .agent-name{font-size:22px}
 
 @media (prefers-reduced-motion:reduce){
   *,*::before,*::after{animation:none!important;transition:none!important}

@@ -1950,6 +1950,9 @@ let rz; window.addEventListener('resize', () => { clearTimeout(rz); rz = setTime
 
 function handleBack() {
   if (command?.closeBar(true)) return true;
+  if (closeBotStudio()) return true;
+  if (closeMicroApp()) return true;
+  if (closeBotChat()) return true;
   if (closeBookPeek()) return true;
   if (dismissAssistant()) return true;
   if (closeStackDialog()) return true;
@@ -2889,84 +2892,108 @@ function ensureActiveTaskThread(seedTitle, botId) {
   return t;
 }
 
-function renderChatBox(thread, pendingText = '') {
-  const box = $('#zone-chat-box');
-  if (!box) return;
-  if (!thread) { box.classList.add('hidden'); return; }
-  const bot = listBots().find(b => b.id === thread.botId) || getActiveBot();
-  box.replaceChildren();
+function closeBotChat() {
+  const modal = $('#zone-chat-modal');
+  if (!modal || modal.classList.contains('hidden')) return false;
+  modal.classList.add('hidden');
+  modal.classList.remove('typing', 'thinking');
+  renderAgentHub();
+  return true;
+}
 
-  const head = document.createElement('div');
-  head.className = 'agent-chat-head';
-  const who = document.createElement('div');
-  who.className = 'agent-chat-who';
-  who.innerHTML = renderBotSvg(bot.shape, bot.accent);
-  const titleSpan = document.createElement('span');
-  titleSpan.textContent = `${bot.name} · ${thread.title}`;
-  who.appendChild(titleSpan);
-
-  const tools = document.createElement('div');
-  tools.className = 'agent-chat-tools';
-  const bNew = document.createElement('button');
-  bNew.type = 'button'; bNew.textContent = '新对话';
-  bNew.onclick = () => { activeThreadId = null; box.classList.add('hidden'); renderTaskThreadUI(); $('#zone-hero-input')?.focus(); };
-  const bArch = document.createElement('button');
-  bArch.type = 'button'; bArch.textContent = '归档';
-  bArch.onclick = () => {
-    taskThreads = taskThreads.filter(x => x.id !== thread.id);
-    if (activeThreadId === thread.id) activeThreadId = null;
-    saveTaskThreads(); box.classList.add('hidden'); renderTaskThreadUI();
-  };
-  const bHide = document.createElement('button');
-  bHide.type = 'button'; bHide.textContent = '收起';
-  bHide.onclick = () => box.classList.add('hidden');
-  tools.append(bNew, bArch, bHide);
-  head.append(who, tools);
-  box.appendChild(head);
-
-  const listEl = document.createElement('div');
-  listEl.className = 'agent-chat-list';
-  const allMsgs = pendingText ? [...thread.messages, { role: 'assistant', content: pendingText, pending: true }] : thread.messages;
-  for (const m of allMsgs) {
-    const row = document.createElement('div');
-    row.className = 'chat-row ' + (m.role === 'user' ? 'user' : 'bot');
-    if (m.role !== 'user') {
-      const av = document.createElement('div');
-      av.className = 'chat-mini-av';
-      av.innerHTML = renderBotSvg(bot.shape, bot.accent);
-      row.appendChild(av);
-    }
-    const bub = document.createElement('div');
-    bub.className = 'chat-bubble';
-    const raw = String(m.content || '');
-    const thinkM = raw.match(/^<think>([\s\S]*?)<\/think>\s*([\s\S]*)$/);
-    if (thinkM) {
-      const det = document.createElement('details');
-      det.className = 'chat-think';
-      const sum = document.createElement('summary');
-      sum.textContent = '思考过程 ▾';
-      const tp = document.createElement('p');
-      tp.textContent = thinkM[1].trim();
-      det.append(sum, tp);
-      bub.appendChild(det);
-      bub.appendChild(document.createTextNode(thinkM[2].trim()));
-    } else {
-      bub.textContent = raw;
-    }
-    if (m.needKey) {
-      const cta = document.createElement('button');
-      cta.type = 'button';
-      cta.className = 'chat-cta';
-      cta.textContent = '配置我的 API Key';
-      cta.onclick = () => openAiSettingsDialog();
-      bub.appendChild(document.createElement('br'));
-      bub.appendChild(cta);
-    }
-    row.appendChild(bub);
-    listEl.appendChild(row);
+function renderChatThreadsBar(bot) {
+  const bar = $('#zone-chat-threads');
+  if (!bar) return;
+  const botThreads = taskThreads.filter(t => t.botId === bot.id);
+  bar.replaceChildren();
+  if (botThreads.length <= 1) { bar.classList.add('hidden'); return; }
+  bar.classList.remove('hidden');
+  for (const th of botThreads.slice(0, 8)) {
+    const pill = document.createElement('button');
+    pill.type = 'button';
+    pill.className = 'task-pill' + (th.id === activeThreadId ? ' on' : '');
+    const dot = document.createElement('i');
+    dot.className = 'task-dot';
+    const lbl = document.createElement('span');
+    lbl.textContent = th.title || bot.name;
+    pill.append(dot, lbl);
+    pill.onclick = () => {
+      activeThreadId = th.id;
+      renderChatBox(th);
+    };
+    bar.appendChild(pill);
   }
-  box.appendChild(listEl);
-  box.classList.remove('hidden');
+}
+
+function renderChatBox(thread, pendingText = '') {
+  const modal = $('#zone-chat-modal');
+  const listEl = $('#zone-chat-messages');
+  if (!modal || !listEl) return;
+  const bot = listBots().find(b => b.id === (thread?.botId || getActiveBot().id)) || getActiveBot();
+  const avEl = $('#chat-head-av');
+  if (avEl) avEl.innerHTML = renderBotSvg(bot.shape, bot.accent);
+  const nameEl = $('#chat-head-name');
+  if (nameEl) nameEl.textContent = bot.name;
+  const inp = $('#zone-chat-input');
+  if (inp) inp.placeholder = `给 ${bot.name} 发消息，或直接说话…`;
+  renderChatThreadsBar(bot);
+
+  listEl.replaceChildren();
+  const msgs = thread?.messages || [];
+  const allMsgs = pendingText ? [...msgs, { role: 'assistant', content: pendingText, pending: true }] : msgs;
+  if (!allMsgs.length) {
+    const empty = document.createElement('div');
+    empty.className = 'bot-chat-empty';
+    const av = document.createElement('div');
+    av.className = 'bot-chat-empty-av';
+    av.innerHTML = renderBotSvg(bot.shape, bot.accent);
+    const h4 = document.createElement('h4');
+    h4.textContent = bot.name;
+    const p = document.createElement('p');
+    p.textContent = bot.rules ? bot.rules : `在下方直接给 ${bot.name} 发消息或说话；点顶部头像可随时定制形象与规则。`;
+    empty.append(av, h4, p);
+    listEl.appendChild(empty);
+  } else {
+    for (const m of allMsgs) {
+      const row = document.createElement('div');
+      row.className = 'chat-row ' + (m.role === 'user' ? 'user' : 'bot');
+      if (m.role !== 'user') {
+        const av = document.createElement('div');
+        av.className = 'chat-mini-av';
+        av.innerHTML = renderBotSvg(bot.shape, bot.accent);
+        row.appendChild(av);
+      }
+      const bub = document.createElement('div');
+      bub.className = 'chat-bubble';
+      const raw = String(m.content || '');
+      const thinkM = raw.match(/^<think>([\s\S]*?)<\/think>\s*([\s\S]*)$/);
+      if (thinkM) {
+        const det = document.createElement('details');
+        det.className = 'chat-think';
+        const sum = document.createElement('summary');
+        sum.textContent = '思考过程 ▾';
+        const tp = document.createElement('p');
+        tp.textContent = thinkM[1].trim();
+        det.append(sum, tp);
+        bub.appendChild(det);
+        bub.appendChild(document.createTextNode(thinkM[2].trim()));
+      } else {
+        bub.textContent = raw;
+      }
+      if (m.needKey) {
+        const cta = document.createElement('button');
+        cta.type = 'button';
+        cta.className = 'chat-cta';
+        cta.textContent = '配置我的 API Key';
+        cta.onclick = () => openAiSettingsDialog();
+        bub.appendChild(document.createElement('br'));
+        bub.appendChild(cta);
+      }
+      row.appendChild(bub);
+      listEl.appendChild(row);
+    }
+  }
+  modal.classList.remove('hidden');
   requestAnimationFrame(() => { listEl.scrollTop = listEl.scrollHeight; });
 }
 
@@ -2974,12 +3001,24 @@ async function chatWithActiveBot(text) {
   const q = String(text || '').trim();
   if (!q) return;
   const bot = getActiveBot();
-  const thread = ensureActiveTaskThread(q, bot.id);
-  thread.botId = bot.id;
+  let thread = taskThreads.find(t => t.id === activeThreadId && t.botId === bot.id);
+  if (!thread) {
+    thread = {
+      id: `th-${Date.now().toString(36)}`,
+      title: q.slice(0, 14),
+      botId: bot.id,
+      messages: [],
+      updatedAt: Date.now()
+    };
+    taskThreads.unshift(thread);
+    activeThreadId = thread.id;
+  } else if (!thread.messages.length) {
+    thread.title = q.slice(0, 14);
+  }
   thread.messages.push({ role: 'user', content: q });
   thread.updatedAt = Date.now();
   saveTaskThreads();
-  renderTaskThreadUI();
+
   if (!aiConfigured()) {
     thread.messages.push({
       role: 'assistant',
@@ -2988,10 +3027,11 @@ async function chatWithActiveBot(text) {
     });
     saveTaskThreads();
     renderChatBox(thread);
+    renderBotRoster();
     return;
   }
   renderChatBox(thread, '思考中…');
-  $('#zone-agent-hub')?.classList.add('thinking');
+  $('#zone-chat-modal')?.classList.add('thinking');
   try {
     const sys = bot.rules ? [{ role: 'system', content: bot.rules }] : [];
     const ctxMsgs = thread.messages.filter(m => !m.needKey).slice(-14).map(m => ({ role: m.role, content: m.content }));
@@ -3005,49 +3045,12 @@ async function chatWithActiveBot(text) {
     saveTaskThreads();
     renderChatBox(thread);
   } finally {
-    $('#zone-agent-hub')?.classList.remove('thinking');
+    $('#zone-chat-modal')?.classList.remove('thinking');
     renderBotRoster();
   }
 }
 
-function renderTaskThreadUI() {
-  const strip = $('#zone-task-strip');
-  if (!strip) return;
-  strip.replaceChildren();
-  if (!taskThreads.length) { strip.classList.add('hidden'); return; }
-  strip.classList.remove('hidden');
-
-  const btnNew = document.createElement('button');
-  btnNew.type = 'button';
-  btnNew.className = 'task-pill new';
-  btnNew.textContent = '+ 新对话';
-  btnNew.onclick = () => {
-    activeThreadId = null;
-    $('#zone-chat-box')?.classList.add('hidden');
-    $('#zone-live-card')?.classList.add('hidden');
-    $('#zone-hero-input')?.focus();
-    renderTaskThreadUI();
-  };
-  strip.appendChild(btnNew);
-
-  for (const th of taskThreads.slice(0, 8)) {
-    const pill = document.createElement('button');
-    pill.type = 'button';
-    pill.className = 'task-pill' + (th.id === activeThreadId ? ' on' : '');
-    const dot = document.createElement('i');
-    dot.className = 'task-dot';
-    const lbl = document.createElement('span');
-    lbl.textContent = th.title;
-    pill.append(dot, lbl);
-    pill.onclick = () => {
-      activeThreadId = th.id;
-      if (th.botId) setActiveBot(th.botId);
-      renderAgentHub();
-      renderChatBox(th);
-    };
-    strip.appendChild(pill);
-  }
-}
+function renderTaskThreadUI() {}
 
 function showAgentLiveCard({ title, body, onOpen = null, pinSpec = null, threadId = null }) {
   const card = $('#zone-live-card');
@@ -3127,10 +3130,10 @@ function syncPluginStates() {
   }
 }
 
-function openBotConversation(bot) {
+function openBotConversation(bot, { fresh = false } = {}) {
   if (!bot) return;
   setActiveBot(bot.id);
-  let thread = taskThreads.find(t => t.botId === bot.id);
+  let thread = !fresh ? taskThreads.find(t => t.botId === bot.id) : null;
   if (!thread) {
     thread = {
       id: `th-${Date.now().toString(36)}`,
@@ -3144,12 +3147,7 @@ function openBotConversation(bot) {
   }
   activeThreadId = thread.id;
   renderAgentHub();
-  if (thread.messages.length) {
-    renderChatBox(thread);
-  } else {
-    $('#zone-chat-box')?.classList.add('hidden');
-  }
-  $('#zone-hero-input')?.focus();
+  renderChatBox(thread);
 }
 
 function renderBotRoster() {
@@ -3157,26 +3155,15 @@ function renderBotRoster() {
   if (!roster) return;
   const bots = listBots();
   const active = getActiveBot();
+  const others = bots.filter(b => b.id !== active.id);
   roster.replaceChildren();
-  if (bots.length <= 1) { roster.classList.add('hidden'); return; }
+  if (!others.length) { roster.classList.add('hidden'); return; }
   roster.classList.remove('hidden');
 
-  const head = document.createElement('div');
-  head.className = 'bot-roster-head';
-  const lbl = document.createElement('span');
-  lbl.textContent = `我的 Bot 对话（${bots.length}）`;
-  const addBtn = document.createElement('button');
-  addBtn.type = 'button';
-  addBtn.className = 'bot-roster-add';
-  addBtn.textContent = '+ 新建 Bot';
-  addBtn.onclick = () => openBotsFromHub();
-  head.append(lbl, addBtn);
-  roster.appendChild(head);
-
-  for (const b of bots) {
+  for (const b of others) {
     const item = document.createElement('button');
     item.type = 'button';
-    item.className = 'roster-item' + (b.id === active.id ? ' on' : '');
+    item.className = 'roster-item';
     const av = document.createElement('div');
     av.className = 'roster-av';
     av.innerHTML = renderBotSvg(b.shape, b.accent);
@@ -3187,7 +3174,7 @@ function renderBotRoster() {
     const th = taskThreads.find(t => t.botId === b.id);
     const lastMsg = th?.messages?.[th.messages.length - 1]?.content || '';
     const subEl = document.createElement('span');
-    subEl.textContent = lastMsg ? String(lastMsg).replace(/<think>[\s\S]*?<\/think>\s*/, '').slice(0, 40) : (b.rules ? b.rules.slice(0, 32) : '轻触开始新对话');
+    subEl.textContent = lastMsg ? String(lastMsg).replace(/<think>[\s\S]*?<\/think>\s*/, '').slice(0, 40) : (b.rules ? b.rules.slice(0, 32) : '轻触进入对话');
     txt.append(nameEl, subEl);
     item.append(av, txt);
     item.onclick = () => openBotConversation(b);
@@ -3198,20 +3185,16 @@ function renderBotRoster() {
 function renderAgentHub() {
   syncPluginStates();
   const bot = getActiveBot();
-  const bots = listBots();
   const glyphEl = $('#zone-hero-glyph');
   if (glyphEl) glyphEl.innerHTML = renderBotSvg(bot.shape, bot.accent);
   const auraEl = $('#zone-hero-aura');
   if (auraEl) auraEl.style.backgroundColor = bot.accent || '#007AFF';
   const nameEl = $('#zone-hero-name');
   if (nameEl) nameEl.textContent = bot.name;
-  const countEl = $('#zone-hero-count');
-  if (countEl) countEl.textContent = bots.length > 1 ? `${bots.length} 个 Bot ▾` : '形象 · 任务 · 插件 ▾';
+  const th = taskThreads.find(t => t.botId === bot.id);
+  const lastMsg = th?.messages?.[th.messages.length - 1]?.content || '';
   const roleEl = $('#zone-hero-role');
-  if (roleEl) roleEl.textContent = bot.rules ? bot.rules.slice(0, 36) : '轻触形象切换样式、写规则、管定时任务与插件';
-  const heroInp = $('#zone-hero-input');
-  if (heroInp) heroInp.placeholder = `给 ${bot.name} 发消息，或直接说话…`;
-  renderTaskThreadUI();
+  if (roleEl) roleEl.textContent = lastMsg ? String(lastMsg).replace(/<think>[\s\S]*?<\/think>\s*/, '').slice(0, 18) : '轻触开始对话';
   renderBotRoster();
 
   const strip = $('#zone-microapp-strip');
@@ -3237,12 +3220,13 @@ function launchPluginById(id) {
   if (id === 'phone-use') { command.run('开启手机控屏'); return; }
   if (id === 'computer-use') {
     const curUrl = (() => { try { return localStorage.getItem('zone-cu-bridge') || ''; } catch { return ''; } })();
-    const inp = $('#zone-hero-input');
+    openBotConversation(getActiveBot());
+    const inp = $('#zone-chat-input');
     if (inp) {
       inp.value = curUrl ? `电脑控屏 ` : `连接电脑 http://192.168.1.100:8765`;
       inp.focus();
     }
-    toast(curUrl ? `已绑定本地电脑桥接：${curUrl}` : '输入局域网/公网电脑桥接地址即可从手机遥控本地电脑', 3400);
+    toast(curUrl ? `已绑定本地电脑桥接：${curUrl}` : '输入电脑桥接地址即可遥控本地电脑', 3400);
     return;
   }
   if (id === 'reading-cosmos') { showPane('graph', { whisper: true }); return; }
@@ -3281,20 +3265,25 @@ async function runAutomationItem(auto, opts = {}) {
     await chatWithActiveBot(auto.prompt);
   }
 }
-const openBotsFromHub = () => openBotStudio({
+const openBotsFromHub = (opts = {}) => openBotStudio({
   onSelect: bot => openBotConversation(bot),
-  onStatus: msg => { renderAgentHub(); toast(msg, 2600); },
+  onStatus: msg => { renderAgentHub(); if (!$('#zone-chat-modal')?.classList.contains('hidden')) renderChatBox(taskThreads.find(t => t.id === activeThreadId)); toast(msg, 2600); },
   onLaunchPlugin: launchPluginById,
-  onRunAutomation: runAutomationItem
+  onRunAutomation: runAutomationItem,
+  ...opts
 });
-$('#zone-hero-avatar')?.addEventListener('click', openBotsFromHub);
-$('#zone-hero-switch')?.addEventListener('click', openBotsFromHub);
-$('#zone-hero-mic')?.addEventListener('click', () => command.openBar({ listen: true }));
-$('#zone-hero-input')?.addEventListener('focus', () => $('#zone-agent-hub')?.classList.add('typing'));
-$('#zone-hero-input')?.addEventListener('blur', () => $('#zone-agent-hub')?.classList.remove('typing'));
-$('#zone-hero-form')?.addEventListener('submit', async e => {
+$('#zone-hero-card')?.addEventListener('click', () => openBotConversation(getActiveBot()));
+$('#btn-hub-newbot')?.addEventListener('click', () => openBotsFromHub({ startNew: true }));
+$('#btn-hub-plugins')?.addEventListener('click', () => openBotsFromHub({ initialTab: 'plugins' }));
+$('#btn-chat-back')?.addEventListener('click', () => closeBotChat());
+$('#btn-chat-botmeta')?.addEventListener('click', () => openBotsFromHub({ editBotId: getActiveBot().id }));
+$('#btn-chat-new')?.addEventListener('click', () => openBotConversation(getActiveBot(), { fresh: true }));
+$('#zone-chat-mic')?.addEventListener('click', () => command.openBar({ listen: true }));
+$('#zone-chat-input')?.addEventListener('focus', () => $('#zone-chat-modal')?.classList.add('typing'));
+$('#zone-chat-input')?.addEventListener('blur', () => $('#zone-chat-modal')?.classList.remove('typing'));
+$('#zone-chat-form')?.addEventListener('submit', async e => {
   e.preventDefault();
-  const inp = $('#zone-hero-input');
+  const inp = $('#zone-chat-input');
   const text = (inp?.value || '').trim();
   if (!text) { command.openBar({ listen: true }); return; }
   inp.value = '';

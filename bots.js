@@ -171,7 +171,7 @@ function esc(s) {
   return String(s || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
-export function openBotStudio({ onSelect, onStatus, onLaunchPlugin, onRunAutomation, initialTab = 'bots' } = {}) {
+export function openBotStudio({ onSelect, onStatus, onLaunchPlugin, onRunAutomation, initialTab = 'bots', startNew = false, editBotId = '' } = {}) {
   let mask = document.getElementById('zone-bots-mask');
   if (!mask) {
     mask = document.createElement('div');
@@ -180,7 +180,9 @@ export function openBotStudio({ onSelect, onStatus, onLaunchPlugin, onRunAutomat
     document.body.appendChild(mask);
   }
   let tab = initialTab;
-  let editing = null;
+  let editing = startNew
+    ? { isNew: true, name: '', role: '', rules: '', shape: 'onigiri', accent: '#9A6332' }
+    : (editBotId ? (() => { const h = listBots().find(x => x.id === editBotId); return h ? { ...h, isNew: false } : null; })() : null);
   let addingAuto = false;
   let addingPlugin = false;
 

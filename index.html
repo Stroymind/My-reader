@@ -50,25 +50,20 @@
           </div>
           <div id="import-status" class="status hidden"></div>
           <section id="zone-agent-hub" class="agent-hub" aria-label="Zone 智能体中枢">
-            <div class="agent-hero">
-              <button id="zone-hero-avatar" class="agent-orb-btn" type="button" aria-label="切换或定制 Bot">
-                <span id="zone-hero-aura" class="agent-orb-aura" aria-hidden="true"></span>
-                <span id="zone-hero-glyph" class="agent-orb-glyph" aria-hidden="true"></span>
+            <div class="agent-top-acts">
+              <button id="btn-hub-plugins" class="agent-icon-btn" type="button" aria-label="定时任务与插件主题" title="定时任务与插件">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="6.5" height="6.5" rx="2"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="2"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="2"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="2"/></svg>
               </button>
-              <button id="zone-hero-switch" class="agent-title-btn" type="button">
-                <span id="zone-hero-name" class="agent-name">Zone 总管</span>
-                <span id="zone-hero-count" class="agent-badge">4 个 Bot</span>
+              <button id="btn-hub-newbot" class="agent-icon-btn" type="button" aria-label="新建 Bot" title="新建 Bot">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
               </button>
-              <p id="zone-hero-role" class="agent-role">自动调度所有能力 · 直接说话或输入派活</p>
             </div>
-            <form id="zone-hero-form" class="agent-capsule">
-              <input id="zone-hero-input" type="text" placeholder="交代任何任务，或直接说话…" autocomplete="off" enterkeyhint="go" aria-label="给 Zone 下达任务">
-              <button id="zone-hero-mic" class="agent-mic" type="button" aria-label="语音派活" title="直接说话">
-                <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="4" width="6" height="10" rx="3"/><path d="M6.5 11.5a5.5 5.5 0 0 0 11 0M12 17v3.2M9 20.2h6"/></svg>
+            <div class="agent-hero">
+              <button id="zone-hero-card" class="agent-hero-card" type="button" aria-label="进入主 Bot 对话">
+                <span id="zone-hero-glyph" class="agent-orb-glyph" aria-hidden="true"></span>
+                <span id="zone-hero-name" class="agent-hero-name">Zone</span>
               </button>
-            </form>
-            <div id="zone-task-strip" class="task-strip hidden" aria-label="并行任务线程"></div>
-            <div id="zone-chat-box" class="agent-chat hidden" aria-live="polite"></div>
+            </div>
             <div id="zone-live-card" class="agent-live hidden" aria-live="polite"></div>
             <div id="zone-bot-roster" class="bot-roster hidden" aria-label="Bot 对话列表"></div>
             <div id="zone-microapp-strip" class="agent-apps hidden" aria-label="我的微应用"></div>
@@ -351,6 +346,28 @@
     <div id="sichao-body" class="sichao-body"></div>
   </div>
 </div>
+<section id="zone-chat-modal" class="bot-chat-view hidden" role="dialog" aria-modal="true" aria-label="Bot 对话">
+  <header class="bot-chat-bar">
+    <button id="btn-chat-back" class="bot-chat-back" type="button" aria-label="返回">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>
+    </button>
+    <button id="btn-chat-botmeta" class="bot-chat-who" type="button" title="定制形象与规则">
+      <span id="chat-head-av" class="bot-chat-av" aria-hidden="true"></span>
+      <span id="chat-head-name" class="bot-chat-name">Zone</span>
+    </button>
+    <button id="btn-chat-new" class="bot-chat-pill" type="button">新对话</button>
+  </header>
+  <div id="zone-chat-threads" class="bot-chat-threads hidden" aria-label="该 Bot 的任务线程"></div>
+  <div id="zone-chat-messages" class="bot-chat-messages" aria-live="polite"></div>
+  <form id="zone-chat-form" class="bot-chat-foot">
+    <div class="agent-capsule">
+      <input id="zone-chat-input" type="text" placeholder="发消息，或直接说话…" autocomplete="off" enterkeyhint="send" aria-label="发消息给 Bot">
+      <button id="zone-chat-mic" class="agent-mic" type="button" aria-label="语音输入" title="直接说话">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="4" width="6" height="10" rx="3"/><path d="M6.5 11.5a5.5 5.5 0 0 0 11 0M12 17v3.2M9 20.2h6"/></svg>
+      </button>
+    </div>
+  </form>
+</section>
 <div id="toast" class="toast hidden" role="status"></div>
 <script type="module" src="app.js"></script>
 </body>

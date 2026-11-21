@@ -119,7 +119,49 @@ def _exec_action(act: dict[str, Any], screen_w: int, screen_h: int) -> str:
 
 @app.get("/api/health")
 def health() -> dict[str, Any]:
-    return {"status": "ok", "bridge": "zone-computer-use", "ip": _local_ip(), "byok_only": True}
+    import shutil
+
+    workers = [w for w in ("codex", "claude", "dsh", "openclaw") if shutil.which(w)]
+    return {"status": "ok", "bridge": "zone-computer-use", "ip": _local_ip(), "byok_only": True, "heavy_workers": workers}
+
+
+class WorkerReq(BaseModel):
+    task: str
+    worker: str = "auto"  # auto | codex | claude | dsh | openclaw
+    cwd: str = ""
+
+
+@app.post("/api/worker/run")
+async def run_heavy_worker(req: WorkerReq) -> dict[str, Any]:
+    """复杂任务自动转交本机已安装的强力 Agent CLI（Codex / Claude Code / DeepSeek Harness / OpenClaw），不绑死 Cursor。"""
+    import shutil
+
+    task = req.task.strip()
+    if not task:
+        raise HTTPException(status_code=400, detail="task 不能为空")
+    if DANGER_RE.search(task):
+        return {"ok": False, "need_confirm": True, "summary": f"安全拦截：检测到敏感任务「{task}」，请在电脑端亲自确认。"}
+
+    candidates = [req.worker] if req.worker != "auto" else ["codex", "claude", "dsh", "openclaw"]
+    chosen = next((w for w in candidates if shutil.which(w)), None)
+    if not chosen:
+        return {"ok": False, "summary": "本机未检测到 codex / claude / dsh / openclaw 命令行，安装任意一个即可自动接管复杂任务。"}
+
+    cmd_map = {
+        "codex": ["codex", "exec", task],
+        "claude": ["claude", "-p", task],
+        "dsh": ["dsh", "run", task],
+        "openclaw": ["openclaw", "run", task],
+    }
+    cwd = req.cwd.strip() if req.cwd and os.path.isdir(req.cwd.strip()) else os.getcwd()
+    try:
+        proc = subprocess.run(cmd_map[chosen], cwd=cwd, capture_output=True, text=True, timeout=180)
+        out = (proc.stdout or proc.stderr or "").strip()
+        return {"ok": proc.returncode == 0, "worker": chosen, "summary": out[-3000:] or f"{chosen} 执行完成（exit={proc.returncode}）"}
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "worker": chosen, "summary": f"{chosen} 正在后台深度处理，已超出单次同步等待时长。"}
+    except Exception as e:
+        return {"ok": False, "worker": chosen, "summary": f"调用 {chosen} 失败：{e}"}
 
 
 @app.post("/api/computer-use/run")
