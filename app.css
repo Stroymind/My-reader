@@ -658,20 +658,20 @@ body.theme-night .textLayer span.rr-mark.an{background:rgba(10,132,255,.35)}
 .row-wrap>.book.swiping,.note-wrap>.note-card.swiping{transition:none}
 .swipe-bg{position:absolute;inset:0;display:flex;align-items:center;justify-content:space-between;padding:0 20px;pointer-events:none;opacity:0;transition:opacity .15s}
 .swipe-bg.show{opacity:1}
-.swipe-bg.dir-right{background:color-mix(in srgb,var(--app-accent) 14%,transparent);color:var(--app-accent)}
-.swipe-bg.dir-left{background:color-mix(in srgb,var(--app-danger) 14%,transparent);color:var(--app-danger)}
-.swipe-act{font-size:13.5px;font-weight:660;letter-spacing:.04em;opacity:0;transform:scale(.9);transition:opacity .16s,transform .2s var(--spring)}
-.swipe-bg.dir-right .swipe-act.left-side,.swipe-bg.dir-left .swipe-act.right-side{opacity:1;transform:scale(1)}
+.swipe-bg.dir-right{background:color-mix(in srgb,var(--app-fg) 7%,transparent);color:var(--app-fg)}
+.swipe-bg.dir-left{background:color-mix(in srgb,var(--app-fg) 9%,transparent);color:var(--app-fg)}
+.swipe-act{font-size:13px;font-weight:580;letter-spacing:.08em;opacity:0;transform:scale(.94);transition:opacity .16s,transform .2s var(--spring)}
+.swipe-bg.dir-right .swipe-act.left-side,.swipe-bg.dir-left .swipe-act.right-side{opacity:.86;transform:scale(1)}
 .book.dragging,.note-card.dragging{opacity:.22;transform:scale(.96)}
-.drag-ghost{position:fixed!important;left:0;top:0;z-index:90;pointer-events:none;margin:0!important;border-radius:18px!important;background:var(--glass-strong)!important;backdrop-filter:saturate(180%) blur(24px);-webkit-backdrop-filter:saturate(180%) blur(24px);box-shadow:0 20px 54px rgba(0,0,0,.22),0 0 0 1px color-mix(in srgb,var(--app-accent) 36%,transparent)!important;will-change:transform}
-.drop-target{transform:scale(1.022)!important;box-shadow:0 0 0 2px var(--app-accent),0 14px 36px color-mix(in srgb,var(--app-accent) 20%,transparent)!important;border-radius:18px;transition:transform .24s var(--spring),box-shadow .2s}
-.drop-target::after{content:attr(data-drop-hint);position:absolute;right:14px;top:50%;transform:translateY(-50%);padding:4px 10px;border-radius:999px;background:var(--app-accent);color:#fff;font-size:12px;font-weight:640;pointer-events:none;z-index:5}
-.drag-trash-zone{position:fixed;left:50%;top:calc(env(safe-area-inset-top) + 14px);z-index:92;transform:translateX(-50%);display:inline-flex;align-items:center;gap:7px;height:42px;padding:0 18px;border-radius:999px;background:var(--glass-strong);backdrop-filter:saturate(180%) blur(24px);-webkit-backdrop-filter:saturate(180%) blur(24px);color:var(--app-danger);font-size:13.5px;font-weight:640;box-shadow:0 10px 30px rgba(0,0,0,.16),0 0 0 .5px color-mix(in srgb,var(--app-danger) 30%,transparent);pointer-events:none;animation:drop .28s var(--spring);transition:transform .2s var(--spring),background-color .18s,color .18s}
-.drag-trash-zone.hot{transform:translateX(-50%) scale(1.08);background:var(--app-danger);color:#fff;box-shadow:0 14px 38px color-mix(in srgb,var(--app-danger) 38%,transparent)}
-.card-quick-mask{position:fixed;inset:0;z-index:88;background:rgba(0,0,0,.14);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);animation:fadeIn .16s ease-out}
-.card-quick-menu{position:fixed;display:inline-flex;align-items:center;gap:4px;padding:5px;border-radius:999px;background:var(--glass-strong);backdrop-filter:saturate(180%) blur(28px);-webkit-backdrop-filter:saturate(180%) blur(28px);box-shadow:0 16px 44px rgba(0,0,0,.22),0 0 0 .5px var(--app-line);animation:pop .26s var(--spring)}
-.card-quick-menu button{height:36px;padding:0 16px;border-radius:999px;font-size:14px;font-weight:600;color:var(--app-fg);white-space:nowrap}
-.card-quick-menu button.danger{color:var(--app-danger)}
+.drag-ghost{position:fixed!important;left:0;top:0;z-index:90;pointer-events:none;margin:0!important;border-radius:18px!important;background:var(--glass-strong)!important;backdrop-filter:saturate(180%) blur(24px);-webkit-backdrop-filter:saturate(180%) blur(24px);box-shadow:0 20px 54px rgba(0,0,0,.22),0 0 0 .5px var(--app-line)!important;will-change:transform}
+.drop-target{transform:scale(1.022)!important;box-shadow:0 0 0 1.5px var(--app-fg),0 14px 36px rgba(0,0,0,.12)!important;border-radius:18px;transition:transform .24s var(--spring),box-shadow .2s}
+.drop-target::after{content:attr(data-drop-hint);position:absolute;right:14px;top:50%;transform:translateY(-50%);padding:4px 10px;border-radius:999px;background:var(--app-fg);color:var(--app-bg);font-size:12px;font-weight:600;letter-spacing:.04em;pointer-events:none;z-index:5}
+.drag-trash-zone{position:fixed;left:50%;top:calc(env(safe-area-inset-top) + 14px);z-index:92;transform:translateX(-50%);display:inline-flex;align-items:center;gap:7px;height:40px;padding:0 18px;border-radius:999px;background:var(--glass-strong);backdrop-filter:saturate(180%) blur(28px);-webkit-backdrop-filter:saturate(180%) blur(28px);color:var(--app-muted);font-size:13px;font-weight:580;letter-spacing:.06em;box-shadow:0 12px 32px rgba(0,0,0,.12),0 0 0 .5px var(--app-line);pointer-events:none;animation:drop .28s var(--spring);transition:transform .22s var(--spring),background-color .18s,color .18s,box-shadow .18s}
+.drag-trash-zone.hot{transform:translateX(-50%) scale(1.06);background:var(--app-fg);color:var(--app-bg);box-shadow:0 16px 40px rgba(0,0,0,.22)}
+.card-quick-mask{position:fixed;inset:0;z-index:88;background:rgba(0,0,0,.12);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);animation:fadeIn .16s ease-out}
+.card-quick-menu{position:fixed;display:inline-flex;align-items:center;gap:2px;padding:4px;border-radius:999px;background:var(--glass-strong);backdrop-filter:saturate(180%) blur(32px);-webkit-backdrop-filter:saturate(180%) blur(32px);box-shadow:0 16px 44px rgba(0,0,0,.18),0 0 0 .5px var(--app-line);animation:pop .26s var(--spring)}
+.card-quick-menu button{height:34px;padding:0 16px;border-radius:999px;font-size:13.5px;font-weight:560;letter-spacing:.04em;color:var(--app-fg);white-space:nowrap}
+.card-quick-menu button.danger{color:var(--app-muted)}
 .card-quick-menu button:active{background:var(--app-fill)}
 
 /* 零按钮 Z 轴空间入口（彻底告别表单与按钮堆砌，轻触即穿层进入） */
