@@ -1033,11 +1033,26 @@ body.theme-night .textLayer span.rr-mark.an{background:rgba(10,132,255,.35)}
 .agent-app-chip{display:inline-flex;align-items:center;gap:6px;height:34px;padding:0 13px;border-radius:999px;background:var(--app-elev);box-shadow:0 0 0 .5px var(--app-line);font-size:13px;font-weight:580;color:var(--app-fg)}
 .agent-app-dot{width:7px;height:7px;border-radius:50%;background:var(--app-accent)}
 .empty.empty-quiet{display:none!important}
+.bot-reader-bar{flex:none;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:calc(env(safe-area-inset-top) + 10px) 14px 10px;background:var(--glass-strong);backdrop-filter:saturate(180%) blur(24px);-webkit-backdrop-filter:saturate(180%) blur(24px);border-bottom:.5px solid var(--app-line);z-index:12}
+html:not(.in-bot-reader) #bot-reader-bar{display:none!important}
+.bot-reader-back{display:inline-flex;align-items:center;gap:2px;height:32px;padding:0 10px 0 6px;border-radius:999px;background:var(--app-fill);font-size:13px;font-weight:620;color:var(--app-fg);max-width:118px;flex:none}
+.bot-reader-back svg{width:17px;height:17px;flex:none}
+.bot-reader-back span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bot-reader-seg{display:flex;gap:2px;padding:2px;border-radius:999px;background:var(--app-fill);flex:none}
+.bot-reader-seg button{height:28px;padding:0 10px;border-radius:999px;font-size:12.5px;font-weight:600;color:var(--app-muted);white-space:nowrap}
+.bot-reader-seg button.on{background:var(--app-elev);color:var(--app-fg);box-shadow:0 1px 3px rgba(0,0,0,.1)}
+.bot-reader-acts{display:flex;align-items:center;gap:6px;flex:none}
+.bot-reader-pill{height:30px;padding:0 10px;border-radius:999px;background:var(--app-fill);font-size:12.5px;font-weight:600;color:var(--app-fg);white-space:nowrap}
+.bot-reader-pill.accent{background:var(--app-accent);color:#fff}
 .agent-hub{min-height:calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 36px);justify-content:flex-start}
 #pane-shelf{padding-bottom:calc(env(safe-area-inset-bottom) + 16px)}
-html:not(.legacy-reader-home) #grid,html:not(.legacy-reader-home) #shelf-sub,html:not(.legacy-reader-home) #storage-info,html:not(.legacy-reader-home) #find-bar,html:not(.legacy-reader-home) #spatial-dock,html:not(.legacy-reader-home) #intent-mask{display:none!important}
-html.legacy-reader-home .agent-hub{display:none!important}
-html.legacy-reader-home #pane-shelf{padding-bottom:calc(env(safe-area-inset-bottom) + 64px)}
+html:not(.legacy-reader-home):not(.in-bot-reader) #grid,html:not(.legacy-reader-home):not(.in-bot-reader) #shelf-sub,html:not(.legacy-reader-home):not(.in-bot-reader) #storage-info,html:not(.legacy-reader-home):not(.in-bot-reader) #find-bar,html:not(.legacy-reader-home):not(.in-bot-reader) #spatial-dock,html:not(.legacy-reader-home):not(.in-bot-reader) #intent-mask{display:none!important}
+html.legacy-reader-home .agent-hub,html.in-bot-reader .agent-hub{display:none!important}
+html.legacy-reader-home #pane-shelf,html.in-bot-reader #pane-shelf{padding-bottom:calc(env(safe-area-inset-bottom) + 64px)}
+html.in-bot-reader #pane-shelf,html.in-bot-reader #pane-knowledge{padding-top:14px}
+html.in-bot-reader #empty.empty-quiet:not(.hidden){display:flex!important;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:72px 24px;text-align:center;color:var(--app-muted)}
+html.in-bot-reader #empty.empty-quiet:not(.hidden)::before{content:"还没有导入材料，点右上角「导入」加入电子书/文档，长按拖叠即可组成卡片堆";max-width:260px;font-size:14px;line-height:1.6}
+html.in-bot-reader #empty.empty-quiet #btn-empty-import{position:static;width:auto;height:38px;clip:auto;overflow:visible;padding:0 18px;border-radius:999px;background:var(--app-accent);color:#fff;font-size:14px;font-weight:600}
 
 @media (prefers-reduced-motion:reduce){
   *,*::before,*::after{animation:none!important;transition:none!important}

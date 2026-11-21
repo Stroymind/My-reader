@@ -1948,76 +1948,74 @@ $('#btn-aa')?.addEventListener('click', () => { const s = $('#settings'); const 
 
 let rz; window.addEventListener('resize', () => { clearTimeout(rz); rz = setTimeout(() => engine?.resize(), 250); });
 
-function closeBotReaderSheet() {
-  const mask = document.getElementById('zone-reader-sheet-mask');
-  if (!mask || mask.classList.contains('hidden')) return false;
-  mask.classList.add('hidden');
+let readerReturnBotId = '';
+
+function syncBotReaderBarPane() {
+  const pane = currentPane();
+  document.querySelectorAll('#bot-reader-bar [data-br-pane]').forEach(btn => {
+    btn.classList.toggle('on', btn.dataset.brPane === pane);
+  });
+  const pickBtn = $('#btn-br-pick');
+  if (pickBtn) pickBtn.classList.toggle('hidden', pane !== 'shelf');
+}
+
+function exitBotReaderWorkspace({ returnToBot = true } = {}) {
+  if (!document.documentElement.classList.contains('in-bot-reader')) return false;
+  if (document.body.classList.contains('selecting')) exitPick();
+  document.documentElement.classList.remove('in-bot-reader');
+  $('#bot-reader-bar')?.classList.add('hidden');
+  showPane('shelf', { instant: true });
+  const backBotId = readerReturnBotId;
+  readerReturnBotId = '';
+  if (returnToBot && backBotId) {
+    const b = listBots().find(x => x.id === backBotId) || getActiveBot();
+    if (b) openBotConversation(b);
+  }
   return true;
 }
 
-async function openBotReaderSheet() {
+function closeBotReaderSheet() {
+  const mask = document.getElementById('zone-reader-sheet-mask');
+  if (mask && !mask.classList.contains('hidden')) {
+    mask.classList.add('hidden');
+    return true;
+  }
+  return false;
+}
+
+async function openBotReaderSheet(bot = getActiveBot()) {
   if (!isPluginEnabled('reading-cosmos')) {
     toast('请先在插件中开启「阅读器」开关');
     return;
   }
-  let mask = document.getElementById('zone-reader-sheet-mask');
-  if (!mask) {
-    mask = document.createElement('div');
-    mask.id = 'zone-reader-sheet-mask';
-    mask.className = 'bots-mask hidden';
-    document.body.appendChild(mask);
-  }
-  const books = await db.all('books');
-  sortBooks(books, 'recent');
-  const escHtml = s => String(s || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  mask.innerHTML = `
-    <div class="bots-sheet" role="dialog" aria-label="Bot 内置阅读器">
-      <div class="bots-head">
-        <div>
-          <h3>阅读器</h3>
-          <p>仅在 Bot 对话内按需使用，不改变外部主界面</p>
-        </div>
-        <button type="button" class="bots-close" data-r-act="close">完成</button>
-      </div>
-      <div class="prof-group">
-        <button type="button" class="prof-row" data-r-act="import">
-          <div class="prof-row-main"><strong>导入文件 / 书 / 文档 / 音视频</strong><span>EPUB · PDF · MOBI · DOCX · MD · 音视频字幕</span></div>
-          <span class="prof-row-val">导入 ›</span>
-        </button>
-        <button type="button" class="prof-row" data-r-act="cosmos">
-          <div class="prof-row-main"><strong>知识星海与笔记</strong><span>查看划线、双链笔记与星海图谱</span></div>
-          <span class="prof-row-val">进入 ›</span>
-        </button>
-      </div>
-      <div class="bots-list">
-        ${books.length ? books.slice(0, 12).map(b => `
-          <button type="button" class="roster-item" data-r-book="${escHtml(b.id)}">
-            <div class="roster-txt">
-              <strong>${escHtml(b.title || '未命名')}</strong>
-              <span>${escHtml(b.author || b.format || '文档')}${b.progress ? ` · ${Math.round(b.progress * 100)}%` : ''}</span>
-            </div>
-            <span class="prof-row-val">阅读 ›</span>
-          </button>
-        `).join('') : '<p class="sc-empty" style="padding:18px 0">还没有导入阅读材料，点上方「导入」即可随时打开阅读。</p>'}
-      </div>
-    </div>`;
-  mask.onclick = e => { if (e.target === mask) closeBotReaderSheet(); };
-  mask.querySelector('[data-r-act="close"]').onclick = () => closeBotReaderSheet();
-  mask.querySelector('[data-r-act="import"]').onclick = () => { closeBotReaderSheet(); $('#file-input')?.click(); };
-  mask.querySelector('[data-r-act="cosmos"]').onclick = () => {
-    closeBotReaderSheet();
-    closeBotChat();
-    document.documentElement.classList.add('legacy-reader-home');
-    showPane('graph', { whisper: true });
-  };
-  mask.querySelectorAll('[data-r-book]').forEach(btn => {
-    btn.onclick = async () => {
-      closeBotReaderSheet();
-      await openBook(btn.dataset.rBook);
-    };
-  });
-  mask.classList.remove('hidden');
+  const targetBot = bot || getActiveBot();
+  readerReturnBotId = targetBot?.id || '';
+  const nameEl = $('#reader-return-name');
+  if (nameEl) nameEl.textContent = targetBot?.name || '返回对话';
+  $('#zone-chat-modal')?.classList.add('hidden');
+  document.documentElement.classList.add('in-bot-reader');
+  $('#bot-reader-bar')?.classList.remove('hidden');
+  showPane('shelf', { instant: true });
+  syncBotReaderBarPane();
+  await renderLibrary();
 }
+
+$('#btn-reader-return-bot')?.addEventListener('click', () => exitBotReaderWorkspace({ returnToBot: true }));
+$('#btn-br-import')?.addEventListener('click', () => $('#file-input')?.click());
+$('#btn-br-pick')?.addEventListener('click', () => {
+  if (currentPane() !== 'shelf') showPane('shelf', { instant: true });
+  if (document.body.classList.contains('selecting')) exitPick();
+  else startPick(null);
+});
+document.querySelectorAll('#bot-reader-bar [data-br-pane]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    showPane(btn.dataset.brPane, { whisper: false });
+    syncBotReaderBarPane();
+  });
+});
+document.addEventListener('click', () => {
+  if (document.documentElement.classList.contains('in-bot-reader')) requestAnimationFrame(syncBotReaderBarPane);
+}, true);
 
 function closeBotPluginsSheet() {
   const mask = document.getElementById('zone-bot-plugins-mask');
@@ -2132,6 +2130,7 @@ function handleBack() {
   if (workspaceHandleBack()) return true;
   if ($('#library').classList.contains('active') && exitPick()) return true;
   if (engine) { history.back(); return true; }
+  if (exitBotReaderWorkspace({ returnToBot: true })) return true;
   return false;
 }
 
@@ -4324,7 +4323,7 @@ function launchPluginById(id, bot = getActiveBot()) {
   }
   if (id === 'reading-cosmos') {
     openBotConversation(targetBot);
-    openBotReaderSheet();
+    openBotReaderSheet(targetBot);
     return;
   }
 }
