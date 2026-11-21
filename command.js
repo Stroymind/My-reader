@@ -154,8 +154,18 @@ function parseSingleClause(rawClause, ctx = {}) {
   if (craftM && /(?:小工具|微应用|番茄钟|计算器|换算|打卡|复盘|清单|计时|倒计时|日历|工具|应用)/.test(text)) {
     return [{ op: 'craftApp', prompt: craftM[1].trim() || text }];
   }
+  const cuBind = text.match(/^(?:连接|绑定)电脑(?:桥接|地址)?\s*(https?:\/\/\S+)$/i);
+  if (cuBind) return [{ op: 'setComputerBridge', url: cuBind[1].trim() }];
+  const cuRun = text.match(/^(?:电脑控屏|遥控电脑|控制电脑|在电脑上)[：:，,\s]*(.+)$/);
+  if (cuRun && cuRun[1].trim()) return [{ op: 'computerUse', goal: cuRun[1].trim() }];
+  if (/(?:定时任务|自动化任务|信息推送设置)/i.test(text)) {
+    return [{ op: 'openBotStudio', tab: 'automations' }];
+  }
+  if (/(?:插件开关|打开插件|管理插件|安装插件|技能开关|插件库|主题插件)/i.test(text)) {
+    return [{ op: 'openBotStudio', tab: 'plugins' }];
+  }
   if (/(?:Bot\s*工坊|打开\s*Bot|管理\s*Bot|创建\s*Bot|新建\s*Bot|切换\s*Bot|机器人(?:工坊|列表|规则|设置))/i.test(text)) {
-    return [{ op: 'openBotStudio' }];
+    return [{ op: 'openBotStudio', tab: 'bots' }];
   }
   if (/^(?:开启|打开|设置|配置)?(?:手机控屏|控屏权限|无障碍权限|无障碍服务|控屏设置)$/.test(text)) {
     return [{ op: 'phoneUseSetup' }];
@@ -537,7 +547,7 @@ const SAFE_OPS = new Set([
   'pane', 'graphTilt', 'graphFit', 'graphMood', 'openBook', 'createNote', 'search', 'exportOutline', 'importBooks',
   'findBook', 'importUrl', 'setOpds', 'stackCreate', 'stackRemove', 'stackMerge', 'stackDissolve',
   'openSichao', 'setSichaoApi', 'askAi', 'styleUi', 'resetUi', 'exportVault', 'exportWord',
-  'phoneUse', 'phoneUseSetup', 'pinShortcut', 'craftApp', 'openBotStudio',
+  'phoneUse', 'phoneUseSetup', 'pinShortcut', 'craftApp', 'openBotStudio', 'setComputerBridge', 'computerUse',
   'cosmosExplore', 'cosmosNeighbors', 'cosmosFocus', 'cosmosLink', 'cosmosZoom'
 ]);
 

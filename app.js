@@ -4,8 +4,8 @@ import { importArticleUrl, importBlob, importFiles, parseManifest, applyManifest
 import { findAndFetchBook, getOpdsUrl, setOpdsUrl } from './book-finder.js';
 import { initSichao, setSichaoApi } from './sichao.js';
 import { getPhoneUseStatus, openPhoneUseSettings, runPhoneUseTask } from './phone-use.js';
-import { closeMicroApp, consumeLaunchDeepLink, craftMicroApp, isMicroAppOpen, openMicroApp, pinToDesktop } from './agent-surface.js';
-import { closeBotStudio, getActiveBot, openBotStudio, setActiveBot, syncToAndroidWidget } from './bots.js';
+import { closeMicroApp, consumeLaunchDeepLink, craftMicroApp, isMicroAppOpen, listMicroApps, openMicroApp, pinToDesktop } from './agent-surface.js';
+import { applyThemePlugin, closeBotStudio, getActiveBot, getActiveThemePlugin, listBots, openBotStudio, renderBotSvg, setActiveBot, syncToAndroidWidget } from './bots.js';
 import { BookletEngine, EpubEngine, PdfEngine, TxtEngine } from './engines.js';
 import { aiConfigured, complete as aiComplete } from './ai.js';
 import { settings, saveSettings, applyBodyTheme, applyAppearance, appearancePref, cycleAppearance, applyCustomFontBlob, FONTS, THEMES } from './settings.js';
@@ -759,6 +759,7 @@ function closeShelfFind() {
 async function renderLibrary(opts = {}) {
   if (!opts || opts instanceof Event) opts = {};
   const books = await db.all('books');
+  $('#zone-agent-hub')?.classList.toggle('compact', books.length > 0);
   const live = new Set(books.map(b => b.id));
   for (const id of [...picked]) if (!live.has(id)) picked.delete(id);
   if (pickMode && !books.length) { pickMode = false; picked.clear(); }
@@ -2360,10 +2361,32 @@ command = createCommandController({
       case 'askAi': {
         const pageTxt = reading ? (engine?.pageText?.() || '').trim().slice(0, 1200) : '';
         const q = a.question || '总结这一段';
+        if (!reading && aiConfigured()) {
+          const bot = getActiveBot();
+          const thread = ensureActiveTaskThread(q, bot.id);
+          thread.messages.push({ role: 'user', content: q });
+          saveTaskThreads();
+          renderTaskThreadUI();
+          showAgentLiveCard({ title: `${bot.name} · ${thread.title}`, body: '思考中…', threadId: thread.id });
+          try {
+            const sys = bot.rules ? [{ role: 'system', content: bot.rules }] : [];
+            const ans = await aiComplete([...sys, ...thread.messages.slice(-12)]);
+            const reply = String(ans || '未收到回复');
+            thread.messages.push({ role: 'assistant', content: reply });
+            thread.updatedAt = Date.now();
+            saveTaskThreads();
+            renderTaskThreadUI();
+            showAgentLiveCard({ title: `${bot.name} · ${thread.title}`, body: reply, threadId: thread.id });
+            return { label: `${bot.name} 已回复` };
+          } catch (err) {
+            showAgentLiveCard({ title: `${bot.name} · 调用失败`, body: err?.message || '请检查你的 AI API Key 与网络', threadId: thread.id });
+            return { label: 'AI 调用失败' };
+          }
+        }
         openAssistant({
           title: q.slice(0, 18),
           quote: pageTxt || q,
-          context: reading && cur ? `来自《${cur.title}》${lastState?.label ? ' · ' + lastState.label : ''}` : '语音直连 AI 提问',
+          context: reading && cur ? `来自《${cur.title}》${lastState?.label ? ' · ' + lastState.label : ''}` : `${getActiveBot().name} · 语音直连`,
           bookId: cur?.id || null,
           bookTitle: cur?.title || ''
         });
@@ -2635,17 +2658,59 @@ command = createCommandController({
         toast(res.message, 3200);
         return { label: res.message };
       }
+      case 'setComputerBridge': {
+        const clean = String(a.url || '').trim().replace(/\/+$/, '');
+        try { if (clean) localStorage.setItem('zone-cu-bridge', clean); else localStorage.removeItem('zone-cu-bridge'); } catch {}
+        return { label: clean ? `已绑定本地电脑桥接：${clean}` : '已断开本地电脑桥接' };
+      }
+      case 'computerUse': {
+        const bridge = (() => { try { return localStorage.getItem('zone-cu-bridge') || ''; } catch { return ''; } })();
+        if (!bridge) {
+          toast('请先说「连接电脑 http://你的电脑地址:端口」绑定本地桌面桥接节点', 3600);
+          return { label: '尚未绑定本地电脑桥接' };
+        }
+        const goal = String(a.goal || '').trim();
+        showAgentLiveCard({ title: 'Computer-Use · 远程执行中', body: `正在向本地电脑 (${bridge}) 下发任务：${goal}` });
+        try {
+          const r = await fetch(`${bridge}/api/computer-use/run`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ goal, bot: getActiveBot().name, rules: getActiveBot().rules || '' })
+          });
+          const data = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(data?.detail || `HTTP ${r.status}`);
+          const msg = data?.summary || data?.result || '已下发至本地电脑执行';
+          showAgentLiveCard({ title: 'Computer-Use · 本地电脑回报', body: String(msg) });
+          return { label: '本地电脑已响应' };
+        } catch (err) {
+          showAgentLiveCard({ title: 'Computer-Use · 连接失败', body: `无法连接本地电脑节点 ${bridge}：${err?.message || '请确认电脑端桥接服务已启动'}` });
+          return { label: '本地电脑未连通' };
+        }
+      }
       case 'openBotStudio': {
         openBotStudio({
-          onStatus: msg => toast(msg, 2600)
+          onSelect: () => renderAgentHub(),
+          onStatus: msg => { renderAgentHub(); toast(msg, 2600); },
+          onLaunchPlugin: launchPluginById,
+          onRunAutomation: runAutomationItem,
+          initialTab: a.tab || 'bots'
         });
-        return { label: 'Zone Bot 工坊' };
+        return { label: a.tab === 'plugins' ? '插件与主题' : a.tab === 'automations' ? '定时任务' : 'Zone Bot' };
       }
       case 'craftApp': {
         const res = await craftMicroApp(a.prompt || '', {
           onStatus: msg => toast(msg, 3200),
           onNeedAi: () => openAiSettingsDialog()
         });
+        renderAgentHub();
+        if (res.ok && res.app) {
+          showAgentLiveCard({
+            title: `微应用 · ${res.app.title}`,
+            body: `已生成苹果风独立微应用「${res.app.title}」，随时可全屏打开或钉到手机桌面。`,
+            onOpen: () => openMicroApp(res.app.id),
+            pinSpec: { id: `microapp-${res.app.id}`, label: res.app.title, uri: `zone://open/microapp/${res.app.id}`, glyph: res.app.title.slice(0, 1) }
+          });
+        }
         return { label: res.message };
       }
       case 'phoneUseSetup': {
@@ -2803,6 +2868,220 @@ async function openDeepLink(uri) {
   if (s === 'zone://open/knowledge') { if (reading) await closeBook(); showPane('knowledge', { whisper: false }); return true; }
   return false;
 }
+/* ---------------- Zone 2.0 苹果风 Agent 主画布 + 独立上下文多任务线程 ---------------- */
+const THREADS_KEY = 'zone-task-threads-v1';
+let taskThreads = (() => {
+  try { const x = JSON.parse(localStorage.getItem(THREADS_KEY) || '[]'); return Array.isArray(x) ? x : []; } catch { return []; }
+})();
+let activeThreadId = null;
+
+function saveTaskThreads() {
+  try { localStorage.setItem(THREADS_KEY, JSON.stringify(taskThreads.slice(0, 20))); } catch {}
+}
+
+function ensureActiveTaskThread(seedTitle, botId) {
+  let t = taskThreads.find(x => x.id === activeThreadId);
+  if (!t) {
+    t = {
+      id: `th-${Date.now().toString(36)}`,
+      title: String(seedTitle || '新任务').trim().slice(0, 14),
+      botId: botId || getActiveBot().id,
+      messages: [],
+      updatedAt: Date.now()
+    };
+    taskThreads.unshift(t);
+    activeThreadId = t.id;
+    saveTaskThreads();
+  }
+  return t;
+}
+
+function renderTaskThreadUI() {
+  const strip = $('#zone-task-strip');
+  if (!strip) return;
+  strip.replaceChildren();
+  if (!taskThreads.length) { strip.classList.add('hidden'); return; }
+  strip.classList.remove('hidden');
+
+  const btnNew = document.createElement('button');
+  btnNew.type = 'button';
+  btnNew.className = 'task-pill new';
+  btnNew.textContent = '+ 新任务';
+  btnNew.onclick = () => {
+    activeThreadId = null;
+    $('#zone-live-card')?.classList.add('hidden');
+    $('#zone-hero-input')?.focus();
+    renderTaskThreadUI();
+  };
+  strip.appendChild(btnNew);
+
+  for (const th of taskThreads.slice(0, 8)) {
+    const pill = document.createElement('button');
+    pill.type = 'button';
+    pill.className = 'task-pill' + (th.id === activeThreadId ? ' on' : '');
+    const dot = document.createElement('i');
+    dot.className = 'task-dot';
+    const lbl = document.createElement('span');
+    lbl.textContent = th.title;
+    pill.append(dot, lbl);
+    pill.onclick = () => {
+      activeThreadId = th.id;
+      renderTaskThreadUI();
+      const last = th.messages[th.messages.length - 1];
+      const historyPreview = th.messages.slice(-4).map(m => `${m.role === 'user' ? '你：' : ''}${m.content}`).join('\n\n');
+      showAgentLiveCard({
+        title: `${th.title}（${Math.ceil(th.messages.length / 2)} 轮独立上下文）`,
+        body: historyPreview || last?.content || '可继续围绕此任务提问',
+        threadId: th.id
+      });
+    };
+    strip.appendChild(pill);
+  }
+}
+
+function showAgentLiveCard({ title, body, onOpen = null, pinSpec = null, threadId = null }) {
+  const card = $('#zone-live-card');
+  if (!card) return;
+  card.replaceChildren();
+  const head = document.createElement('div');
+  head.className = 'agent-live-head';
+  const t = document.createElement('span');
+  t.className = 'agent-live-title';
+  t.textContent = title || getActiveBot().name;
+  head.appendChild(t);
+  card.appendChild(head);
+
+  const p = document.createElement('p');
+  p.className = 'agent-live-body';
+  p.textContent = body || '';
+  card.appendChild(p);
+
+  const acts = document.createElement('div');
+  acts.className = 'agent-live-acts';
+  if (typeof onOpen === 'function') {
+    const bOpen = document.createElement('button');
+    bOpen.type = 'button';
+    bOpen.className = 'agent-live-pill accent';
+    bOpen.textContent = '全屏打开';
+    bOpen.onclick = () => onOpen();
+    acts.appendChild(bOpen);
+  }
+  if (pinSpec) {
+    const bPin = document.createElement('button');
+    bPin.type = 'button';
+    bPin.className = 'agent-live-pill';
+    bPin.textContent = '放到桌面';
+    bPin.onclick = async () => { const r = await pinToDesktop(pinSpec); toast(r.message, 2800); };
+    acts.appendChild(bPin);
+  }
+  if (threadId) {
+    const bNew = document.createElement('button');
+    bNew.type = 'button';
+    bNew.className = 'agent-live-pill';
+    bNew.textContent = '开新任务';
+    bNew.onclick = () => { activeThreadId = null; card.classList.add('hidden'); renderTaskThreadUI(); $('#zone-hero-input')?.focus(); };
+    acts.appendChild(bNew);
+
+    const bArch = document.createElement('button');
+    bArch.type = 'button';
+    bArch.className = 'agent-live-pill';
+    bArch.textContent = '归档';
+    bArch.onclick = () => {
+      taskThreads = taskThreads.filter(x => x.id !== threadId);
+      if (activeThreadId === threadId) activeThreadId = null;
+      saveTaskThreads();
+      card.classList.add('hidden');
+      renderTaskThreadUI();
+    };
+    acts.appendChild(bArch);
+  }
+  const bClose = document.createElement('button');
+  bClose.type = 'button';
+  bClose.className = 'agent-live-pill';
+  bClose.textContent = '收起';
+  bClose.onclick = () => card.classList.add('hidden');
+  acts.appendChild(bClose);
+  card.appendChild(acts);
+  card.classList.remove('hidden');
+}
+
+function renderAgentHub() {
+  const bot = getActiveBot();
+  const bots = listBots();
+  const glyphEl = $('#zone-hero-glyph');
+  if (glyphEl) glyphEl.innerHTML = renderBotSvg(bot.shape, bot.accent);
+  const auraEl = $('#zone-hero-aura');
+  if (auraEl) auraEl.style.backgroundColor = bot.accent || '#007AFF';
+  const nameEl = $('#zone-hero-name');
+  if (nameEl) nameEl.textContent = bot.name;
+  const countEl = $('#zone-hero-count');
+  if (countEl) countEl.textContent = bots.length > 1 ? `${bots.length} 个 Bot ▾` : '形象 · 任务 · 插件 ▾';
+  const roleEl = $('#zone-hero-role');
+  if (roleEl) roleEl.textContent = bot.role || '轻触形象自定义规则、定时任务与插件';
+  renderTaskThreadUI();
+
+  const strip = $('#zone-microapp-strip');
+  if (strip) {
+    const apps = listMicroApps();
+    strip.replaceChildren();
+    strip.classList.toggle('hidden', !apps.length);
+    for (const app of apps.slice(0, 6)) {
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'agent-app-chip';
+      const dot = document.createElement('span');
+      dot.className = 'agent-app-dot';
+      chip.append(dot, document.createTextNode(app.title));
+      chip.onclick = () => openMicroApp(app.id);
+      strip.appendChild(chip);
+    }
+  }
+}
+
+function launchPluginById(id) {
+  if (id === 'sichao') { openSichaoSheet(); return; }
+  if (id === 'phone-use') { command.run('开启手机控屏'); return; }
+  if (id === 'computer-use') {
+    const curUrl = (() => { try { return localStorage.getItem('zone-cu-bridge') || ''; } catch { return ''; } })();
+    const inp = $('#zone-hero-input');
+    if (inp) {
+      inp.value = curUrl ? `电脑控屏 ` : `连接电脑 http://192.168.1.100:8765`;
+      inp.focus();
+    }
+    toast(curUrl ? `已绑定本地电脑桥接：${curUrl}` : '输入局域网/公网电脑桥接地址即可从手机遥控本地电脑', 3400);
+    return;
+  }
+  if (id === 'reading-cosmos') { showPane('graph', { whisper: true }); return; }
+}
+function runAutomationItem(auto) {
+  if (auto?.builtinAction === 'sichao') { openSichaoSheet(); return; }
+  if (auto?.prompt) {
+    activeThreadId = null;
+    command.run(`问AI：${auto.prompt}`);
+  }
+}
+const openBotsFromHub = () => openBotStudio({
+  onSelect: () => renderAgentHub(),
+  onStatus: msg => { renderAgentHub(); toast(msg, 2600); },
+  onLaunchPlugin: launchPluginById,
+  onRunAutomation: runAutomationItem
+});
+$('#zone-hero-avatar')?.addEventListener('click', openBotsFromHub);
+$('#zone-hero-switch')?.addEventListener('click', openBotsFromHub);
+$('#zone-hero-mic')?.addEventListener('click', () => command.openBar({ listen: true }));
+$('#zone-hero-form')?.addEventListener('submit', async e => {
+  e.preventDefault();
+  const inp = $('#zone-hero-input');
+  const text = (inp?.value || '').trim();
+  if (!text) { command.openBar({ listen: true }); return; }
+  inp.value = '';
+  inp.blur();
+  await command.run(text);
+  renderAgentHub();
+});
+
+applyThemePlugin(getActiveThemePlugin());
+renderAgentHub();
 consumeLaunchDeepLink(openDeepLink);
 syncToAndroidWidget();
 

@@ -29,10 +29,7 @@ public class ZoneWidgetProvider extends AppWidgetProvider {
     private static JSONArray defaultBots() {
         JSONArray arr = new JSONArray();
         try {
-            arr.put(new JSONObject().put("id", "zone-chief").put("name", "Zone 总管").put("role", "自动调度所有能力 · 直接说话派活").put("shape", "orb").put("accent", "#007AFF"));
-            arr.put(new JSONObject().put("id", "bot-sichao").put("name", "思潮官").put("role", "云端 24/7 情报筛选与独立判断").put("shape", "prism").put("accent", "#5856D6"));
-            arr.put(new JSONObject().put("id", "bot-reader").put("name", "研读官").put("role", "精读文档、生成小册子与星海记忆").put("shape", "halo").put("accent", "#34C759"));
-            arr.put(new JSONObject().put("id", "bot-phone").put("name", "手机代办官").put("role", "语音跨 App 操作手机与生成微应用").put("shape", "fold").put("accent", "#FF9500"));
+            arr.put(new JSONObject().put("id", "zone-chief").put("name", "Zone").put("role", "点右侧直接说话派活 · 形象与规则由你定义").put("shape", "onigiri").put("accent", "#111111"));
         } catch (Exception ignored) {}
         return arr;
     }
@@ -131,59 +128,46 @@ public class ZoneWidgetProvider extends AppWidgetProvider {
     }
 
     private static Bitmap renderGeometricAvatar(String shape, String accentHex) {
-        int s = 160;
+        int s = 184;
         Bitmap bmp = Bitmap.createBitmap(s, s, Bitmap.Config.ARGB_8888);
         Canvas c = new Canvas(bmp);
-        int accent;
-        try { accent = Color.parseColor(accentHex); } catch (Exception e) { accent = Color.parseColor("#007AFF"); }
-        int softAccent = Color.argb(38, Color.red(accent), Color.green(accent), Color.blue(accent));
-
-        // Subtle Apple squircle ceramic base
-        Paint base = new Paint(Paint.ANTI_ALIAS_FLAG);
-        base.setShader(new LinearGradient(0, 0, s, s, Color.parseColor("#FFFFFF"), Color.parseColor("#F2F2F7"), Shader.TileMode.CLAMP));
-        RectF r = new RectF(6, 6, s - 6, s - 6);
-        c.drawRoundRect(r, 40, 40, base);
-
-        Paint border = new Paint(Paint.ANTI_ALIAS_FLAG);
-        border.setStyle(Paint.Style.STROKE);
-        border.setStrokeWidth(2.4f);
-        border.setColor(Color.parseColor("#1A1D1D1F"));
-        c.drawRoundRect(r, 40, 40, border);
-
-        Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG);
-        fill.setColor(softAccent);
-        Paint line = new Paint(Paint.ANTI_ALIAS_FLAG);
-        line.setStyle(Paint.Style.STROKE);
-        line.setStrokeWidth(4.5f);
-        line.setColor(accent);
-        Paint core = new Paint(Paint.ANTI_ALIAS_FLAG);
-        core.setColor(accent);
+        int fillCol;
+        try { fillCol = Color.parseColor(accentHex); } catch (Exception e) { fillCol = Color.parseColor("#111111"); }
+        Paint body = new Paint(Paint.ANTI_ALIAS_FLAG);
+        body.setColor(fillCol);
+        Paint eye = new Paint(Paint.ANTI_ALIAS_FLAG);
+        eye.setColor(Color.WHITE);
 
         float cx = s / 2f, cy = s / 2f;
-        if ("prism".equals(shape)) {
-            Path p = new Path();
-            p.moveTo(cx, 32); p.lineTo(s - 34, s - 38); p.lineTo(34, s - 38); p.close();
-            c.drawPath(p, fill);
-            c.drawPath(p, line);
-            c.drawCircle(cx, cy + 10, 9, core);
-        } else if ("halo".equals(shape)) {
-            c.drawCircle(cx, cy, 42, fill);
-            c.drawCircle(cx, cy, 42, line);
-            c.drawOval(new RectF(cx - 50, cy - 18, cx + 50, cy + 18), line);
-            c.drawCircle(cx, cy, 8, core);
-        } else if ("fold".equals(shape)) {
-            Path p = new Path();
-            p.moveTo(cx, 28); p.lineTo(s - 30, cy); p.lineTo(cx, s - 28); p.lineTo(30, cy); p.close();
-            c.drawPath(p, fill);
-            c.drawPath(p, line);
-            c.drawLine(30, cy, s - 30, cy, line);
-            c.drawCircle(cx, cy, 8, core);
+        if ("cube".equals(shape)) {
+            c.save(); c.rotate(-16f, cx, cy);
+            c.drawRoundRect(new RectF(28, 28, s - 28, s - 28), 28, 28, body);
+            c.drawRoundRect(new RectF(76, 76, 90, 108), 7, 7, eye);
+            c.drawRoundRect(new RectF(104, 76, 118, 108), 7, 7, eye);
+            c.restore();
+        } else if ("bean".equals(shape)) {
+            c.save(); c.rotate(-15f, cx, cy);
+            c.drawRoundRect(new RectF(20, 46, s - 20, s - 46), 46, 46, body);
+            c.drawRoundRect(new RectF(82, 72, 96, 104), 7, 7, eye);
+            c.drawRoundRect(new RectF(110, 72, 124, 104), 7, 7, eye);
+            c.restore();
+        } else if ("orb".equals(shape)) {
+            c.save(); c.rotate(-12f, cx, cy);
+            c.drawCircle(cx, cy, 70, body);
+            c.drawRoundRect(new RectF(84, 66, 98, 98), 7, 7, eye);
+            c.drawRoundRect(new RectF(112, 66, 126, 98), 7, 7, eye);
+            c.restore();
         } else {
-            // Default Apple Living Orb (concentric harmonic rings)
-            c.drawCircle(cx, cy, 44, fill);
-            c.drawCircle(cx, cy, 44, line);
-            c.drawCircle(cx, cy, 24, line);
-            c.drawCircle(cx + 16, cy - 16, 8, core);
+            // Iconic plump rounded onigiri triangle
+            Path p = new Path();
+            p.moveTo(cx, 22);
+            p.cubicTo(cx + 16, 22, s - 22, s - 46, s - 24, s - 32);
+            p.cubicTo(s - 26, s - 18, 26, s - 18, 24, s - 32);
+            p.cubicTo(22, s - 46, cx - 16, 22, cx, 22);
+            p.close();
+            c.drawPath(p, body);
+            c.drawRoundRect(new RectF(74, 86, 88, 120), 7, 7, eye);
+            c.drawRoundRect(new RectF(102, 86, 116, 120), 7, 7, eye);
         }
         return bmp;
     }

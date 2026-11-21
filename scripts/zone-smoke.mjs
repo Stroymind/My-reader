@@ -35,7 +35,26 @@ try {
   await page.click('#auth-portal');
   await page.waitForFunction(() => document.querySelector('#auth-gate').classList.contains('hidden'));
   assert.equal(await page.evaluate(() => window.__app.getAuthUser()?.mode), 'guest');
-  report.checks.push('Mobile startup, zero-button Spatial Z Portal entry, and Zone heading/title');
+  await sleep(360);
+  await page.screenshot({ path: path.resolve(root, 'test-results/zone-agent-home.png') });
+  await page.click('#zone-hero-avatar');
+  await page.waitForFunction(() => !document.querySelector('#zone-bots-mask').classList.contains('hidden'));
+  await sleep(260);
+  await page.screenshot({ path: path.resolve(root, 'test-results/zone-bot-studio.png') });
+  await page.click('#zone-bots-mask [data-act="new"]');
+  await sleep(260);
+  await page.screenshot({ path: path.resolve(root, 'test-results/zone-bot-create.png') });
+  await page.click('#zone-bots-mask [data-act="cancel"]');
+  await sleep(200);
+  await page.click('#zone-bots-mask [data-tab="automations"]');
+  await sleep(220);
+  await page.screenshot({ path: path.resolve(root, 'test-results/zone-automations.png') });
+  await page.click('#zone-bots-mask [data-tab="plugins"]');
+  await sleep(220);
+  await page.screenshot({ path: path.resolve(root, 'test-results/zone-plugins-tab.png') });
+  await page.click('#zone-bots-mask [data-act="close"]');
+  await page.waitForFunction(() => document.querySelector('#zone-bots-mask').classList.contains('hidden'));
+  report.checks.push('Mobile startup, zero-button Spatial Z Portal entry, pure Apple Zone Agent Home, Bot Studio, Plugin Switches, and Zone heading/title');
 
   const chrome = await page.evaluate(() => ({
     gone: ['.appbar', '#btn-search-toggle', '#btn-menu', '.tabbar', '.pane-head', '.pane-intro', '.flow', '.pillars', '.tagline', '#desk-block', '#desk-list', '.sidebar', '.side-mark', '.book-grid', '.cosmos-hud', '#cosmos-stats', '#graph-search-toggle', '#graph-in', '#graph-out'].filter(s => document.querySelector(s)),

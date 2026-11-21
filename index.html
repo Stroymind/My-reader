@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#f5f5f7">
-<meta name="description" content="Zone：个人知识系统。">
+<meta name="description" content="Zone：苹果风个人移动端 AI Agent。">
 <meta name="google" content="notranslate">
 <title>Zone</title>
 <link rel="manifest" href="manifest.webmanifest">
@@ -49,11 +49,30 @@
             </div>
           </div>
           <div id="import-status" class="status hidden"></div>
-          <div id="empty" class="empty hidden">
-            <div class="empty-glow" aria-hidden="true"></div>
-            <p>这里还很安静</p>
-            <p class="hint">导入 EPUB、PDF 或 TXT，它们会出现在这里。</p>
-            <button id="btn-empty-import" class="pill accent" type="button">导入</button>
+          <section id="zone-agent-hub" class="agent-hub" aria-label="Zone 智能体中枢">
+            <div class="agent-hero">
+              <button id="zone-hero-avatar" class="agent-orb-btn" type="button" aria-label="切换或定制 Bot">
+                <span id="zone-hero-aura" class="agent-orb-aura" aria-hidden="true"></span>
+                <span id="zone-hero-glyph" class="agent-orb-glyph" aria-hidden="true"></span>
+              </button>
+              <button id="zone-hero-switch" class="agent-title-btn" type="button">
+                <span id="zone-hero-name" class="agent-name">Zone 总管</span>
+                <span id="zone-hero-count" class="agent-badge">4 个 Bot</span>
+              </button>
+              <p id="zone-hero-role" class="agent-role">自动调度所有能力 · 直接说话或输入派活</p>
+            </div>
+            <form id="zone-hero-form" class="agent-capsule">
+              <input id="zone-hero-input" type="text" placeholder="交代任何任务，或直接说话…" autocomplete="off" enterkeyhint="go" aria-label="给 Zone 下达任务">
+              <button id="zone-hero-mic" class="agent-mic" type="button" aria-label="语音派活" title="直接说话">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="4" width="6" height="10" rx="3"/><path d="M6.5 11.5a5.5 5.5 0 0 0 11 0M12 17v3.2M9 20.2h6"/></svg>
+              </button>
+            </form>
+            <div id="zone-task-strip" class="task-strip hidden" aria-label="并行任务线程"></div>
+            <div id="zone-live-card" class="agent-live hidden" aria-live="polite"></div>
+            <div id="zone-microapp-strip" class="agent-apps hidden" aria-label="我的微应用"></div>
+          </section>
+          <div id="empty" class="empty empty-quiet hidden" aria-hidden="true">
+            <button id="btn-empty-import" class="sr" type="button" tabindex="-1">导入</button>
           </div>
           <div id="no-match" class="empty compact hidden"><p>没有找到</p></div>
           <p id="shelf-sub" class="shelf-sub"></p>
@@ -297,13 +316,14 @@
   <div class="auth-portal" id="auth-portal" tabindex="0" role="button" aria-label="轻触进入 Zone">
     <div class="auth-ring" aria-hidden="true"></div>
     <div class="auth-mark" aria-hidden="true">
-      <svg viewBox="0 0 64 64" width="60" height="60">
-        <rect width="64" height="64" rx="18" fill="#09090B"/>
-        <path d="M17 17h30v8H29l18 22H17v-8h18L17 17z" fill="#FAF8F5"/>
+      <svg viewBox="0 0 100 100" width="76" height="76">
+        <path d="M42 16 C46 9 54 9 58 16 L86 67 C91 76 85 86 75 86 H25 C15 86 9 76 14 67 Z" fill="#111111" stroke="none"/>
+        <rect x="41" y="49" width="7.2" height="17" rx="3.6" fill="#FFFFFF" stroke="none"/>
+        <rect x="57" y="49" width="7.2" height="17" rx="3.6" fill="#FFFFFF" stroke="none"/>
       </svg>
     </div>
     <h2 id="auth-title" class="auth-title">Zone</h2>
-    <p class="auth-whisper">轻触进入</p>
+    <p class="auth-whisper">个人移动端智能体 · 轻触进入</p>
   </div>
   <p class="auth-pledge">本机加密存储 · 隐私归你所有</p>
 </div>
