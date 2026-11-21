@@ -42,6 +42,101 @@ export function normalizeQuote(text) {
   return String(text || '').replace(/\u00a0/g, ' ').replace(/\r\n/g, '\n').replace(/[ \t\u3000]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').replace(/[ \t\u3000]{2,}/g, ' ').trim();
 }
 
+// 通用跨段落 DOM 划线引擎：无视换行、缩进与空格差异，在 EPUB / TXT / PDF 重排下完整高亮整段或全选文字（深/浅色均清晰）
+function paintDomHighlights(root, marks) {
+  if (!root) return;
+  const doc = root.ownerDocument || document;
+  // 先无损拆开旧 <mark>
+  root.querySelectorAll('mark.rr-mark-el').forEach(mk => {
+    const parent = mk.parentNode;
+    if (!parent) return;
+    while (mk.firstChild) parent.insertBefore(mk.firstChild, mk);
+    parent.removeChild(mk);
+  });
+  try { root.normalize(); } catch {}
+  const active = (marks || []).filter(m => m && m.kind !== 'copy' && m.text);
+  if (!active.length) return;
+
+  const walker = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const nodes = [];
+  let raw = '';
+  while (walker.nextNode()) {
+    const n = walker.currentNode;
+    const p = n.parentElement;
+    if (p && /^(SCRIPT|STYLE|NOSCRIPT|RT|RP)$/i.test(p.tagName)) continue;
+    if (!n.nodeValue) continue;
+    nodes.push({ node: n, start: raw.length, end: raw.length + n.nodeValue.length });
+    raw += n.nodeValue;
+  }
+  if (!raw) return;
+
+  const map = [];
+  let norm = '';
+  for (let i = 0; i < raw.length; i++) {
+    if (/[\s\u00a0\u200b\u3000]/.test(raw[i])) continue;
+    map.push(i);
+    norm += raw[i];
+  }
+  if (!norm) return;
+
+  const spans = [];
+  for (const m of active) {
+    const q = String(m.text).replace(/[\s\u00a0\u200b\u3000]+/g, '');
+    if (!q) continue;
+    const cls = m.kind === 'excerpt' ? 'rr-ex' : m.kind === 'annotation' ? 'rr-an' : 'rr-hl';
+    let at = norm.indexOf(q);
+    if (at >= 0) {
+      spans.push([map[at], map[at + q.length - 1] + 1, cls, m.id || '']);
+      continue;
+    }
+    // 若用户跨章节全选或首尾超出本页，按段落逐段匹配，确保可见段落全部高亮
+    const segs = String(m.text).split(/\n+/).map(s => s.replace(/[\s\u00a0\u200b\u3000]+/g, '')).filter(s => s.length >= 2);
+    for (const seg of segs) {
+      const idx = norm.indexOf(seg);
+      if (idx >= 0) spans.push([map[idx], map[idx + seg.length - 1] + 1, cls, m.id || '']);
+    }
+  }
+  if (!spans.length) return;
+
+  // 将全文字符区间拆分到各个 TextNode 上，从后往前包裹以保持偏移稳定
+  const nodeOps = new Map();
+  for (const [a, b, cls, id] of spans) {
+    for (const info of nodes) {
+      if (info.end <= a || info.start >= b) continue;
+      const lo = Math.max(0, a - info.start);
+      const hi = Math.min(info.node.nodeValue.length, b - info.start);
+      if (hi <= lo) continue;
+      if (!nodeOps.has(info.node)) nodeOps.set(info.node, []);
+      nodeOps.get(info.node).push([lo, hi, cls, id]);
+    }
+  }
+  for (const [textNode, list] of nodeOps) {
+    list.sort((x, y) => x[0] - y[0] || y[1] - x[1]);
+    const merged = [];
+    for (const r of list) {
+      const last = merged[merged.length - 1];
+      if (last && r[0] <= last[1]) last[1] = Math.max(last[1], r[1]);
+      else merged.push([...r]);
+    }
+    const parent = textNode.parentNode;
+    if (!parent) continue;
+    const val = textNode.nodeValue;
+    const frag = doc.createDocumentFragment();
+    let pos = 0;
+    for (const [lo, hi, cls, id] of merged) {
+      if (lo > pos) frag.appendChild(doc.createTextNode(val.slice(pos, lo)));
+      const mk = doc.createElement('mark');
+      mk.className = 'rr-mark-el ' + cls;
+      if (id) mk.dataset.hid = id;
+      mk.textContent = val.slice(lo, hi);
+      frag.appendChild(mk);
+      pos = hi;
+    }
+    if (pos < val.length) frag.appendChild(doc.createTextNode(val.slice(pos)));
+    parent.replaceChild(frag, textNode);
+  }
+}
+
 function renderMarked(line, marks) {
   const ranges = [];
   for (const m of marks) {
@@ -114,16 +209,25 @@ export class EpubEngine {
       if (e.code === 'BAD_EPUB') throw e;
     }
     this.book = ePub(data);
-    this.horiz = !!settings.horiz;
-    this.book.opened.then(() => { this.origDir = this.book.package?.metadata?.direction; const md = this.book.package?.metadata || {}; this.cjk = /^(zh|ja|ko)/i.test(md.language || '') || /[\u3040-\u9fff]/.test(md.title || this.rec.title || ''); if (this.horiz && this.book.package?.metadata) this.book.package.metadata.direction = 'ltr'; });
+    this.flowMode = settings.flow === 'scrolled' ? 'scrolled' : 'paginated';
+    this.writingMode = settings.writing === 'vertical-rl' ? 'vertical-rl' : 'horizontal';
+    this.horiz = !!settings.horiz && this.writingMode !== 'vertical-rl';
+    this.book.opened.then(() => {
+      this.origDir = this.book.package?.metadata?.direction;
+      const md = this.book.package?.metadata || {};
+      this.cjk = /^(zh|ja|ko)/i.test(md.language || '') || /[\u3040-\u9fff]/.test(md.title || this.rec.title || '');
+      if (this.writingMode === 'vertical-rl' && this.book.package?.metadata) this.book.package.metadata.direction = 'rtl';
+      else if (this.horiz && this.book.package?.metadata) this.book.package.metadata.direction = 'ltr';
+    });
     if (this.horiz) this.book.spine.hooks.content.register(doc => {
       const st = doc.createElementNS('http://www.w3.org/1999/xhtml', 'style');
       st.textContent = 'html,body,body *{writing-mode:horizontal-tb !important;-webkit-writing-mode:horizontal-tb !important;-epub-writing-mode:horizontal-tb !important;direction:ltr !important}';
       (doc.querySelector('head') || doc.documentElement).appendChild(st);
     });
-    this.rendition = this.book.renderTo(this.el, { width: '100%', height: '100%', flow: 'paginated', spread: 'none', allowScriptedContent: false, minSpreadWidth: 99999 });
+    const epubFlow = (this.flowMode === 'scrolled' && this.writingMode !== 'vertical-rl') ? 'scrolled-doc' : 'paginated';
+    this.rendition = this.book.renderTo(this.el, { width: '100%', height: '100%', flow: epubFlow, spread: 'none', allowScriptedContent: false, minSpreadWidth: 99999 });
     this.rendition.hooks.content.register(c => this.inject(c));
-    this.rendition.on('relocated', loc => { if (this.dead) return; this.loc = loc; this.onRelocate(this.current()); });
+    this.rendition.on('relocated', loc => { if (this.dead) return; this.loc = loc; this.syncHighlights(); this.onRelocate(this.current()); });
     await this.book.ready;
     await this.book.loaded.navigation.catch(() => null);
     const saved = this.rec.locations;
@@ -189,6 +293,7 @@ export class EpubEngine {
     // 页边距
     doc.documentElement.style.setProperty('--rr-margin', settings.margin + 'px');
     this.bindSelect(contents);
+    paintDomHighlights(doc.body, this.highlights);
   }
   bindSelect(contents) {
     const doc = contents.document;
@@ -241,7 +346,23 @@ export class EpubEngine {
       const text = normalizeQuote(sel.toString());
       if (!text) continue;
       let cfiRange = null;
-      try { cfiRange = c.cfiFromRange(sel.getRangeAt(0)); } catch {}
+      try {
+        const range = sel.getRangeAt(0).cloneRange();
+        const doc = c.document;
+        // 若用户点了系统「全选」导致起止落在了 Element 节点（如 body），先收敛到首尾真实文本节点
+        if (range.startContainer.nodeType !== 3) {
+          const w = doc.createTreeWalker(range.startContainer, NodeFilter.SHOW_TEXT);
+          const first = w.nextNode();
+          if (first) range.setStart(first, 0);
+        }
+        if (range.endContainer.nodeType !== 3) {
+          const w = doc.createTreeWalker(range.endContainer, NodeFilter.SHOW_TEXT);
+          let last = null, n;
+          while ((n = w.nextNode())) last = n;
+          if (last) range.setEnd(last, last.nodeValue.length);
+        }
+        cfiRange = c.cfiFromRange(range);
+      } catch {}
       return { text, pos: this.current()?.pos || null, cfiRange, ch: null, page: null };
     }
     return null;
@@ -254,22 +375,15 @@ export class EpubEngine {
   setHighlights(list) { this.highlights = list || []; this.syncHighlights(); }
   syncHighlights() {
     if (!this.rendition) return;
+    // 清除旧的 SVG 覆盖层（避免夜间模式 multiply 失效或跨段只画一字）
     for (const cfi of this._hlCfis || []) {
       try { this.rendition.annotations.remove(cfi, 'highlight'); } catch {}
     }
     this._hlCfis = [];
-    const night = settings.theme === 'night';
-    for (const h of this.highlights) {
-      if (!h.cfiRange || h.kind === 'copy') continue;
-      const styles = h.kind === 'excerpt'
-        ? { fill: night ? '#6ea894' : '#8fbfa8', 'fill-opacity': night ? '0.55' : '0.5', 'mix-blend-mode': 'multiply' }
-        : h.kind === 'annotation'
-          ? { fill: night ? '#6aa8ff' : '#7eb6ff', 'fill-opacity': night ? '0.45' : '0.45', 'mix-blend-mode': 'multiply' }
-          : { fill: night ? '#d7b15a' : '#e2c15a', 'fill-opacity': night ? '0.5' : '0.55', 'mix-blend-mode': 'multiply' };
-      try {
-        this.rendition.annotations.highlight(h.cfiRange, { id: h.id }, null, 'rr-hl', styles);
-        this._hlCfis.push(h.cfiRange);
-      } catch (err) { console.warn(err); }
+    let contents = [];
+    try { contents = this.rendition.getContents(); } catch { return; }
+    for (const c of contents) {
+      if (c?.document?.body) paintDomHighlights(c.document.body, this.highlights);
     }
   }
   async ensureLocations() {
@@ -312,10 +426,36 @@ export class EpubEngine {
     return (this.lastLabel = found);
   }
   async snippet() {
-    try { const r = await this.book.getRange(this.loc.start.cfi); const t = r.startContainer.textContent || ''; return t.slice(r.startOffset, r.startOffset + 40).trim(); } catch { return ''; }
+    const vis = (this.pageText?.() || '').replace(/\s+/g, ' ').trim();
+    if (vis) return Array.from(vis).slice(0, 140).join('');
+    try { const r = await this.book.getRange(this.loc.start.cfi); const t = r.startContainer.textContent || ''; return t.slice(r.startOffset, r.startOffset + 120).trim(); } catch { return ''; }
   }
-  next() { return this.rendition.next(); }
-  prev() { return this.rendition.prev(); }
+  needsReopen() {
+    const f = settings.flow === 'scrolled' ? 'scrolled' : 'paginated';
+    const w = settings.writing === 'vertical-rl' ? 'vertical-rl' : 'horizontal';
+    return f !== this.flowMode || w !== this.writingMode;
+  }
+  isRtl() { return this.writingMode === 'vertical-rl' || (!!this.vertical && !this.horiz); }
+  next() {
+    if (this.flowMode === 'scrolled' && this.writingMode !== 'vertical-rl') {
+      const sc = this.el.querySelector('.epub-container');
+      if (sc && sc.scrollTop + sc.clientHeight < sc.scrollHeight - 16) {
+        sc.scrollBy({ top: Math.round(sc.clientHeight * 0.84), behavior: settings.eink ? 'auto' : 'smooth' });
+        return Promise.resolve();
+      }
+    }
+    return this.rendition.next();
+  }
+  prev() {
+    if (this.flowMode === 'scrolled' && this.writingMode !== 'vertical-rl') {
+      const sc = this.el.querySelector('.epub-container');
+      if (sc && sc.scrollTop > 16) {
+        sc.scrollBy({ top: -Math.round(sc.clientHeight * 0.84), behavior: settings.eink ? 'auto' : 'smooth' });
+        return Promise.resolve();
+      }
+    }
+    return this.rendition.prev();
+  }
   async goTo(pos) { await this.rendition.display(pos.cfi); await this.settle(pos.cfi); }
   async goToFraction(f) { if (!this.hasLocations()) return; return this.rendition.display(this.book.locations.cfiFromPercentage(f)); }
   toc() { return flatToc(this.book.navigation?.toc); }
@@ -497,6 +637,7 @@ export class PdfEngine {
     this.wrap.replaceChildren(col);
     this.textLayerEl = null;
     this.canvas = null;
+    paintDomHighlights(col, (this.highlights || []).filter(h => h.page == null || h.page === this.page));
     this.onRelocate(this.current());
   }
   pageText() {
@@ -592,50 +733,116 @@ export class TxtEngine {
     this.page_ = document.createElement('div'); this.page_.className = 'txtpage';
     this.cols = document.createElement('div'); this.cols.className = 'txtcols';
     this.page_.appendChild(this.cols); this.el.appendChild(this.page_);
+    this.page_.addEventListener('scroll', () => {
+      if (this.mode !== 'scrolled' || this._progScroll) return;
+      clearTimeout(this._scrollT);
+      this._scrollT = setTimeout(() => {
+        const max = Math.max(1, this.page_.scrollHeight - this.page_.clientHeight);
+        const frac = Math.max(0, Math.min(1, this.page_.scrollTop / max));
+        this.p = Math.round(frac * Math.max(0, this.pages - 1));
+        this.onRelocate(this.current());
+      }, 120);
+    }, { passive: true });
     let ch = 0, frac = 0;
     if (this.rec.pos) { ch = this.rec.pos.ch; frac = this.rec.pos.frac; }
     else if (this.rec.pending?.progress) { [ch, frac] = this.locate(this.rec.pending.progress * this.total); }
     this.show(Math.min(ch, this.chs.length - 1), frac);
   }
+  isRtl() { return settings.writing === 'vertical-rl'; }
   locate(off) {
     for (let i = 0; i < this.chs.length; i++) { const c = this.chs[i]; if (off < c.end) return [i, (off - c.start) / (c.end - c.start)]; }
     return [this.chs.length - 1, 1];
   }
   layout() {
-    const w = this.page_.clientWidth;
-    this.gap = 36; this.w = w;
-    Object.assign(this.cols.style, { columnWidth: w + 'px', fontSize: settings.size + 'px', lineHeight: settings.lh, fontFamily: fontStack(/[\u3040-\u9fff]/.test(this.text.slice(0, 3000))) || '' });
+    const w = Math.max(1, this.page_.clientWidth);
+    const h = Math.max(1, this.page_.clientHeight);
+    this.gap = 36; this.w = w; this.h = h;
+    const vrl = settings.writing === 'vertical-rl';
+    const scrolled = !vrl && settings.flow === 'scrolled';
+    this.mode = vrl ? 'vrl' : scrolled ? 'scrolled' : 'paginated';
+    this.page_.classList.toggle('scrolled', scrolled);
+    this.page_.classList.toggle('vrl', vrl);
+    this.cols.classList.toggle('scrolled', scrolled);
+    this.cols.classList.toggle('vrl', vrl);
+    const fam = fontStack(/[\u3040-\u9fff]/.test(this.text.slice(0, 3000))) || '';
     this.cols.style.transition = 'none';
-    this.pages = Math.max(1, Math.round((this.cols.scrollWidth + this.gap) / (w + this.gap)));
+    if (scrolled) {
+      Object.assign(this.cols.style, { columnWidth: '', transform: '', fontSize: settings.size + 'px', lineHeight: settings.lh, fontFamily: fam });
+      this.pages = Math.max(1, Math.ceil(this.page_.scrollHeight / Math.max(1, h * 0.85)));
+    } else if (vrl) {
+      Object.assign(this.cols.style, { columnWidth: '', transform: '', fontSize: settings.size + 'px', lineHeight: settings.lh, fontFamily: fam });
+      this.pages = Math.max(1, Math.ceil(this.page_.scrollWidth / w));
+    } else {
+      Object.assign(this.cols.style, { columnWidth: w + 'px', fontSize: settings.size + 'px', lineHeight: settings.lh, fontFamily: fam });
+      this.pages = Math.max(1, Math.round((this.cols.scrollWidth + this.gap) / (w + this.gap)));
+    }
   }
   show(ch, frac = 0, fromEnd = false) {
     this.ch = ch; const c = this.chs[ch];
     const body = this.text.slice(c.start, c.end);
-    const lines = body.split('\n');
-    let html = '';
-    let first = true;
-    for (let line of lines) {
-      line = line.replace(/^[ \t\u3000]+/, '').trimEnd();
-      if (!line) continue;
-      const marks = (this.highlights || []).filter(h => h.kind !== 'copy' && h.text && (h.ch == null || h.ch === ch));
-      const marked = renderMarked(line, marks);
-      if (first && c.heading) { html += `<h2>${marked}</h2>`; first = false; continue; }
-      first = false; html += `<p>${marked}</p>`;
+    const rawLines = body.split('\n');
+    const cjk = /[\u3040-\u9fff]/.test(body.slice(0, 1200));
+    this.cols.classList.toggle('lang-en', !cjk);
+    // 自动修复粗糙 TXT 的半句硬折行（无多余按钮，自动还原出版级流畅段落）
+    const paras = [];
+    let heading = null;
+    for (let i = 0; i < rawLines.length; i++) {
+      const raw = rawLines[i];
+      const indented = /^[ \t\u3000]{2,}/.test(raw);
+      const line = raw.replace(/^[ \t\u3000]+/, '').trimEnd();
+      if (!line) { paras.push(''); continue; }
+      if (heading === null && !paras.length && c.heading) { heading = line; continue; }
+      const prev = paras.length ? paras[paras.length - 1] : '';
+      const prevEnded = !prev || /[。！？…."”’'!?:;》」】\])]$/.test(prev);
+      if (prev && !prevEnded && !indented && prev.length < 480) {
+        const joiner = (/[A-Za-z0-9,;:]$/.test(prev) && /^[A-Za-z0-9]/.test(line)) ? ' ' : '';
+        paras[paras.length - 1] = prev + joiner + line;
+      } else {
+        paras.push(line);
+      }
     }
+    let html = heading ? `<h2>${esc(heading)}</h2>` : '';
+    for (const p of paras) if (p) html += `<p>${esc(p)}</p>`;
     this.cols.innerHTML = html || '<p></p>';
+    const marks = (this.highlights || []).filter(h => h.kind !== 'copy' && h.text && (h.ch == null || h.ch === ch));
+    paintDomHighlights(this.cols, marks);
     this.layout();
     this.p = fromEnd ? this.pages - 1 : Math.max(0, Math.min(this.pages - 1, Math.floor(frac * this.pages + 1e-6)));
-    this.paint();
+    this.paint(fromEnd ? 1 : frac);
   }
-  paint() {
-    this.cols.style.transform = `translateX(${-this.p * (this.w + this.gap)}px)`;
+  paint(exactFrac = null) {
+    if (this.mode === 'scrolled') {
+      const max = Math.max(0, this.page_.scrollHeight - this.page_.clientHeight);
+      const frac = exactFrac != null ? exactFrac : (this.pages > 1 ? this.p / (this.pages - 1) : 0);
+      this._progScroll = true;
+      this.page_.scrollTop = Math.round(max * Math.max(0, Math.min(1, frac)));
+      setTimeout(() => { this._progScroll = false; }, 60);
+    } else if (this.mode === 'vrl') {
+      this.cols.style.transform = '';
+      this.page_.scrollLeft = -this.p * this.w;
+    } else {
+      this.page_.scrollLeft = 0;
+      this.cols.style.transform = `translateX(${-this.p * (this.w + this.gap)}px)`;
+    }
     this.onRelocate(this.current());
   }
   current() {
-    const c = this.chs[this.ch]; const frac = this.p / this.pages;
-    return { pos: { ch: this.ch, frac }, progress: (c.start + frac * (c.end - c.start)) / this.total, label: c.title, atEnd: this.ch === this.chs.length - 1 && this.p === this.pages - 1 };
+    const c = this.chs[this.ch];
+    let frac = this.pages > 1 ? this.p / (this.pages - 1) : 0;
+    if (this.mode === 'scrolled') {
+      const max = this.page_.scrollHeight - this.page_.clientHeight;
+      frac = max > 0 ? Math.max(0, Math.min(1, this.page_.scrollTop / max)) : 0;
+    } else if (this.mode === 'paginated') {
+      frac = this.p / this.pages;
+    }
+    return { pos: { ch: this.ch, frac }, progress: (c.start + frac * (c.end - c.start)) / this.total, label: c.title, atEnd: this.ch === this.chs.length - 1 && (this.mode === 'scrolled' ? frac >= 0.98 : this.p === this.pages - 1) };
   }
-  async snippet() { const c = this.chs[this.ch]; const off = Math.floor(c.start + (this.p / this.pages) * (c.end - c.start)); return this.text.slice(off, off + 40).replace(/\s+/g, ' ').trim(); }
+  async snippet() {
+    const vis = (this.pageText?.() || '').replace(/\s+/g, ' ').trim();
+    if (vis) return Array.from(vis).slice(0, 140).join('');
+    const c = this.chs[this.ch]; const off = Math.floor(c.start + (this.p / this.pages) * (c.end - c.start));
+    return this.text.slice(off, off + 140).replace(/\s+/g, ' ').trim();
+  }
   setSelectMode(on) { this.selecting = !!on; if (!on) this.clearSelection(); }
   selectAt(x, y) {
     const el = document.elementFromPoint(x, y);
@@ -675,8 +882,31 @@ export class TxtEngine {
     this.show(this.ch, frac);
   }
   hasLocations() { return true; }
-  next() { if (this.p < this.pages - 1) { this.p++; this.paint(); } else if (this.ch < this.chs.length - 1) this.show(this.ch + 1, 0); }
-  prev() { if (this.p > 0) { this.p--; this.paint(); } else if (this.ch > 0) this.show(this.ch - 1, 0, true); }
+  next() {
+    if (this.mode === 'scrolled') {
+      const max = this.page_.scrollHeight - this.page_.clientHeight;
+      if (this.page_.scrollTop < max - 12) {
+        this.page_.scrollBy({ top: Math.round(this.page_.clientHeight * 0.84), behavior: settings.eink ? 'auto' : 'smooth' });
+        return;
+      }
+      if (this.ch < this.chs.length - 1) this.show(this.ch + 1, 0);
+      return;
+    }
+    if (this.p < this.pages - 1) { this.p++; this.paint(); }
+    else if (this.ch < this.chs.length - 1) this.show(this.ch + 1, 0);
+  }
+  prev() {
+    if (this.mode === 'scrolled') {
+      if (this.page_.scrollTop > 12) {
+        this.page_.scrollBy({ top: -Math.round(this.page_.clientHeight * 0.84), behavior: settings.eink ? 'auto' : 'smooth' });
+        return;
+      }
+      if (this.ch > 0) this.show(this.ch - 1, 1, true);
+      return;
+    }
+    if (this.p > 0) { this.p--; this.paint(); }
+    else if (this.ch > 0) this.show(this.ch - 1, 0, true);
+  }
   goTo(pos) { this.show(pos.ch, pos.frac); }
   goToFraction(f) { const [ch, fr] = this.locate(f * this.total); this.show(ch, fr); }
   toc() { return this.chs.map((c, i) => ({ label: c.title, target: i, depth: 0 })); }

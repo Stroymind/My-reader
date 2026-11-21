@@ -6,8 +6,8 @@ import { settings, saveSettings, applyBodyTheme, applyAppearance, appearancePref
 import { isMostlyCjk, translateVisible } from './bilingual.js';
 import { backfillFromBooks, createNote, deleteBookBundle, parseTags, syncBook } from './knowledge.js';
 import { addToStack, createStack, defaultStackName, dissolveStack, getStack, listStacks, reconcileStacks, removeFromStacks, renameStack, setStackCollapsed } from './stacks.js';
-import { dismissAssistant, fitGraph, getGraphMood, getGraphTilt, initWorkspace, openAiSettingsDialog, openAssistant, refreshWorkspace, searchGraph, setGraphMood, setGraphSearch, setGraphTilt, setKnowledgeFind, showPane, workspaceHandleBack } from './workspace.js';
-import { createCommandController, speechSupported } from './command.js';
+import { createDecisionNote, dismissAssistant, exploreCosmos, exportOutline, fitGraph, focusGraphNeighborhood, focusStarByQuery, getGraphMood, getGraphTilt, initWorkspace, linkFocusedStarTo, openAiSettingsDialog, openAssistant, refreshWorkspace, searchGraph, setGraphMood, setGraphSearch, setGraphTilt, setKnowledgeFind, showPane, workspaceHandleBack, zoomGraph } from './workspace.js';
+import { createCommandController, fuzzyScore, speechSupported } from './command.js';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = './vendor/pdf.worker.min.mjs';
 const $ = s => document.querySelector(s);
@@ -155,21 +155,256 @@ function togglePick(id, el) {
   el.setAttribute('aria-pressed', picked.has(id) ? 'true' : 'false');
   updatePickBar();
 }
+let peekSwipedAt = 0;
+let peekBookId = null;
+let peekToken = 0;
+
+function stripMarkup(html) {
+  const doc = new DOMParser().parseFromString(String(html || ''), 'text/html');
+  doc.querySelectorAll('script, style, nav, head').forEach(n => n.remove());
+  return (doc.body?.textContent || '').replace(/[\r\t]+/g, ' ').replace(/\n{2,}/g, '\n').replace(/ {2,}/g, ' ').trim();
+}
+
+function decodeBlobText(buf) {
+  let s = new TextDecoder('utf-8', { fatal: false }).decode(buf);
+  const bad = (s.match(/\ufffd/g) || []).length;
+  if (bad > 4) {
+    try { s = new TextDecoder('gb18030', { fatal: false }).decode(buf); } catch {}
+  }
+  return s;
+}
+
+async function extractBookPreview(book) {
+  if (book.lastSnippet && book.lastSnippet.trim()) {
+    return {
+      kicker: '读到 · ' + (book.lastLabel || fmtPct(book.progress) || '上次阅读位置'),
+      text: book.lastSnippet.trim()
+    };
+  }
+  try {
+    const file = await db.get('files', book.id);
+    if (!file?.blob) throw new Error('missing');
+    if (book.type === 'epub' && window.JSZip) {
+      const zip = await window.JSZip.loadAsync(file.blob);
+      const containerXml = await zip.file('META-INF/container.xml')?.async('string');
+      const opfPath = containerXml?.match(/full-path=["']([^"']+)["']/)?.[1];
+      if (opfPath) {
+        const opfText = await zip.file(opfPath)?.async('string');
+        const opfDir = opfPath.includes('/') ? opfPath.slice(0, opfPath.lastIndexOf('/') + 1) : '';
+        if (opfText) {
+          const opfDoc = new DOMParser().parseFromString(opfText, 'application/xml');
+          const descEl = opfDoc.querySelector('description, dc\\:description');
+          const desc = stripMarkup(descEl?.textContent || '');
+          if (desc.length >= 16) return { kicker: '内容简介', text: Array.from(desc).slice(0, 260).join('') };
+          const manifest = new Map();
+          opfDoc.querySelectorAll('manifest > item').forEach(it => {
+            const id = it.getAttribute('id'), href = it.getAttribute('href');
+            if (id && href) manifest.set(id, href);
+          });
+          const spineRefs = [...opfDoc.querySelectorAll('spine > itemref')].map(r => r.getAttribute('idref')).filter(Boolean);
+          for (const ref of spineRefs.slice(0, 6)) {
+            const href = manifest.get(ref);
+            if (!href) continue;
+            const entry = zip.file(opfDir + decodeURIComponent(href)) || zip.file(opfDir + href);
+            if (!entry) continue;
+            const raw = await entry.async('string');
+            const plain = stripMarkup(raw);
+            if (plain.length >= 40) return { kicker: '正文开篇', text: Array.from(plain).slice(0, 260).join('') };
+          }
+        }
+      }
+    } else if (book.type === 'txt' || book.type === 'html') {
+      const slice = file.blob.slice(0, 32768);
+      const raw = decodeBlobText(await slice.arrayBuffer());
+      const plain = book.type === 'html' ? stripMarkup(raw) : raw.replace(/\r\n?/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+      if (plain) return { kicker: '正文开篇', text: Array.from(plain).slice(0, 260).join('') };
+    } else if (book.type === 'pdf') {
+      const doc = await pdfjsLib.getDocument({ data: new Uint8Array(await file.blob.arrayBuffer()), cMapUrl: './vendor/cmaps/', cMapPacked: true, standardFontDataUrl: './vendor/standard_fonts/' }).promise;
+      try {
+        const pNum = Math.min(Math.max(book.pos?.page || 1, 1), doc.numPages);
+        const page = await doc.getPage(pNum);
+        const tc = await page.getTextContent();
+        const plain = tc.items.map(i => i.str || '').join(' ').replace(/\s+/g, ' ').trim();
+        if (plain) return { kicker: book.pos?.page ? `读到 · 第 ${pNum} 页` : '正文开篇', text: Array.from(plain).slice(0, 260).join('') };
+      } finally { try { doc.destroy(); } catch {} }
+    }
+  } catch {}
+  return {
+    kicker: book.progress > 0 ? '阅读进度 · ' + fmtPct(book.progress) : '尚未开始阅读',
+    text: '点下方「继续阅读」打开正文；读过后，长按左推会自动展示你上次停下的章节文字。'
+  };
+}
+
+function closeBookPeek() {
+  const mask = $('#peek-mask');
+  if (!mask || mask.classList.contains('hidden')) return false;
+  peekToken++;
+  peekBookId = null;
+  mask.classList.add('hidden');
+  return true;
+}
+
+async function openBookPeek(book) {
+  const mask = $('#peek-mask');
+  if (!mask || !book) return;
+  const fresh = (await db.get('books', book.id)) || book;
+  const tok = ++peekToken;
+  peekBookId = fresh.id;
+  $('#peek-cover').replaceChildren(avatarNode(fresh));
+  $('#peek-title').textContent = fresh.title || '未命名';
+  $('#peek-sub').textContent = [fresh.author, fresh.type ? String(fresh.type).toUpperCase() : '', fresh.progress > 0 ? fmtPct(fresh.progress) : '未读'].filter(Boolean).join(' · ');
+  $('#peek-kicker').textContent = fresh.lastSnippet ? ('读到 · ' + (fresh.lastLabel || fmtPct(fresh.progress) || '当前页')) : '正在读取章节…';
+  $('#peek-body').textContent = fresh.lastSnippet || '…';
+  const latestHl = (fresh.highlights || []).slice().sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))[0];
+  const qEl = $('#peek-quote');
+  if (latestHl?.text) {
+    qEl.textContent = '「' + Array.from(latestHl.text).slice(0, 110).join('') + (latestHl.text.length > 110 ? '…' : '') + '」';
+    qEl.classList.remove('hidden');
+  } else {
+    qEl.classList.add('hidden');
+  }
+  $('#peek-open').textContent = fresh.progress > 0 ? '继续阅读' : '开始阅读';
+  mask.classList.remove('hidden');
+  const preview = await extractBookPreview(fresh);
+  if (tok !== peekToken) return;
+  $('#peek-kicker').textContent = preview.kicker;
+  $('#peek-body').textContent = preview.text;
+}
+
+function findDropTarget(x, y, dragId) {
+  const els = document.elementsFromPoint ? document.elementsFromPoint(x, y) : [];
+  for (const node of els) {
+    if (node.closest?.('.drag-ghost')) continue;
+    const bookEl = node.closest?.('.book[data-id]');
+    if (bookEl && bookEl.dataset.id !== dragId) {
+      const stackSec = bookEl.closest?.('.stack[data-stack]');
+      return stackSec
+        ? { kind: 'stack', id: stackSec.dataset.stack, el: stackSec }
+        : { kind: 'book', id: bookEl.dataset.id, el: bookEl };
+    }
+    const stackSec = node.closest?.('.stack[data-stack]');
+    if (stackSec) return { kind: 'stack', id: stackSec.dataset.stack, el: stackSec };
+  }
+  return null;
+}
+
 function bindShelfBook(el, b) {
-  let hold = null, sx = 0, sy = 0, held = false;
+  let hold = null, sx = 0, sy = 0, t0 = 0, pid = null, held = false, peeking = false, dragging = false, dx = 0;
+  let ghost = null, ghostOffX = 0, ghostOffY = 0, hoverTarget = null;
   const clearHold = () => { clearTimeout(hold); hold = null; };
+  const clearHover = () => { hoverTarget?.el?.classList.remove('drop-target'); hoverTarget = null; };
+  const resetPeek = () => {
+    peeking = false;
+    dx = 0;
+    el.classList.remove('peeking');
+    el.style.transform = '';
+  };
+  const endDrag = () => {
+    dragging = false;
+    el.classList.remove('dragging');
+    ghost?.remove();
+    ghost = null;
+    clearHover();
+  };
   el.addEventListener('pointerdown', e => {
     if (e.button != null && e.button !== 0) return;
-    sx = e.clientX; sy = e.clientY; held = false;
+    sx = e.clientX; sy = e.clientY; t0 = Date.now(); pid = e.pointerId;
+    held = false; peeking = false; dragging = false; dx = 0;
     clearHold();
     if (pickMode) return;
-    hold = setTimeout(() => { hold = null; held = true; startPick(b.id); }, 480);
+    hold = setTimeout(() => {
+      hold = null;
+      if (peeking || dragging) return;
+      held = true;
+      startPick(b.id);
+    }, 560);
   });
   el.addEventListener('pointermove', e => {
-    if (Math.abs(e.clientX - sx) > 12 || Math.abs(e.clientY - sy) > 12) clearHold();
+    if (pid !== e.pointerId || pickMode) return;
+    const mx = e.clientX - sx, my = e.clientY - sy;
+    const dt = Date.now() - t0;
+    if (!peeking && !dragging) {
+      const pushOk = settings.leftHand ? (mx > 14 || mx < -14) : (mx < -14);
+      if (dt >= 180 && pushOk && Math.abs(mx) > Math.abs(my) * 1.2) {
+        clearHold();
+        peeking = true;
+        el.classList.add('peeking');
+        try { el.setPointerCapture(e.pointerId); } catch {}
+      } else if (dt >= 300 && Math.abs(my) > 16 && Math.abs(my) >= Math.abs(mx)) {
+        // 长按后上下拖拽：浮起卡片，叠放到另一本书或卡片堆上自动合并
+        clearHold();
+        dragging = true;
+        const rect = el.getBoundingClientRect();
+        ghostOffX = e.clientX - rect.left;
+        ghostOffY = e.clientY - rect.top;
+        ghost = el.cloneNode(true);
+        ghost.className = 'book drag-ghost';
+        ghost.style.width = rect.width + 'px';
+        ghost.style.transform = `translate3d(${rect.left}px, ${rect.top}px, 0) scale(1.02)`;
+        document.body.appendChild(ghost);
+        el.classList.add('dragging');
+        try { el.setPointerCapture(e.pointerId); } catch {}
+      } else if (Math.abs(mx) > 12 || Math.abs(my) > 12) {
+        clearHold();
+      }
+    }
+    if (peeking) {
+      dx = settings.leftHand ? Math.max(-88, Math.min(88, mx)) : Math.max(-88, Math.min(0, mx));
+      el.style.transform = `translate3d(${dx}px, 0, 0)`;
+    } else if (dragging && ghost) {
+      ghost.style.transform = `translate3d(${e.clientX - ghostOffX}px, ${e.clientY - ghostOffY}px, 0) scale(1.02)`;
+      const hit = findDropTarget(e.clientX, e.clientY, b.id);
+      if (hit?.el !== hoverTarget?.el) {
+        clearHover();
+        hoverTarget = hit;
+        hoverTarget?.el?.classList.add('drop-target');
+      }
+    }
   });
-  el.addEventListener('pointerup', clearHold);
-  el.addEventListener('pointercancel', clearHold);
+  const finish = async e => {
+    if (pid !== e.pointerId) return;
+    pid = null;
+    clearHold();
+    if (peeking) {
+      const triggered = e.type === 'pointerup' && Math.abs(dx) >= 44;
+      resetPeek();
+      held = true;
+      peekSwipedAt = Date.now();
+      if (triggered) openBookPeek(b);
+    } else if (dragging) {
+      const drop = e.type === 'pointerup' ? (hoverTarget || findDropTarget(e.clientX, e.clientY, b.id)) : null;
+      endDrag();
+      held = true;
+      peekSwipedAt = Date.now();
+      if (drop) {
+        if (drop.kind === 'stack') {
+          const s = addToStack(drop.id, [b.id]);
+          if (s) {
+            await renderLibrary({ focus: 'stack:' + s.id });
+            toast(`已并入「${s.name}」`, 3600, () => { removeFromStacks([b.id]); renderLibrary(); });
+          }
+        } else if (drop.kind === 'book' && drop.id !== b.id) {
+          const existing = listStacks().find(st => st.bookIds.includes(drop.id));
+          if (existing) {
+            const s = addToStack(existing.id, [b.id]);
+            if (s) {
+              await renderLibrary({ focus: 'stack:' + s.id });
+              toast(`已并入「${s.name}」`, 3600, () => { removeFromStacks([b.id]); renderLibrary(); });
+            }
+          } else {
+            const name = defaultStackName(listStacks());
+            const s = createStack(name, [drop.id, b.id]);
+            if (s) {
+              await renderLibrary({ focus: 'stack:' + s.id });
+              toast(`已叠合为「${s.name}」`, 3600, () => { dissolveStack(s.id); renderLibrary(); });
+            }
+          }
+        }
+      }
+    }
+  };
+  el.addEventListener('pointerup', finish);
+  el.addEventListener('pointercancel', finish);
   el.addEventListener('contextmenu', e => e.preventDefault());
   el.onclick = () => {
     if (held) { held = false; return; }
@@ -616,11 +851,14 @@ $('#intent-sheet').addEventListener('click', e => {
   const item = e.target.closest('.menu-item');
   if (item && item.id !== 'btn-appearance' && item.id !== 'graph-mood') closeIntent(false);
 });
-$('#btn-intent-search').onclick = () => openActiveSearch();
-$('#btn-find-close').onclick = () => closeShelfFind();
-$('#btn-import').onclick = () => $('#file-input').click();
-$('#btn-empty-import').onclick = () => $('#file-input').click();
-$('#btn-select-mode').onclick = () => startPick(null);
+$('#btn-intent-search')?.addEventListener('click', () => openActiveSearch());
+$('#btn-find-close')?.addEventListener('click', () => closeShelfFind());
+$('#btn-import')?.addEventListener('click', () => $('#file-input').click());
+$('#btn-empty-import')?.addEventListener('click', () => $('#file-input').click());
+$('#btn-select-mode')?.addEventListener('click', () => startPick(null));
+$('#peek-close')?.addEventListener('click', () => closeBookPeek());
+$('#peek-mask')?.addEventListener('click', e => { if (e.target === e.currentTarget) closeBookPeek(); });
+$('#peek-open')?.addEventListener('click', () => { const id = peekBookId; closeBookPeek(); if (id) openBook(id); });
 
 // 底部呼吸细线：轻点/上滑开意图层，左右滑切换空间，长按直接说指令
 let command = null;
@@ -671,7 +909,7 @@ let command = null;
   if (!lib) return;
   let sx = 0, sy = 0, st = 0, pid = null, atTop = false, edge = false;
   const blocked = () => pickMode || !lib.classList.contains('active')
-    || ['#ai-mask', '#note-mask', '#settings-mask', '#stack-mask', '#intent-mask', '#command-mask', '#lib-panel', '#note-editor']
+    || ['#ai-mask', '#note-mask', '#settings-mask', '#stack-mask', '#intent-mask', '#command-mask', '#peek-mask', '#lib-panel', '#note-editor']
       .some(sel => { const el = document.querySelector(sel); return el && !el.classList.contains('hidden'); });
   lib.addEventListener('pointerdown', e => {
     if (e.button != null && e.button !== 0) return;
@@ -687,6 +925,7 @@ let command = null;
   lib.addEventListener('pointerup', e => {
     if (pid !== e.pointerId) return;
     pid = null;
+    if (Date.now() - peekSwipedAt < 380) return;
     if (blocked()) return;
     const dt = Date.now() - st;
     if (dt > 750) return;
@@ -727,7 +966,7 @@ document.addEventListener('keydown', e => {
   }
   if (!$('#library')?.classList.contains('active') || engine) return;
   if (e.target.closest?.('input, textarea, select')) return;
-  const modalUp = ['#ai-mask', '#note-mask', '#settings-mask', '#stack-mask', '#intent-mask', '#command-mask', '#lib-panel', '#note-editor']
+  const modalUp = ['#ai-mask', '#note-mask', '#settings-mask', '#stack-mask', '#intent-mask', '#command-mask', '#peek-mask', '#lib-panel', '#note-editor']
     .some(sel => { const el = document.querySelector(sel); return el && !el.classList.contains('hidden'); });
   if (modalUp) return;
   if (e.altKey && e.key === 'ArrowLeft') { e.preventDefault(); stepSpace(-1); return; }
@@ -830,7 +1069,7 @@ async function openBook(id) {
   engine = new Eng(el, rec, onRelocate, pdfjsLib);
   engine.onSelectionChange = () => {
     const sel = engine.getSelection?.();
-    if (sel?.text) $('#select-hint').textContent = `已选中 ${sel.text.length} 个字`;
+    if (sel?.text) snap = sel;
   };
   document.body.dataset.type = rec.type;
   engine.onLocationsReady = locs => db.update('books', id, { locations: locs });
@@ -852,9 +1091,42 @@ async function openBook(id) {
   }
 }
 
+let pageEnteredAt = Date.now();
+let autoPaceOn = false;
+let autoPaceTimer = null;
+let paceCps = (() => {
+  try { const v = Number(localStorage.getItem('rr-read-cps')); return v >= 2.5 && v <= 22 ? v : 8.5; } catch { return 8.5; }
+})();
+
+function scheduleAutoPace() {
+  clearTimeout(autoPaceTimer);
+  if (!autoPaceOn || !engine) return;
+  if (lastState?.atEnd) { autoPaceOn = false; toast('已读到本书结尾'); return; }
+  const chars = Math.max(80, (engine.pageText?.() || '').trim().length || 160);
+  const waitMs = Math.round(Math.max(6, Math.min(45, chars / paceCps)) * 1000);
+  autoPaceTimer = setTimeout(async () => {
+    if (!autoPaceOn || !engine) return;
+    await turn(1, true);
+    scheduleAutoPace();
+  }, waitMs);
+}
+
+function setAutoPace(on, speed = 'auto') {
+  autoPaceOn = !!on;
+  clearTimeout(autoPaceTimer);
+  if (!autoPaceOn) return '已暂停自动翻页';
+  if (speed === 'slower') paceCps = Math.max(2.5, +(paceCps * 0.78).toFixed(2));
+  else if (speed === 'faster') paceCps = Math.min(22, +(paceCps * 1.25).toFixed(2));
+  try { localStorage.setItem('rr-read-cps', String(paceCps)); } catch {}
+  scheduleAutoPace();
+  const sec = Math.round(Math.max(6, Math.min(45, ((engine?.pageText?.() || '').trim().length || 160) / paceCps)));
+  return speed === 'slower' ? `已放慢（约 ${sec} 秒/页）` : speed === 'faster' ? `已加快（约 ${sec} 秒/页）` : `已按你的阅读速度自动翻页（约 ${sec} 秒/页）`;
+}
+
 function onRelocate(state) {
   if (!state) return;
   lastState = state;
+  pageEnteredAt = Date.now();
   const p = state.progress;
   $('#r-pct').textContent = p == null ? '…' : fmtPct(p);
   $('#run-pct').textContent = p == null ? '' : fmtPct(p);
@@ -866,6 +1138,7 @@ function onRelocate(state) {
   saveTimer = setTimeout(() => persist(), 400);
   clearTimeout(onRelocate.bi);
   onRelocate.bi = setTimeout(() => refreshBilingual(), 180);
+  if (autoPaceOn) scheduleAutoPace();
 }
 async function persist() {
   if (!cur) return;
@@ -873,7 +1146,12 @@ async function persist() {
   if (lastState) {
     patch.pos = lastState.pos;
     if (lastState.progress != null) patch.progress = lastState.progress;
+    if (lastState.label) patch.lastLabel = lastState.label;
   }
+  try {
+    const snip = await engine?.snippet?.();
+    if (snip && snip.trim()) patch.lastSnippet = Array.from(snip.trim()).slice(0, 220).join('');
+  } catch {}
   Object.assign(cur, patch);
   await db.update('books', cur.id, patch);
 }
@@ -895,13 +1173,14 @@ function enterSelect(x, y) {
   if (x != null) engine.selectAt?.(x, y);
   const sel = engine.getSelection?.();
   snap = sel || null;
-  $('#select-hint').textContent = sel?.text ? `已选中 ${sel.text.length} 个字` : '拖动选择文字，或长按一段';
 }
 let closing = null;
 function closeBook() {
   if (closing) return closing;
   closing = (async () => {
     viewGen++;
+    autoPaceOn = false;
+    clearTimeout(autoPaceTimer);
     clearTimeout(saveTimer);
     try { await persist(); } catch (e) { console.error(e); }
     exitSelect();
@@ -983,16 +1262,42 @@ async function bumpSize(delta) {
     pid = null;
     if (!engine) return;
     if (suppressUp) { suppressUp = false; return; }
-    if (document.body.classList.contains('selecting')) return;
+    if (document.body.classList.contains('selecting')) {
+      const dxSel = Math.abs(e.clientX - sx), dySel = Math.abs(e.clientY - sy);
+      if (dxSel < 8 && dySel < 8 && Date.now() - st < 320) {
+        setTimeout(() => {
+          if (document.body.classList.contains('selecting') && !engine?.getSelection?.()?.text) exitSelect();
+        }, 120);
+      }
+      return;
+    }
     const zoomed = document.body.classList.contains('pdf-zoom');
     if (zoomed && e.currentTarget === tap) return;
     const dx = e.clientX - sx, dy = e.clientY - sy;
-    if (!zoomed && Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy) * 1.2 && Date.now() - st < 800) { dx < 0 ? turn(1) : turn(-1); return; }
+    const scrolled = settings.flow === 'scrolled' && settings.writing !== 'vertical-rl' && cur?.type !== 'pdf';
+    const rtl = !!(engine?.isRtl?.() || settings.writing === 'vertical-rl');
+    const nextOnLeft = rtl || !!settings.leftHand;
+    if (!zoomed && !scrolled && Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy) * 1.2 && Date.now() - st < 800) {
+      if (rtl) dx > 0 ? turn(1) : turn(-1);
+      else dx < 0 ? turn(1) : turn(-1);
+      return;
+    }
     if (Math.abs(dx) > 10 || Math.abs(dy) > 10) return;
     const barsOpen = !$('#bars').classList.contains('hidden');
     if (barsOpen) { setBars(false); return; }
+    if (scrolled) {
+      const h = window.innerHeight, y = e.clientY;
+      if (y < h * 0.28) turn(-1);
+      else if (y > h * 0.72) turn(1);
+      else setBars(true);
+      return;
+    }
     const w = window.innerWidth, x = e.clientX;
-    if (x < w * 0.3) turn(-1); else if (x > w * 0.7) turn(1); else setBars(true);
+    if (nextOnLeft) {
+      if (x < w * 0.35) turn(1); else if (x > w * 0.65) turn(-1); else setBars(true);
+    } else {
+      if (x < w * 0.3) turn(-1); else if (x > w * 0.7) turn(1); else setBars(true);
+    }
   };
   for (const el of [tap, viewer]) {
     el.addEventListener('pointerdown', down);
@@ -1019,50 +1324,92 @@ async function bumpSize(delta) {
   });
 })();
 let turning = false;
-async function turn(d) { if (turning) return; turning = true; try { await (d > 0 ? engine.next() : engine.prev()); } finally { turning = false; } }
+async function turn(d, fromAuto = false) {
+  if (turning) return;
+  if (!fromAuto && d > 0 && engine) {
+    const dt = (Date.now() - pageEnteredAt) / 1000;
+    const chars = (engine.pageText?.() || '').trim().length;
+    if (dt >= 3 && dt <= 180 && chars >= 25) {
+      const sample = Math.max(2.5, Math.min(22, chars / dt));
+      paceCps = +(paceCps * 0.72 + sample * 0.28).toFixed(2);
+      try { localStorage.setItem('rr-read-cps', String(paceCps)); } catch {}
+    }
+  }
+  turning = true;
+  try { await (d > 0 ? engine.next() : engine.prev()); }
+  finally { turning = false; }
+}
 
 $('#r-slider').addEventListener('change', e => engine?.goToFraction(e.target.value / 1000));
 document.addEventListener('selectionchange', () => {
   if (!document.body.classList.contains('selecting') || !engine?.getSelection) return;
   const sel = engine.getSelection();
-  if (sel?.text) { snap = sel; $('#select-hint').textContent = `已选中 ${sel.text.length} 个字`; }
+  if (sel?.text) snap = sel;
 });
 
-/* 面板：目录 / 书签 / 划线 */
-function openPanel(title, nodes) { $('#panel-title').textContent = title; $('#panel-body').replaceChildren(...nodes); $('#panel').classList.remove('hidden'); }
-$('#panel-close').onclick = () => $('#panel').classList.add('hidden');
-$('#btn-toc').onclick = async () => {
+/* 面板：目录 / 书签 / 划线（三合一抽屉） */
+function openPanel(title, nodes, tab = 'toc') {
+  if ($('#panel-title')) $('#panel-title').textContent = title;
+  document.querySelectorAll('#panel-tabs [data-ptab]').forEach(btn => {
+    const on = btn.dataset.ptab === tab;
+    btn.classList.toggle('on', on);
+    btn.setAttribute('aria-selected', on ? 'true' : 'false');
+  });
+  $('#panel-body').replaceChildren(...nodes);
+  $('#panel').classList.remove('hidden');
+}
+async function openReaderPanel(tab = 'toc') {
+  if (!engine || !cur) return;
+  if (tab === 'bms') {
+    const list = (cur.bookmarks || []).slice().sort((a, b) => (a.progress ?? 0) - (b.progress ?? 0));
+    const nodes = list.length ? list.map(bm => {
+      const row = document.createElement('div'); row.className = 'item-row';
+      const b = document.createElement('button'); b.className = 'item';
+      b.textContent = bm.text || bm.label || '书签';
+      const sm = document.createElement('small'); sm.textContent = [bm.label, fmtPct(bm.progress), new Date(bm.at).toLocaleDateString('zh-CN')].filter(Boolean).join(' · '); b.appendChild(sm);
+      b.onclick = async () => { $('#panel').classList.add('hidden'); setBars(false); await engine.goTo(bm.pos); };
+      const x = document.createElement('button'); x.className = 'x'; x.textContent = '删除';
+      x.onclick = async () => { cur.bookmarks.splice(cur.bookmarks.indexOf(bm), 1); await db.update('books', cur.id, { bookmarks: cur.bookmarks }); row.remove(); updateBmIcon(); };
+      row.append(b, x); return row;
+    }) : [emptyNote('还没有书签。点右上角 ☆ 或直接说「加书签」即可收藏当前页。')];
+    openPanel('书签', nodes, 'bms');
+    return;
+  }
+  if (tab === 'hls') {
+    const list = (cur.highlights || []).slice().sort((a, b) => b.createdAt - a.createdAt);
+    const nodes = list.length ? list.map(item => passageRow(cur, item, {
+      onOpen: async () => { $('#panel').classList.add('hidden'); setBars(false); try { if (item.pos) await engine.goTo(item.pos); } catch {} },
+      onDelete: () => deletePassage(cur.id, item)
+    })) : [emptyNote('还没有划线。长按文字或说「把第2行划线」即可高亮并同步到知识与星海。')];
+    openPanel('划线', nodes, 'hls');
+    return;
+  }
   const toc = await engine.toc();
   const curLabel = lastState?.label;
   const nodes = toc.length ? toc.map(t => { const b = document.createElement('button'); b.className = 'item' + (t.label === curLabel ? ' cur' : ''); b.style.paddingLeft = 16 + t.depth * 18 + 'px'; b.textContent = t.label || '（无标题）'; b.onclick = async () => { $('#panel').classList.add('hidden'); setBars(false); await engine.goToc(t.target); }; return b; })
     : [emptyNote('这本书没有目录')];
-  openPanel('目录', nodes);
+  openPanel('目录', nodes, 'toc');
   $('#panel-body').querySelector('.cur')?.scrollIntoView({ block: 'center' });
-};
+}
+$('#panel-close').onclick = () => $('#panel').classList.add('hidden');
+document.querySelectorAll('#panel-tabs [data-ptab]').forEach(btn => {
+  btn.onclick = () => openReaderPanel(btn.dataset.ptab);
+});
+$('#btn-toc')?.addEventListener('click', () => openReaderPanel('toc'));
 function samePos(a, b) { return a && b && JSON.stringify(a) === JSON.stringify(b); }
-function updateBmIcon() { const on = cur?.bookmarks?.some(b => samePos(b.pos, lastState?.pos)); $('#btn-bm').textContent = on ? '★' : '☆'; }
-$('#btn-bm').onclick = async () => {
-  if (!cur || !lastState) return;
+function updateBmIcon() { const on = cur?.bookmarks?.some(b => samePos(b.pos, lastState?.pos)); if ($('#btn-bm')) $('#btn-bm').textContent = on ? '★' : '☆'; }
+async function toggleCurrentBookmark(silent = false) {
+  if (!cur || !lastState) return null;
   cur.bookmarks = cur.bookmarks || [];
   const i = cur.bookmarks.findIndex(b => samePos(b.pos, lastState.pos));
-  if (i >= 0) { cur.bookmarks.splice(i, 1); toast('已删除书签'); }
-  else { cur.bookmarks.push({ pos: lastState.pos, progress: lastState.progress, label: lastState.label, text: await engine.snippet(), at: Date.now() }); toast('已添加书签'); }
-  await db.update('books', cur.id, { bookmarks: cur.bookmarks }); updateBmIcon();
-};
-$('#btn-bms').onclick = () => {
-  const list = (cur.bookmarks || []).slice().sort((a, b) => (a.progress ?? 0) - (b.progress ?? 0));
-  const nodes = list.length ? list.map(bm => {
-    const row = document.createElement('div'); row.className = 'item-row';
-    const b = document.createElement('button'); b.className = 'item';
-    b.textContent = bm.text || bm.label || '书签';
-    const sm = document.createElement('small'); sm.textContent = [bm.label, fmtPct(bm.progress), new Date(bm.at).toLocaleDateString('zh-CN')].filter(Boolean).join(' · '); b.appendChild(sm);
-    b.onclick = async () => { $('#panel').classList.add('hidden'); setBars(false); await engine.goTo(bm.pos); };
-    const x = document.createElement('button'); x.className = 'x'; x.textContent = '删除';
-    x.onclick = async () => { cur.bookmarks.splice(cur.bookmarks.indexOf(bm), 1); await db.update('books', cur.id, { bookmarks: cur.bookmarks }); row.remove(); updateBmIcon(); };
-    row.append(b, x); return row;
-  }) : [emptyNote('还没有书签。阅读时点屏幕中间，再点右上角 ☆ 即可添加。')];
-  openPanel('书签', nodes);
-};
+  let added = false;
+  if (i >= 0) { cur.bookmarks.splice(i, 1); if (!silent) toast('已删除书签'); }
+  else { cur.bookmarks.push({ pos: lastState.pos, progress: lastState.progress, label: lastState.label, text: await engine.snippet(), at: Date.now() }); added = true; if (!silent) toast('已添加书签'); }
+  await db.update('books', cur.id, { bookmarks: cur.bookmarks });
+  updateBmIcon();
+  return added;
+}
+$('#btn-bm')?.addEventListener('click', () => toggleCurrentBookmark(false));
 
 function passageRow(book, item, { onOpen, onDelete }) {
   const row = document.createElement('div'); row.className = 'item-row passage';
@@ -1101,22 +1448,6 @@ async function openPassage(bookId, item) {
   if (!engine || cur?.id !== bookId) await openBook(bookId);
   try { if (item.pos) await engine?.goTo(item.pos); } catch (err) { console.warn(err); }
 }
-function openHighlightPanel() {
-  const list = (cur?.highlights || []).slice().sort((a, b) => b.createdAt - a.createdAt);
-  const nodes = [];
-  const pick = document.createElement('button');
-  pick.className = 'item cur';
-  pick.textContent = '选择文字';
-  pick.onclick = () => enterSelect(null, null);
-  nodes.push(pick);
-  if (!list.length) nodes.push(emptyNote('还没有划线。点上方“选择文字”，或长按一段文字，就可以高亮、复制和摘录。'));
-  else for (const item of list) nodes.push(passageRow(cur, item, {
-    onOpen: async () => { $('#panel').classList.add('hidden'); setBars(false); try { if (item.pos) await engine.goTo(item.pos); } catch {} },
-    onDelete: () => deletePassage(cur.id, item)
-  }));
-  openPanel('划线与摘录', nodes);
-}
-$('#btn-hls').onclick = () => openHighlightPanel();
 async function openLibraryExcerpts() {
   const books = await db.all('books');
   const items = [];
@@ -1125,12 +1456,12 @@ async function openLibraryExcerpts() {
   const nodes = items.length ? items.map(({ book, item }) => passageRow(book, item, {
     onOpen: () => openPassage(book.id, item),
     onDelete: () => deletePassage(book.id, item)
-  })) : [emptyNote('还没有摘录。打开一本书，长按文字即可高亮、复制或保存。')];
+  })) : [emptyNote('还没有摘录。打开一本书，长按文字或说「把第2行划线」即可保存。')];
   $('#lib-title').textContent = '摘录';
   $('#lib-body').replaceChildren(...nodes);
   $('#lib-panel').classList.remove('hidden');
 }
-$('#btn-excerpts').onclick = () => openLibraryExcerpts();
+$('#btn-excerpts')?.addEventListener('click', () => openLibraryExcerpts());
 $('#lib-close').onclick = () => $('#lib-panel').classList.add('hidden');
 
 function currentSelection() { return snap || engine?.getSelection?.() || null; }
@@ -1177,40 +1508,28 @@ $('#select-bar').addEventListener('mousedown', e => {
 $('#select-bar').addEventListener('touchstart', e => {
   if (e.target.closest('button')) snap = engine?.getSelection?.() || snap;
 }, { passive: true });
-$('#btn-hl').onclick = async () => {
+$('#btn-hl')?.addEventListener('click', async () => {
   const sel = currentSelection();
   const ok = await addPassage('highlight', sel);
-  if (ok) exitSelect();
-};
-$('#btn-copy').onclick = async () => {
-  const sel = currentSelection();
-  if (!sel?.text) { toast('请先选中文字'); return; }
-  const copied = await copyText(sel.text);
-  const saved = await addPassage('copy', sel);
-  if (copied && saved === 'dup') toast('已复制（摘录里已经有这段）');
-  else if (copied) toast('已复制，并保存到摘录');
-  else if (saved) toast('剪贴板不可用，已保存在摘录里');
-  else toast('复制失败');
-  if (copied || saved) exitSelect();
-};
+  if (ok) { toast('已划线并同步到知识'); exitSelect(); }
+});
 let noteKind = 'excerpt';
-function openNoteDialog(kind) {
+function openNoteDialog(kind = 'excerpt') {
   const sel = currentSelection();
   if (!sel?.text) { toast('请先选中文字'); return; }
   noteKind = kind;
   noteSel = sel;
   const heading = $('#note-heading');
-  if (heading) heading.textContent = kind === 'annotation' ? '写下批注' : '保存摘录';
-  $('#note-text').placeholder = kind === 'annotation' ? '这段话让你想到什么' : '写一句笔记，也可以留空';
+  if (heading) heading.textContent = '写想法或摘录';
+  $('#note-text').placeholder = '写一句想法（留空则直接存为摘录）';
   $('#note-quote').textContent = sel.text.length > 180 ? sel.text.slice(0, 180) + '…' : sel.text;
   $('#note-text').value = '';
   if ($('#note-tags')) $('#note-tags').value = '';
   $('#note-mask').classList.remove('hidden');
   setTimeout(() => $('#note-text').focus(), 30);
 }
-$('#btn-excerpt').onclick = () => openNoteDialog('excerpt');
-$('#btn-annotate').onclick = () => openNoteDialog('annotation');
-$('#btn-ai').onclick = () => {
+$('#btn-note')?.addEventListener('click', () => openNoteDialog('annotation'));
+$('#btn-ai')?.addEventListener('click', () => {
   const sel = currentSelection();
   if (!sel?.text) { toast('请先选中文字'); return; }
   openAssistant({
@@ -1220,8 +1539,7 @@ $('#btn-ai').onclick = () => {
     bookId: cur?.id || null,
     bookTitle: cur?.title || ''
   });
-};
-$('#btn-select-done').onclick = () => exitSelect();
+});
 $('#btn-bi-off').onclick = () => { settings.bilingual = false; saveSettings(); refreshBilingual(); };
 let biToken = 0;
 function renderPairs(pairs) {
@@ -1263,19 +1581,18 @@ function refreshBilingual() {
     $('#bi-body').replaceChildren(Object.assign(document.createElement('p'), { className: 'bi-miss', textContent: '这一页暂时没有译出来。原文仍在上面。' }));
   });
 }
-$('#btn-select').onclick = () => enterSelect(null, null);
 $('#note-cancel').onclick = () => { $('#note-mask').classList.add('hidden'); noteSel = null; };
 $('#note-dialog').onsubmit = async e => {
   e.preventDefault();
   const sel = noteSel;
   const note = $('#note-text').value.trim();
   const tags = parseTags($('#note-tags')?.value || '');
-  const kind = noteKind;
+  const kind = note ? 'annotation' : 'excerpt';
   $('#note-mask').classList.add('hidden');
   const ok = await addPassage(kind, sel, note, tags);
   noteSel = null;
   noteKind = 'excerpt';
-  if (ok) toast(kind === 'annotation' ? '已保存批注' : (note ? '已保存摘录和笔记' : '已保存摘录'));
+  if (ok) toast(note ? '已保存想法并划线' : '已保存摘录');
   if (ok) exitSelect();
 };
 
@@ -1297,12 +1614,13 @@ function buildSettings() {
   row('主题', ...Object.entries(THEMES).map(([k, t]) => { const b = btn(t.label, settings.theme === k, () => { settings.theme = k; apply(); }, 'swatch'); b.style.background = t.bg; b.style.color = t.fg; return b; }));
 }
 async function reopen() { const id = cur.id; $('#settings').classList.add('hidden'); await closeBook(); await openBook(id); }
-$('#btn-aa').onclick = () => { const s = $('#settings'); const show = s.classList.contains('hidden'); if (show) buildSettings(); s.classList.toggle('hidden', !show); };
+$('#btn-aa')?.addEventListener('click', () => { const s = $('#settings'); const show = s.classList.contains('hidden'); if (show) buildSettings(); s.classList.toggle('hidden', !show); });
 
 let rz; window.addEventListener('resize', () => { clearTimeout(rz); rz = setTimeout(() => engine?.resize(), 250); });
 
 function handleBack() {
   if (command?.closeBar(true)) return true;
+  if (closeBookPeek()) return true;
   if (dismissAssistant()) return true;
   if (closeStackDialog()) return true;
   if (closeIntent()) return true;
@@ -1347,6 +1665,14 @@ async function applyReaderPrefs() {
   saveSettings();
   applyBodyTheme();
   if (!$('#settings').classList.contains('hidden')) buildSettings();
+  if (engine?.needsReopen?.() && cur) {
+    await persist();
+    const id = cur.id;
+    try { engine.destroy(); } catch {}
+    engine = null;
+    await openBook(id);
+    return;
+  }
   if (cur?.type === 'pdf' && engine) {
     engine.reflow = true;
     await engine.render();
@@ -1355,10 +1681,40 @@ async function applyReaderPrefs() {
   refreshBilingual();
 }
 
+function pickVisiblePassage(eng, opts = {}) {
+  const raw = (eng?.pageText?.() || '').trim();
+  if (!raw) return null;
+  const paras = raw.split(/\n+/).map(s => s.replace(/\s+/g, ' ').trim()).filter(Boolean);
+  const sentences = paras.flatMap(p => p.split(/(?<=[。！？!?；;])/).map(s => s.trim()).filter(Boolean));
+  let text = '';
+  if (opts.query) {
+    const q = opts.query.trim();
+    const ql = q.toLowerCase();
+    const hitSent = sentences.find(s => s.toLowerCase().includes(ql)) || paras.find(p => p.toLowerCase().includes(ql));
+    if (hitSent) text = q.length >= 4 && hitSent.length > 60 ? q : hitSent;
+    else if (raw.toLowerCase().includes(ql)) text = q;
+  } else if (opts.paragraph) {
+    text = paras[Math.min(paras.length - 1, Math.max(0, opts.paragraph - 1))] || '';
+  } else if (opts.line) {
+    const lines = sentences.length >= opts.line ? sentences : paras;
+    text = lines[Math.min(lines.length - 1, Math.max(0, opts.line - 1))] || '';
+  } else {
+    text = paras.find(p => p.length > 8) || paras[0] || '';
+  }
+  if (!text) return null;
+  return {
+    text,
+    pos: lastState?.pos || null,
+    cfiRange: null,
+    ch: cur?.type === 'txt' ? eng.ch : null,
+    page: cur?.type === 'pdf' ? eng.page : null
+  };
+}
+
 command = createCommandController({
   toast,
-  closeMenus: () => { closeIntent(false); closeStackMenus(false); },
-  context: () => ({ reading: !!engine && $('#reader').classList.contains('active'), pane: currentPane() }),
+  closeMenus: () => { closeIntent(false); closeStackMenus(false); closeBookPeek(); },
+  context: () => ({ reading: !!engine && $('#reader').classList.contains('active'), pane: currentPane(), tilt: getGraphTilt() }),
   snapshot: () => ({
     settings: { ...settings },
     appearance: appearancePref(),
@@ -1403,16 +1759,44 @@ command = createCommandController({
       }
       case 'appearance': {
         localStorage.setItem('rr-appearance', a.value);
+        if (settings.eink) { settings.eink = false; saveSettings(); }
         applyAppearance();
         const nm = a.value === 'dark' ? '深色外观' : a.value === 'light' ? '浅色外观' : '自动外观';
         return { label: nm, undoable: true };
+      }
+      case 'eink': {
+        settings.eink = !!a.on;
+        await applyReaderPrefs();
+        return { label: settings.eink ? '已开墨水屏模式' : '已退出墨水屏', undoable: true };
+      }
+      case 'leftHand': {
+        settings.leftHand = !!a.on;
+        saveSettings();
+        applyAppearance();
+        return { label: settings.leftHand ? '已切到左手模式' : '已恢复右手模式', undoable: true };
+      }
+      case 'flow': {
+        settings.flow = a.value === 'scrolled' ? 'scrolled' : 'paginated';
+        if (settings.flow === 'scrolled' && settings.writing === 'vertical-rl') settings.writing = 'horizontal';
+        await applyReaderPrefs();
+        return { label: settings.flow === 'scrolled' ? '上下滚动翻页' : '左右分页阅读', undoable: true };
+      }
+      case 'writing': {
+        settings.writing = a.value === 'vertical-rl' ? 'vertical-rl' : 'horizontal';
+        if (settings.writing === 'vertical-rl') settings.flow = 'paginated';
+        await applyReaderPrefs();
+        return { label: settings.writing === 'vertical-rl' ? '传统竖排（从右往左）' : '横排阅读', undoable: true };
       }
       case 'bilingual': {
         settings.bilingual = !!a.on;
         saveSettings();
         if (!$('#settings').classList.contains('hidden')) buildSettings();
         refreshBilingual();
-        return { label: a.on ? '已开中英对照' : '只看原文', undoable: true };
+        return { label: a.on ? '已开自动对照翻译' : '只看原文', undoable: true };
+      }
+      case 'autoPace': {
+        if (!reading) return { label: '打开一本书后即可按你的阅读速度自动翻页' };
+        return { label: setAutoPace(a.on, a.speed || 'auto') };
       }
       case 'turn': {
         if (!reading) return { label: '打开一本书后即可语音翻页' };
@@ -1424,15 +1808,73 @@ command = createCommandController({
         await engine.goToFraction(a.fraction);
         return { label: `已跳到 ${Math.round(a.fraction * 100)}%` };
       }
+      case 'goPage': {
+        if (!reading) return { label: '先打开一本书即可跳页' };
+        const p = Math.max(1, Number(a.page) || 1);
+        if (cur?.type === 'pdf') {
+          const target = Math.min(p, engine.n || p);
+          await engine.goTo({ page: target });
+          return { label: `第 ${target} 页` };
+        }
+        if (cur?.type === 'txt' && engine.pages) {
+          const target = Math.min(p, engine.pages);
+          engine.p = target - 1;
+          engine.paint();
+          return { label: `本章第 ${target} 页` };
+        }
+        if (engine.hasLocations?.()) {
+          const total = engine.book?.locations?.length?.() || 100;
+          await engine.goToFraction(Math.min(0.995, (p - 1) / Math.max(1, total)));
+          return { label: `已翻至约第 ${p} 页` };
+        }
+        return { label: '这本书正在分页，稍后再试' };
+      }
+      case 'goChapter': {
+        if (!reading) return { label: '先打开一本书即可跳章' };
+        const toc = (await engine.toc?.()) || [];
+        if (!toc.length) return { label: '这本书没有目录' };
+        const idx = Math.max(1, Number(a.index) || 1);
+        const re = new RegExp(`(?:第\\s*${idx}\\s*[章节回]|chapter\\s*${idx}\\b|^${idx}[.、\\s])`, 'i');
+        const hit = toc.find(t => re.test(t.label || '')) || toc[Math.min(toc.length - 1, idx - 1)];
+        await engine.goToc(hit.target);
+        return { label: hit.label || `第 ${idx} 章` };
+      }
+      case 'voiceMark': {
+        if (!reading) return { label: '打开一本书后即可语音划线' };
+        const sel = pickVisiblePassage(engine, a);
+        if (!sel) return { label: a.query ? `这页没找到「${a.query}」` : '当前页没有可标记的文字' };
+        const kind = a.note ? 'annotation' : (a.kind || 'highlight');
+        const ok = await addPassage(kind, sel, a.note || '');
+        if (!ok) return null;
+        const preview = Array.from(sel.text).slice(0, 14).join('') + (sel.text.length > 14 ? '…' : '');
+        return { label: `已${kind === 'annotation' ? '批注' : kind === 'excerpt' ? '摘抄' : '划线'}「${preview}」` };
+      }
       case 'bookmark': {
         if (!reading) return { label: '打开一本书后即可加书签' };
-        $('#btn-bm')?.click();
-        return { label: '已切换书签' };
+        const added = await toggleCurrentBookmark(true);
+        return { label: added ? '已添加书签' : '已取消书签' };
       }
       case 'toc': {
         if (!reading) return { label: '打开一本书后即可看目录' };
-        $('#btn-toc')?.click();
+        await openReaderPanel('toc');
         return { label: '已打开目录' };
+      }
+      case 'bookmarks': {
+        if (!reading) return { label: '打开一本书后即可看书签' };
+        await openReaderPanel('bms');
+        return { label: '已打开书签' };
+      }
+      case 'highlights': {
+        if (!reading) return { label: '打开一本书后即可看划线' };
+        await openReaderPanel('hls');
+        return { label: '已打开划线' };
+      }
+      case 'openSettings': {
+        if (!reading) return { label: '阅读时说出「打开排版」可调细节' };
+        setBars(true);
+        buildSettings();
+        $('#settings').classList.remove('hidden');
+        return { label: '已展开排版面板' };
       }
       case 'closeBook': {
         if (!reading) return null;
@@ -1465,10 +1907,31 @@ command = createCommandController({
         return { label: nm, undoable: true };
       }
       case 'openBook': {
-        const q = a.query.toLowerCase();
         const books = await db.all('books');
-        const hit = books.find(b => (b.title || '').toLowerCase().includes(q))
-          || books.find(b => (b.author || '').toLowerCase().includes(q));
+        if (!books.length) return { label: '还没有导入书' };
+        sortBooks(books, currentSort());
+        let hit = null;
+        if (typeof a.index === 'number' && a.index !== 0) {
+          const idx = a.index > 0 ? a.index - 1 : books.length + a.index;
+          if (idx < 0 || idx >= books.length) return { label: `列表里目前只有 ${books.length} 本书` };
+          hit = books[idx];
+        } else {
+          const q = String(a.query || '').trim();
+          if (!q) {
+            hit = books[0];
+          } else {
+            let best = null, bestScore = 0;
+            for (const b of books) {
+              const sc = Math.max(
+                fuzzyScore(b.title, q) * 1.12,
+                fuzzyScore(b.author, q) * 0.92,
+                fuzzyScore(`${b.title || ''} ${b.author || ''}`, q) * 0.88
+              );
+              if (sc > bestScore) { bestScore = sc; best = b; }
+            }
+            if (best && bestScore >= 85) hit = best;
+          }
+        }
         if (!hit) return { label: `没有找到「${a.query}」` };
         await openBook(hit.id);
         return { label: `已打开《${hit.title.slice(0, 14)}》` };
@@ -1480,14 +1943,63 @@ command = createCommandController({
           return { label: '新建笔记' };
         }
         const title = Array.from(a.text).slice(0, 18).join('');
-        await createNote({ title, body: a.text, tags: [], kind: 'note' });
+        await createNote({
+          title, body: a.text, tags: [], kind: 'note',
+          bookId: reading ? cur?.id || null : null,
+          bookTitle: reading ? cur?.title || '' : ''
+        });
         await refreshWorkspace();
-        return { label: `已记笔记「${title}」` };
+        return { label: `已记想法「${title}」` };
       }
       case 'newDecision': {
         if (reading) await closeBook();
-        $('#btn-new-decision')?.click();
+        await createDecisionNote();
         return { label: '新建判断' };
+      }
+      case 'exportOutline': {
+        if (reading) await closeBook();
+        await exportOutline();
+        return null;
+      }
+      case 'importBooks': {
+        if (reading) await closeBook();
+        showPane('shelf');
+        $('#file-input')?.click();
+        return { label: '请选择要导入的书籍或文件' };
+      }
+      case 'cosmosExplore': {
+        if (reading) await closeBook();
+        showPane('graph', { whisper: false });
+        const hit = exploreCosmos(a.mode || 'tour');
+        if (!hit) return { label: '星海还没有点亮的星，先记一条想法吧' };
+        return { label: `${hit.sector} · ${hit.title}` };
+      }
+      case 'cosmosFocus': {
+        if (reading) await closeBook();
+        showPane('graph', { whisper: false });
+        const hit = focusStarByQuery(a.query);
+        if (!hit) return { label: `星海里没找到「${a.query}」` };
+        return { label: `已飞往「${hit.title}」` };
+      }
+      case 'cosmosNeighbors': {
+        if (reading) await closeBook();
+        showPane('graph', { whisper: false });
+        const hit = focusGraphNeighborhood();
+        if (!hit) return { label: '星海还没有可展开的星' };
+        return { label: `「${hit.title}」· ${hit.links} 条航线` };
+      }
+      case 'cosmosLink': {
+        if (reading) await closeBook();
+        showPane('graph', { whisper: false });
+        const res = await linkFocusedStarTo(a.target);
+        if (!res.ok) return { label: res.reason === 'no-focus' ? '先点亮或飞到一颗星，再说「连到…」' : `没找到「${a.target}」` };
+        return { label: `已连接「${res.from}」↔「${res.to}」` };
+      }
+      case 'cosmosZoom': {
+        if (reading) await closeBook();
+        showPane('graph', { whisper: false });
+        zoomGraph(a.factor || 1.45);
+        return { label: (a.factor || 1) > 1 ? '星海已拉近' : '星海已拉远' };
       }
       case 'search': {
         if (reading) await closeBook();
@@ -1528,7 +2040,40 @@ command = createCommandController({
 
 $('#intent-cmd-btn')?.addEventListener('click', () => command.openBar({ listen: false }));
 $('#intent-mic')?.addEventListener('click', () => command.openBar({ listen: true }));
-$('#reader-cmd-bar')?.addEventListener('click', () => command.openBar({ listen: false }));
-$('#btn-reader-cmd')?.addEventListener('click', () => { setBars(false); command.openBar({ listen: speechSupported() }); });
+(function bindReaderCmdBar() {
+  const bar = $('#reader-cmd-bar');
+  if (!bar) return;
+  let sx = 0, sy = 0, pid = null, fired = false, hold = null;
+  const clear = () => { clearTimeout(hold); hold = null; };
+  bar.addEventListener('pointerdown', e => {
+    if (e.button != null && e.button !== 0) return;
+    sx = e.clientX; sy = e.clientY; pid = e.pointerId; fired = false;
+    try { bar.setPointerCapture(e.pointerId); } catch {}
+    clear();
+    hold = setTimeout(() => {
+      hold = null; fired = true;
+      command.openBar({ listen: speechSupported() });
+    }, 320);
+  });
+  bar.addEventListener('pointermove', e => {
+    if (pid !== e.pointerId) return;
+    if (sy - e.clientY > 18) {
+      clear();
+      if (!fired) { fired = true; command.openBar({ listen: false }); }
+    } else if (Math.hypot(e.clientX - sx, e.clientY - sy) > 12) {
+      clear();
+    }
+  });
+  bar.addEventListener('pointerup', e => {
+    if (pid !== e.pointerId) return;
+    pid = null; clear();
+  });
+  bar.addEventListener('pointercancel', () => { pid = null; clear(); });
+  bar.addEventListener('click', () => {
+    if (fired) { fired = false; return; }
+    command.openBar({ listen: false });
+  });
+})();
+$('#btn-reader-voice')?.addEventListener('click', () => { setBars(false); command.openBar({ listen: speechSupported() }); });
 
-window.__app = { db, openBook, closeBook, importFiles, handleBack, get engine() { return engine; }, renderLibrary, stacks: { list: listStacks }, runCommand: text => command.run(text), openCommand: opts => command.openBar(opts) };
+window.__app = { db, openBook, closeBook, importFiles, handleBack, get engine() { return engine; }, renderLibrary, stacks: { list: listStacks }, runCommand: text => command.run(text), openCommand: opts => command.openBar(opts), openPeek: openBookPeek, closePeek: closeBookPeek };

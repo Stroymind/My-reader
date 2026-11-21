@@ -137,11 +137,11 @@ try {
     inView: (() => { const r = document.querySelector('#intent-sheet').getBoundingClientRect(); return r.left >= 0 && r.right <= innerWidth && r.bottom <= innerHeight + 1; })()
   }));
   assert.equal(intent.expanded, 'true');
-  assert.deepEqual(intent.items, ['btn-intent-search', 'btn-import', 'btn-select-mode', 'btn-excerpts', 'btn-appearance', 'btn-ai-settings']);
-  assert.equal(intent.fileInput, true); assert.equal(intent.focus, 'btn-intent-search'); assert.equal(intent.inView, true);
+  assert.deepEqual(intent.items, ['btn-import', 'btn-intent-search', 'btn-ai-settings']);
+  assert.equal(intent.fileInput, true); assert.equal(intent.focus, 'btn-import'); assert.equal(intent.inView, true);
   await page.screenshot({ path: path.resolve(root, 'test-results/zone-intent-sheet.png') });
   await page.keyboard.press('ArrowDown');
-  assert.equal(await page.evaluate(() => document.activeElement?.id), 'btn-import');
+  assert.equal(await page.evaluate(() => document.activeElement?.id), 'btn-intent-search');
   await page.keyboard.press('Escape');
   assert.equal(await intentVisible(), false);
   assert.equal(await page.evaluate(() => document.activeElement?.id), 'spatial-bar');
@@ -151,7 +151,7 @@ try {
   assert.equal(await intentVisible(), false);
   await page.click('#ai-settings-cancel');
   assert.equal(await page.$eval('#settings-mask', el => el.classList.contains('hidden')), true);
-  report.checks.push('Bottom hairline opens compact contextual Intent Sheet (spaces + 4 context tiles + 2 prefs, arrow keys, Escape); AI settings opens/closes without network calls');
+  report.checks.push('Bottom hairline opens ultra-clean buttonless Intent Sheet (spaces + voice bar + 2 irreducible tiles + AI settings, arrow keys, Escape)');
 
   await openIntent();
   await page.click('#btn-intent-search');
@@ -226,8 +226,7 @@ try {
   const expanded = () => page.$eval('.stack-head', el => el.getAttribute('aria-expanded'));
   const picking = () => page.evaluate(() => document.querySelector('#library').classList.contains('picking'));
   const enterSelect = async () => {
-    await openIntent();
-    await page.click('#btn-select-mode');
+    await page.evaluate(() => window.__app.runCommand('进入整理'));
     await page.waitForFunction(() => document.querySelector('#library').classList.contains('picking') && !document.querySelector('#pick-bar').hidden);
   };
 
@@ -458,26 +457,22 @@ try {
   await page.screenshot({ path: path.resolve(root, 'test-results/zone-shelf-collapsed.png') });
 
   const setAppearance = async want => {
-    for (let i = 0; i < 3 && (await page.evaluate(() => document.documentElement.dataset.appearance)) !== want; i++) {
-      await openIntent();
-      await page.click('#btn-appearance');
-    }
-    if (await intentVisible()) await page.keyboard.press('Escape');
+    const cmd = want === 'dark' ? '深色外观' : want === 'light' ? '浅色外观' : '跟随系统';
+    await page.evaluate(c => window.__app.runCommand(c), cmd);
   };
   await setAppearance('dark');
   const dark = await page.evaluate(() => ({
     cls: document.documentElement.classList.contains('appearance-dark'),
     bg: getComputedStyle(document.body).backgroundColor,
-    label: document.querySelector('#btn-appearance .menu-label').textContent,
     readingTheme: document.body.className
   }));
-  assert.equal(dark.cls, true); assert.equal(dark.bg, 'rgb(0, 0, 0)'); assert.equal(dark.label, '外观 · 深色');
+  assert.equal(dark.cls, true); assert.equal(dark.bg, 'rgb(0, 0, 0)');
   assert.ok(dark.readingTheme.includes('theme-'), 'reading theme class stays separate');
   await sleep(300);
   await page.screenshot({ path: path.resolve(root, 'test-results/zone-shelf-dark.png') });
   await setAppearance('system');
   assert.equal(await page.evaluate(() => document.documentElement.dataset.appearance), 'system');
-  report.checks.push('Appearance cycles to dark from the intent sheet (shell only, reading theme untouched) and back to system');
+  report.checks.push('Appearance switches to dark via voice/command (shell only, reading theme untouched) and back to system');
 
   for (const width of [390, 1100]) {
     await page.setViewport({ width, height: 844 });
@@ -591,13 +586,13 @@ try {
 
   await page.click('#graph-card .gc-close');
   await page.waitForFunction(() => document.querySelector('#graph-card').classList.contains('hidden'));
-  await openIntent();
-  await page.click('#graph-reset');
+  await page.evaluate(() => window.__app.runCommand('适应全图'));
   await sleep(750);
   await openIntent();
   const graphTiles = await page.evaluate(() => [...document.querySelectorAll('#intent-sheet .menu-item')].filter(b => b.getClientRects().length).map(b => b.id));
-  assert.deepEqual(graphTiles, ['btn-intent-search', 'btn-new-note', 'graph-tilt', 'graph-reset', 'graph-mood', 'btn-appearance', 'btn-ai-settings']);
-  // Test Impressionist time-of-day mood cycle (auto -> dawn -> day -> dusk -> night -> auto) + live motion
+  assert.deepEqual(graphTiles, ['btn-new-note', 'btn-intent-search', 'btn-ai-settings']);
+  await page.keyboard.press('Escape');
+  // Test Impressionist time-of-day mood cycle (auto -> dawn -> day -> dusk -> night -> auto) via voice/command + live motion
   const moodCheck = await page.evaluate(async () => {
     const { themeForHour } = await import('./cosmos.js');
     const dawn = themeForHour(6.8), day = themeForHour(13), dusk = themeForHour(18.3), night = themeForHour(23), mid = themeForHour(8.3);
@@ -609,26 +604,20 @@ try {
   });
   assert.equal(moodCheck.distinct, true); assert.equal(moodCheck.interp, true);
   assert.deepEqual(moodCheck.orbs, ['sun', 'sun', 'sun', 'moon']);
-  const readMood = () => page.$eval('#graph-mood .menu-label', el => el.textContent);
-  assert.equal(await readMood(), '天色 · 随时辰');
-  await page.click('#graph-mood');
-  assert.equal(await intentVisible(), true, 'mood cycle keeps sheet open for live preview');
-  assert.equal(await readMood(), '天色 · 晨曦');
-  await page.keyboard.press('Escape');
+  const readMood = () => page.evaluate(async () => (await import('./workspace.js')).getGraphMood());
+  assert.equal(await readMood(), 'auto');
+  await page.evaluate(() => window.__app.runCommand('晨曦'));
+  assert.equal(await readMood(), 'dawn');
   await sleep(920);
   await page.screenshot({ path: path.resolve(root, 'test-results/zone-cosmos-dawn.png') });
-  await openIntent();
-  await page.click('#graph-mood');
-  assert.equal(await readMood(), '天色 · 晴蓝');
-  await page.click('#graph-mood');
-  assert.equal(await readMood(), '天色 · 暮色');
-  await page.keyboard.press('Escape');
+  await page.evaluate(() => window.__app.runCommand('晴蓝'));
+  assert.equal(await readMood(), 'day');
+  await page.evaluate(() => window.__app.runCommand('暮色'));
+  assert.equal(await readMood(), 'dusk');
   await sleep(920);
   await page.screenshot({ path: path.resolve(root, 'test-results/zone-cosmos-dusk.png') });
-  await openIntent();
-  await page.click('#graph-mood');
-  assert.equal(await readMood(), '天色 · 星夜');
-  await page.keyboard.press('Escape');
+  await page.evaluate(() => window.__app.runCommand('星夜'));
+  assert.equal(await readMood(), 'night');
   await sleep(920);
   // Check live Impressionist brushwork animation between frames
   const snapMap = () => page.evaluate(() => {
@@ -643,10 +632,18 @@ try {
   const f2 = await snapMap();
   assert.notEqual(f1, f2, 'living Impressionist brushwork & starlight animate across frames');
   await page.screenshot({ path: path.resolve(root, 'test-results/zone-cosmos-mobile.png') });
+  // Zoom out via voice to verify organic radial nebula feathering (no rectangular edge seam)
+  await page.evaluate(() => window.__app.runCommand('缩小星海'));
+  await sleep(450);
+  await page.evaluate(() => window.__app.runCommand('缩小星海'));
+  await sleep(600);
+  await page.screenshot({ path: path.resolve(root, 'test-results/zone-cosmos-zoomout.png') });
+  await page.evaluate(() => window.__app.runCommand('适应全图'));
+  await sleep(500);
+  await page.evaluate(() => window.__app.runCommand('随时辰'));
+  assert.equal(await readMood(), 'auto');
+  report.checks.push('Impressionist time-of-day cycle (随时辰/晨曦/晴蓝/暮色/星夜), radial zoomed-out seamless cosmos, and live 60fps brushwork animation verified');
   await openIntent();
-  await page.click('#graph-mood');
-  assert.equal(await readMood(), '天色 · 随时辰');
-  report.checks.push('Impressionist time-of-day cycle (随时辰/晨曦/晴蓝/暮色/星夜 with smooth interpolation & sun/moon arc) and live 60fps brushwork animation verified');
   await page.click('#btn-intent-search');
   assert.equal(await page.$eval('#graph-search-row', el => !el.hidden), true);
   await page.type('#graph-search', 'Zettel');
@@ -660,8 +657,7 @@ try {
   assert.equal(await page.$eval('#graph-search-row', el => el.hidden), true);
   report.checks.push('星海 contextual Intent Sheet reveals search on demand, flies to matching stars and offers 跃迁原文 for sourced notes');
 
-  await openIntent();
-  await page.click('#graph-reset');
+  await page.evaluate(() => window.__app.runCommand('适应全图'));
   await sleep(900);
   const sample = () => page.$eval(`#graph-world .gnode[data-id="${cosmosIds.lone}"]`, el => el.style.transform);
   const t0 = await sample();
@@ -679,15 +675,13 @@ try {
   await page.mouse.wheel({ deltaY: -700 });
   await page.waitForFunction(() => document.querySelector('#graph-stage').classList.contains('lod-near'));
   assert.equal(await page.$$eval('#graph-world .gnode .gk', ks => ks.some(k => getComputedStyle(k).display === 'block')), true);
-  await openIntent();
-  await page.click('#graph-reset');
+  await page.evaluate(() => window.__app.runCommand('适应全图'));
   await sleep(900);
-  report.checks.push('Drag pans, wheel zoom reaches near LOD (star kinds appear), contextual 适应全图 restores fit');
+  report.checks.push('Drag pans, wheel zoom reaches near LOD (star kinds appear), 适应全图 restores fit');
 
-  await openIntent();
-  await page.click('#graph-tilt');
+  await page.evaluate(() => window.__app.runCommand('2.5D 立体'));
   await sleep(1200);
-  const tilt = await page.evaluate(() => {
+  const tilt = await page.evaluate(async () => {
     const stage = document.querySelector('#graph-stage');
     const beacon = document.querySelector('#graph-world .gnode.mag-beacon .gstem');
     const labels = [...document.querySelectorAll('#graph-world .gnode:not(.quiet) .gtext')].map(el => el.getBoundingClientRect());
@@ -696,15 +690,16 @@ try {
       const a = labels[i], b = labels[j];
       if (a.left < b.right - 1 && b.left < a.right - 1 && a.top < b.bottom - 1 && b.top < a.bottom - 1) labelOverlap = true;
     }
+    const w = await import('./workspace.js');
     return {
-      on: stage.classList.contains('tilt'), pressed: document.querySelector('#graph-tilt').getAttribute('aria-pressed'),
-      label: document.querySelector('#graph-tilt .menu-label').textContent,
+      on: stage.classList.contains('tilt'),
+      tiltState: w.getGraphTilt(),
       plane: getComputedStyle(document.querySelector('#graph-plane')).transform,
       stem: beacon.getBoundingClientRect().height,
       labelOverlap
     };
   });
-  assert.equal(tilt.on, true); assert.equal(tilt.pressed, 'true'); assert.equal(tilt.label, '平视星图');
+  assert.equal(tilt.on, true); assert.equal(tilt.tiltState, true);
   assert.ok(tilt.plane.startsWith('matrix3d'), 'plane is tilted in 3D'); assert.ok(tilt.stem > 20, 'beacons rise on light stems');
   assert.equal(tilt.labelOverlap, false, '2.5D labels must not overlap');
   const bp = await page.$eval(`#graph-world .gnode[data-id="${cosmosIds.b}"] .gdot`, el => { const r = el.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2, hit: document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2) === el }; });
@@ -716,19 +711,21 @@ try {
   await page.screenshot({ path: path.resolve(root, 'test-results/zone-cosmos-25d.png') });
   await page.keyboard.press('Escape');
   await page.waitForFunction(() => document.querySelector('#graph-card').classList.contains('hidden'));
-  await openIntent();
-  await page.click('#graph-tilt');
+  await page.evaluate(() => window.__app.runCommand('平视星图'));
   await sleep(1100);
   assert.equal(await page.$eval('#graph-stage', el => el.classList.contains('tilt')), false);
-  report.checks.push('2.5D toggle from Intent Sheet tilts the painterly atlas in CSS 3D with zero label overlap; tapping a star opens its card; Escape closes it');
+  // Voice cosmos exploration test
+  await page.evaluate(() => window.__app.runCommand('探索星海'));
+  await page.waitForFunction(() => !document.querySelector('#graph-card').classList.contains('hidden'));
+  await page.keyboard.press('Escape');
+  report.checks.push('2.5D voice toggle tilts the painterly atlas in CSS 3D with zero label overlap; voice cosmos exploration flies directly to stars');
 
   await page.setViewport({ width: 1100, height: 844 });
   await page.waitForFunction(() => window.__app);
   await page.evaluate(async () => { const w = await import('./workspace.js'); await w.refreshWorkspace(); w.showPane('graph'); });
   await page.waitForFunction(() => document.querySelectorAll('#graph-world .gnode').length === 9 && document.querySelector('#pane-graph').classList.contains('on'));
   await sleep(300);
-  await openIntent();
-  await page.click('#graph-reset');
+  await page.evaluate(() => window.__app.runCommand('适应全图'));
   await sleep(1100);
   const wide = await page.evaluate(() => ({
     doc: document.documentElement.scrollWidth > innerWidth,
@@ -740,11 +737,47 @@ try {
   report.checks.push('Desktop 1100 px panorama: edge-to-edge cosmos, every star in view after 适应, no overflow');
   await page.setViewport({ width: 390, height: 844, isMobile: true, hasTouch: true });
 
-  // ---- Natural-language & voice direct-control bar (zero AI-slop, compound actions + undo + reader control) ----
+  // ---- Ultra-clean buttonless Note Editor + on-demand glass Link Picker (zero ugly <select>, zero form button pile) ----
+  await page.evaluate(async id => {
+    const w = await import('./workspace.js');
+    await w.refreshWorkspace();
+    w.showPane('knowledge');
+    await w.openEditor(id);
+  }, cosmosIds.lone);
+  await page.waitForFunction(() => !document.querySelector('#note-editor').classList.contains('hidden') && !!document.querySelector('#note-editor .rel-add-trigger'));
+  const editorUi = await page.evaluate(() => ({
+    nativeSelects: document.querySelectorAll('#note-editor select').length,
+    pickerHiddenAtRest: document.querySelector('#note-editor .link-picker').classList.contains('hidden'),
+    noSaveButton: ![...document.querySelectorAll('#note-editor button')].some(b => b.textContent.trim() === '保存'),
+    hasMic: !!document.querySelector('#editor-mic'),
+    noClutterButtons: !document.querySelector('#note-editor .concept-pill') && !document.querySelector('#note-editor .editor-tools')
+  }));
+  assert.equal(editorUi.nativeSelects, 0, 'note editor must not use ugly raw <select>');
+  assert.equal(editorUi.pickerHiddenAtRest, true, 'link picker stays cleanly hidden until tapped');
+  assert.equal(editorUi.noSaveButton, true, 'note editor auto-saves without a Save button');
+  assert.equal(editorUi.hasMic, true, 'note editor offers voice dictation');
+  assert.equal(editorUi.noClutterButtons, true, 'zero old-era button piles in note editor');
+  await sleep(420);
+  await page.screenshot({ path: path.resolve(root, 'test-results/zone-note-editor-clean.png') });
+  await page.click('#note-editor .rel-add-trigger');
+  await page.waitForFunction(() => !document.querySelector('#note-editor .link-picker').classList.contains('hidden') && document.querySelectorAll('#note-editor .link-cand').length > 0);
+  await page.$eval('#note-editor .link-picker', el => el.scrollIntoView({ block: 'center' }));
+  await sleep(200);
+  await page.screenshot({ path: path.resolve(root, 'test-results/zone-note-editor.png') });
+  await page.click('#note-editor .link-cand');
+  await page.waitForFunction(() => document.querySelectorAll('#note-editor .rel-item').length >= 1);
+  await page.$eval('#note-editor .rel-cut', el => el.scrollIntoView({ block: 'center' }));
+  await page.click('#note-editor .rel-cut');
+  await page.waitForFunction(() => document.querySelectorAll('#note-editor .rel-item').length === 0);
+  await page.click('#note-editor .editor-bar .texty');
+  await page.waitForFunction(() => document.querySelector('#note-editor').classList.contains('hidden'));
+  report.checks.push('Pure buttonless Note Editor canvas (zero AI/concept/tool button clutter, zero raw <select>; on-demand glass link picker connects in 1 tap)');
+
+  // ---- Natural-language & voice direct-control + Hold+Push-Left Peek + Drag-to-Stack + Multi-Paragraph Dark Highlight + Chained Commands + E-Ink / Left-Hand / Scroll / Vertical-RL ----
   assert.equal(await page.$eval('#command-mask', el => el.classList.contains('hidden')), true);
   await page.evaluate(async () => { const w = await import('./workspace.js'); w.showPane('shelf'); });
   await sleep(250);
-  // Long-press bottom breathing hairline opens the command whisper bar
+  // Long-press bottom breathing hairline opens pure whisper command bar (zero chip clutter)
   const barPt = await page.$eval('#spatial-bar', el => { const r = el.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
   await page.mouse.move(barPt.x, barPt.y); await page.mouse.down(); await sleep(540); await page.mouse.up();
   await page.waitForFunction(() => !document.querySelector('#command-mask').classList.contains('hidden'));
@@ -753,45 +786,158 @@ try {
   // Compound natural-language command: dark mode + 星海 + 暮色 + 2.5D
   await page.type('#cmd-input', '深色模式，去星海看暮色并开立体');
   await page.keyboard.press('Enter');
-  await page.waitForFunction(() => document.querySelector('#command-mask').classList.contains('hidden')
-    && document.documentElement.dataset.appearance === 'dark'
-    && document.querySelector('#pane-graph').classList.contains('on')
-    && document.querySelector('#graph-stage').classList.contains('tilt')
-    && document.querySelector('#graph-mood .menu-label').textContent === '天色 · 暮色'
-    && !!document.querySelector('#toast .toast-undo'));
+  await page.waitForFunction(async () => {
+    const w = await import('./workspace.js');
+    return document.querySelector('#command-mask').classList.contains('hidden')
+      && document.documentElement.dataset.appearance === 'dark'
+      && document.querySelector('#pane-graph').classList.contains('on')
+      && document.querySelector('#graph-stage').classList.contains('tilt')
+      && w.getGraphMood() === 'dusk'
+      && !!document.querySelector('#toast .toast-undo');
+  });
   // One-tap Undo reverts the whole compound command cleanly
   await page.click('#toast .toast-undo');
   await page.waitForFunction(() => document.documentElement.dataset.appearance !== 'dark'
     && !document.querySelector('#graph-stage').classList.contains('tilt')
     && document.querySelector('#pane-shelf').classList.contains('on'));
 
-  // Reader direct voice/natural-language control: open book -> enlarge font + eye-care sepia + kai + loose line-height -> next page -> close -> quick note
+  // Seed fresh books (including 《黄仁勋传》 & 《砂女》) for Peek, Drag-to-Stack, Fuzzy ASR, Ordinal, Multi-Step Chain & Dark Highlight tests
   await page.evaluate(async () => {
+    localStorage.removeItem('rr-stacks');
     const { db } = window.__app;
-    await db.put('books', { id: 'z-v', title: '原则 Principles', author: 'Ray Dalio', type: 'txt', progress: 0, addedAt: Date.now(), lastOpened: 0, pos: null, bookmarks: [], highlights: [] });
-    await db.put('files', { id: 'z-v', blob: new Blob(['第一章\n\n' + '自然交互让阅读设置不再藏在层层菜单里。\n'.repeat(60)], { type: 'text/plain' }) });
+    const now = Date.now();
+    await db.put('books', { id: 'z-v', title: '砂女', author: '安部公房', type: 'txt', progress: 0.12, lastLabel: '第一章', lastSnippet: '虽然不知有没有人真正来关心，事出蹊跷，也至少有看热闹的人，他们的好奇心，一定像忘了摘下的柿子似的熟透了。', addedAt: now + 2000, lastOpened: now + 2000, pos: null, bookmarks: [], highlights: [] });
+    await db.put('files', { id: 'z-v', blob: new Blob(['第一章\n\n虽然不知有没有人真正来关心，事出蹊跷，也至少有看热闹的人。\n\n结果，自然而然，教务主任为了打听搜索申请书的填写方法，准备上警察局去查问。\n\n' + '自然交互让阅读回归纯粹与安静。\n'.repeat(60)], { type: 'text/plain' }) });
+    await db.put('books', { id: 'z-hw', title: '黄仁勋传', author: '史蒂芬·维特', type: 'txt', progress: 0, addedAt: now + 1000, lastOpened: 0, pos: null, bookmarks: [], highlights: [] });
+    await db.put('files', { id: 'z-hw', blob: new Blob(['序章\n\n在硅谷一家普通的丹尼餐厅里，三个年轻人决定造出改变计算世界的芯片。\n'.repeat(35)], { type: 'text/plain' }) });
     await window.__app.renderLibrary();
   });
-  await page.evaluate(() => window.__app.runCommand('打开原则'));
-  await page.waitForFunction(() => document.querySelector('#reader').classList.contains('active') && document.querySelector('#loading').classList.contains('hidden'));
-  const beforeSize = await page.evaluate(async () => (await import('./settings.js')).settings.size);
-  await page.evaluate(() => window.__app.runCommand('字大一点，开护眼模式，换楷体，行距宽一点'));
-  const readerAfter = await page.evaluate(async () => {
-    const { settings } = await import('./settings.js');
-    return { size: settings.size, theme: settings.theme, font: settings.font, lh: settings.lh, sepiaCls: document.body.classList.contains('theme-sepia') };
+  await page.waitForSelector('.book[data-id="z-v"]');
+
+  // 1) Hold (>=180ms) + Push-Left Book Peek Card
+  const peekPt = await page.$eval('.book[data-id="z-v"]', el => { const r = el.getBoundingClientRect(); return { x: r.left + r.width * 0.72, y: r.top + r.height / 2 }; });
+  await page.mouse.move(peekPt.x, peekPt.y);
+  await page.mouse.down();
+  await sleep(230);
+  await page.mouse.move(peekPt.x - 68, peekPt.y, { steps: 6 });
+  await page.mouse.up();
+  await page.waitForFunction(() => !document.querySelector('#peek-mask').classList.contains('hidden') && document.querySelector('#pane-shelf').classList.contains('on'));
+  const peekCheck = await page.evaluate(() => ({
+    title: document.querySelector('#peek-title').textContent,
+    kicker: document.querySelector('#peek-kicker').textContent,
+    body: document.querySelector('#peek-body').textContent
+  }));
+  assert.equal(peekCheck.title, '砂女');
+  assert.ok(peekCheck.kicker.includes('第一章'));
+  assert.ok(peekCheck.body.includes('柿子'));
+  await sleep(320);
+  await page.screenshot({ path: path.resolve(root, 'test-results/zone-peek-card.png') });
+  await page.click('#peek-close');
+  await page.waitForFunction(() => document.querySelector('#peek-mask').classList.contains('hidden'));
+  report.checks.push('Hold + Push-Left on a stream row opens frosted Book Peek card showing current chapter & passage text without switching panes');
+
+  // 2) Drag-to-Stack: hold >=300ms and drag one book onto another -> auto-merges into a stack!
+  const dragPts = await page.evaluate(() => {
+    const a = document.querySelector('.book[data-id="z-v"]').getBoundingClientRect();
+    const b = document.querySelector('.book[data-id="z-hw"]').getBoundingClientRect();
+    return { ax: a.left + a.width * 0.5, ay: a.top + a.height / 2, bx: b.left + b.width * 0.5, by: b.top + b.height / 2 };
   });
-  assert.equal(readerAfter.size, beforeSize + 2);
-  assert.equal(readerAfter.theme, 'sepia'); assert.equal(readerAfter.sepiaCls, true);
-  assert.equal(readerAfter.font, 'kai'); assert.equal(readerAfter.lh, 2.1);
-  await page.evaluate(() => window.__app.runCommand('下一页'));
+  await page.mouse.move(dragPts.ax, dragPts.ay);
+  await page.mouse.down();
+  await sleep(340);
+  await page.mouse.move(dragPts.bx, dragPts.by, { steps: 8 });
+  await page.mouse.up();
+  await page.waitForFunction(() => window.__app.stacks.list().length === 1);
+  // Undo stack merge cleanly
+  await page.click('#toast .toast-undo');
+  await page.waitForFunction(() => window.__app.stacks.list().length === 0);
+  report.checks.push('Hold + vertical drag of one book row onto another auto-merges them into a Card Stack with 1-tap undo');
+
+  // 3) Fuzzy ASR typo matching («打开黄仁勋的再记» -> 《黄仁勋传》) & Ordinal («打开倒数第二本书»)
+  await page.evaluate(() => window.__app.runCommand('打开黄仁勋的再记'));
+  await page.waitForFunction(() => document.querySelector('#reader').classList.contains('active') && document.querySelector('#r-title').textContent === '黄仁勋传');
+  await page.evaluate(() => window.__app.runCommand('返回列表'));
+  await page.waitForFunction(() => document.querySelector('#library').classList.contains('active'));
+  await page.evaluate(() => window.__app.runCommand('打开第一本书'));
+  await page.waitForFunction(() => document.querySelector('#reader').classList.contains('active'));
+  await page.evaluate(() => window.__app.runCommand('返回列表'));
+  await page.waitForFunction(() => document.querySelector('#library').classList.contains('active'));
+
+  // 4) 6-step chained natural-language command: shrink font + close eye-care + open book + go page 2 + add bookmark + excerpt paragraph 1
+  await page.evaluate(() => window.__app.runCommand('开护眼模式'));
+  const preChainSize = await page.evaluate(async () => (await import('./settings.js')).settings.size);
+  await page.evaluate(() => window.__app.runCommand('字调小一点，关闭护眼模式，打开砂女，再为第2页添加一个标签，并帮我摘抄第一段'));
+  await page.waitForFunction(() => document.querySelector('#reader').classList.contains('active') && document.querySelector('#r-title').textContent === '砂女');
+  const chainRes = await page.evaluate(async () => {
+    const { settings } = await import('./settings.js');
+    const b = await window.__app.db.get('books', 'z-v');
+    return {
+      size: settings.size, theme: settings.theme,
+      bookmarks: (b?.bookmarks || []).length,
+      highlights: (b?.highlights || []).length,
+      marksInDom: document.querySelectorAll('#viewer mark.rr-mark-el').length
+    };
+  });
+  assert.equal(chainRes.size, preChainSize - 2);
+  assert.equal(chainRes.theme, 'paper');
+  assert.ok(chainRes.bookmarks >= 1, 'chained bookmark created');
+  assert.ok(chainRes.highlights >= 1, 'chained excerpt saved');
+  assert.ok(chainRes.marksInDom >= 1, 'chained highlight painted in DOM');
+
+  // 5) Dark-mode multi-paragraph highlighting + ultra-clean 3-pill #select-bar + 2-button #bars
+  await page.evaluate(() => window.__app.runCommand('深色模式'));
+  const readerChrome = await page.evaluate(() => ({
+    selectBtns: [...document.querySelectorAll('#select-bar button')].map(b => b.textContent),
+    barBtns: [...document.querySelectorAll('#bars .btn-row button span')].map(s => s.textContent),
+    readerCmdBar: !!document.querySelector('#reader-cmd-bar')
+  }));
+  assert.deepEqual(readerChrome.selectBtns, ['划线', '想法', '问 AI']);
+  assert.deepEqual(readerChrome.barBtns, ['目录', '说一句']);
+  assert.equal(readerChrome.readerCmdBar, true);
+  // Select across 2 paragraphs in dark mode and highlight
+  await page.evaluate(() => {
+    const ps = [...document.querySelectorAll('#viewer .txtcols p')].slice(0, 2);
+    const range = document.createRange();
+    range.setStart(ps[0].firstChild, 0);
+    range.setEnd(ps[1].lastChild, ps[1].lastChild.textContent.length);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+    document.body.classList.add('selecting');
+    document.querySelector('#select-bar').classList.remove('hidden');
+  });
+  await page.click('#btn-hl');
   await sleep(250);
+  const darkHl = await page.evaluate(() => {
+    const marks = [...document.querySelectorAll('#viewer mark.rr-mark-el')];
+    const totalChars = marks.reduce((s, m) => s + (m.textContent || '').length, 0);
+    return { count: marks.length, totalChars, bg: marks[0] ? getComputedStyle(marks[0]).backgroundColor : '' };
+  });
+  assert.ok(darkHl.totalChars > 20, `multi-paragraph highlight covers full selection (${darkHl.totalChars} chars), never 1 char`);
+  assert.ok(darkHl.bg && darkHl.bg !== 'rgba(0, 0, 0, 0)', 'highlight is visibly rendered on dark theme');
+
+  // 6) Reader ergonomic modes: E-Ink, Left-Hand, Scrolled vertical, Traditional Vertical-RL (台湾竖排)
+  await page.evaluate(() => window.__app.runCommand('开墨水屏'));
+  assert.equal(await page.evaluate(() => document.documentElement.classList.contains('mode-eink')), true);
+  await page.evaluate(() => window.__app.runCommand('关墨水屏'));
+  assert.equal(await page.evaluate(() => document.documentElement.classList.contains('mode-eink')), false);
+  await page.evaluate(() => window.__app.runCommand('开左手模式'));
+  assert.equal(await page.evaluate(() => document.documentElement.classList.contains('left-hand')), true);
+  await page.evaluate(() => window.__app.runCommand('恢复右手'));
+  assert.equal(await page.evaluate(() => document.documentElement.classList.contains('left-hand')), false);
+  await page.evaluate(() => window.__app.runCommand('上下翻页'));
+  assert.equal(await page.evaluate(() => document.body.classList.contains('flow-scrolled') && document.querySelector('.txtcols').classList.contains('scrolled')), true);
+  await page.evaluate(() => window.__app.runCommand('竖排阅读'));
+  assert.equal(await page.evaluate(() => document.body.classList.contains('writing-vrl') && getComputedStyle(document.querySelector('.txtcols')).writingMode === 'vertical-rl'), true);
+  await page.evaluate(() => window.__app.runCommand('恢复横排'));
+  assert.equal(await page.evaluate(() => document.body.classList.contains('writing-vrl')), false);
   await page.evaluate(() => window.__app.runCommand('返回列表'));
   await page.waitForFunction(() => document.querySelector('#library').classList.contains('active'));
   const beforeNotes = await page.evaluate(async () => (await (await import('./knowledge.js')).listNotes()).length);
-  await page.evaluate(() => window.__app.runCommand('记笔记：自然指令比翻菜单更直觉'));
+  await page.evaluate(() => window.__app.runCommand('我有想法：自然指令比翻菜单更直觉'));
   const afterNotes = await page.evaluate(async () => (await (await import('./knowledge.js')).listNotes()).length);
   assert.equal(afterNotes, beforeNotes + 1);
-  report.checks.push('Long-press bottom hairline opens whisper command bar; compound natural commands (dark + 星海 + 暮色 + 2.5D, 1-tap undo, open book, enlarge font + eye-care + kai + loose line-height + page turn + quick note) execute offline with zero AI clutter');
+  report.checks.push('Chained 6-step voice command, fuzzy ASR book match (黄仁勋的再记->黄仁勋传), ordinal books, dark multi-paragraph highlight, 3-pill select bar, E-Ink, Left-Hand, Scrolled flow, and Traditional Vertical-RL typography all verified');
 
   for (const width of [390, 1100]) {
     await page.setViewport({ width, height: 844 });

@@ -5,6 +5,7 @@ import {
   makeTitle, parseTags, saveNote, suggestTags, unlinkPair
 } from './knowledge.js';
 import { Cosmos, layoutCosmos, magLabel } from './cosmos.js';
+import { fuzzyScore } from './command.js';
 
 const $ = s => document.querySelector(s);
 const state = { notes: [], links: [], filter: { q: '', kind: 'all', tag: '' }, editing: null, focusId: null, ai: null };
@@ -188,9 +189,60 @@ async function reopenKeeping(id) {
   await refreshWorkspace();
   await openEditor(id, keep);
 }
+let autoSaveTimer = null;
+let draftDirty = false;
+let draftStatusEl = null;
+let editorRec = null;
+
+function stopEditorDictation() {
+  if (editorRec) { try { editorRec.stop(); } catch {} editorRec = null; }
+  const nv = window.Capacitor?.Plugins?.ZoneVoice;
+  if (nv) { try { nv.stopListening(); } catch {} }
+  $('#editor-mic')?.classList.remove('listening');
+}
+
+async function flushDraft() {
+  clearTimeout(autoSaveTimer);
+  autoSaveTimer = null;
+  const draft = state.editing;
+  if (!draft || !draftDirty) return;
+  const rawTitle = (draft.title || '').trim();
+  const rawBody = (draft.body || '').trim();
+  const rawQuote = (draft.quote || '').trim();
+  if (!draft.id && !rawTitle && !rawBody && !rawQuote) { draftDirty = false; return; }
+  draftDirty = false;
+  const title = rawTitle || makeTitle(rawQuote || rawBody || '未命名');
+  const payload = { ...draft, title, tags: draft.tags || [] };
+  try {
+    if (draft.id) {
+      await saveNote(payload);
+    } else {
+      const created = await createNote(payload);
+      if (created?.id) draft.id = created.id;
+    }
+    state.notes = await listNotes();
+    state.links = await listLinks();
+    renderNotes();
+    if ($('#pane-graph')?.classList.contains('on')) renderGraph(false);
+    if (draftStatusEl) draftStatusEl.textContent = '已自动保存';
+  } catch (err) {
+    console.warn(err);
+  }
+}
+
+function scheduleAutoSave() {
+  draftDirty = true;
+  if (draftStatusEl) draftStatusEl.textContent = '正在保存…';
+  clearTimeout(autoSaveTimer);
+  autoSaveTimer = setTimeout(() => flushDraft(), 450);
+}
+
 export async function openEditor(id, keep) {
   const host = $('#note-editor');
   if (!host) return;
+  stopEditorDictation();
+  clearTimeout(autoSaveTimer);
+  draftDirty = false;
   const note = id ? state.notes.find(n => n.id === id) : null;
   state.editing = note ? { ...note, tags: [...(note.tags || [])] } : {
     id: null, title: '', body: '', quote: '', tags: [], kind: 'note', concept: false, bookId: null, bookTitle: '', passageId: null
@@ -210,38 +262,87 @@ export async function openEditor(id, keep) {
   const back = h('button', 'texty', '返回');
   back.type = 'button';
   back.onclick = () => closeEditor();
-  const save = h('button', 'btn primary', '保存');
-  save.type = 'button';
-  save.onclick = () => commitEditor();
-  bar.append(back, h('span', 'editor-kicker', draft.id ? '编辑笔记' : '新笔记'), save);
+  draftStatusEl = h('span', 'editor-kicker', draft.id ? '已自动保存' : '');
+  const mic = h('button', 'icon editor-mic');
+  mic.id = 'editor-mic';
+  mic.type = 'button';
+  mic.setAttribute('aria-label', '语音记录到笔记');
+  mic.title = '直接说话记入笔记';
+  mic.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="4" width="6" height="10" rx="3"/><path d="M6.5 11.5a5.5 5.5 0 0 0 11 0M12 17v3.2M9 20.2h6"/></svg>';
+  bar.append(back, draftStatusEl, mic);
 
   const title = h('input', 'editor-title');
   title.value = draft.title || '';
   title.placeholder = '标题';
-  title.oninput = () => { draft.title = title.value; };
-
-  const quote = h('textarea', 'editor-quote');
-  quote.rows = 3;
-  quote.placeholder = '摘录，可以留空';
-  quote.value = draft.quote || '';
-  quote.readOnly = !!draft.passageId;
-  quote.oninput = () => { draft.quote = quote.value; };
+  title.oninput = () => { draft.title = title.value; scheduleAutoSave(); };
 
   const body = h('textarea', 'editor-body');
-  body.rows = 8;
-  body.placeholder = '想法、批注，或用 [[另一条笔记的标题]] 建立关联';
+  body.rows = 10;
+  body.placeholder = '写下想法，或点右上角直接口述，输入 [[标题]] 自动关联…';
   body.value = draft.body || '';
-  body.oninput = () => { draft.body = body.value; };
+  body.oninput = () => { draft.body = body.value; scheduleAutoSave(); };
+
+  const appendSpoken = text => {
+    const s = String(text || '').trim();
+    if (!s) return;
+    draft.body = draft.body ? draft.body.trimEnd() + '\n' + s : s;
+    body.value = draft.body;
+    scheduleAutoSave();
+  };
+  mic.onclick = async () => {
+    if (mic.classList.contains('listening')) { stopEditorDictation(); return; }
+    const nv = window.Capacitor?.Plugins?.ZoneVoice;
+    if (nv) {
+      mic.classList.add('listening');
+      let handle = null;
+      const cleanup = () => { mic.classList.remove('listening'); try { handle?.remove?.(); } catch {} };
+      try {
+        handle = await nv.addListener('result', ev => {
+          if (!ev?.wake && ev?.text) appendSpoken(ev.text);
+          cleanup();
+        });
+        const res = await nv.startListening();
+        if (!res?.started) {
+          cleanup();
+          api.toast(res?.code === 'NO_PERMISSION' ? '请在系统设置开启麦克风权限' : '可直接用输入法语音或键盘输入');
+          body.focus();
+        }
+      } catch {
+        cleanup();
+        body.focus();
+      }
+      return;
+    }
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) { api.toast('可直接用键盘语音或打字，内容会自动保存'); body.focus(); return; }
+    try {
+      const rec = new SR();
+      rec.lang = 'zh-CN';
+      rec.continuous = false;
+      rec.interimResults = false;
+      rec.onstart = () => mic.classList.add('listening');
+      rec.onresult = e => {
+        const t = e.results?.[0]?.[0]?.transcript || '';
+        if (t) appendSpoken(t);
+      };
+      rec.onend = () => { editorRec = null; mic.classList.remove('listening'); };
+      rec.onerror = () => { editorRec = null; mic.classList.remove('listening'); };
+      editorRec = rec;
+      rec.start();
+    } catch {
+      mic.classList.remove('listening');
+    }
+  };
 
   const tagRow = h('div', 'tag-editor');
   const tagInput = h('input');
-  tagInput.placeholder = '添加标签';
+  tagInput.placeholder = '# 添加标签';
   const paintTags = () => {
     tagRow.replaceChildren();
     for (const tag of draft.tags) {
-      const chip = h('button', 'chip on', tag + ' ×');
+      const chip = h('button', 'chip on', '#' + tag + ' ×');
       chip.type = 'button';
-      chip.onclick = () => { draft.tags = draft.tags.filter(t => t !== tag); paintTags(); };
+      chip.onclick = () => { draft.tags = draft.tags.filter(t => t !== tag); paintTags(); scheduleAutoSave(); };
       tagRow.appendChild(chip);
     }
     tagRow.appendChild(tagInput);
@@ -254,83 +355,109 @@ export async function openEditor(id, keep) {
     }
     tagInput.value = '';
     paintTags();
+    scheduleAutoSave();
   };
   paintTags();
 
-  const concept = h('label', 'checkline');
-  const box = document.createElement('input');
-  box.type = 'checkbox';
-  box.checked = !!draft.concept;
-  box.onchange = () => { draft.concept = box.checked; };
-  concept.append(box, document.createTextNode('当作一个概念，在图谱里突出显示'));
-
-  host.append(bar, title, quote, body, tagRow, concept, h('p', 'editor-hint', '正文中的 [[笔记标题]] 会在保存时连到同名笔记。标签来自你的标注，也可以自己加。'));
+  host.append(bar, title);
+  if (draft.quote) {
+    const quote = h('blockquote', 'editor-quote-card', draft.quote);
+    host.appendChild(quote);
+  }
+  host.append(body, tagRow);
 
   if (draft.bookId && draft.passageId) {
-    const jump = h('button', 'texty', '回到《' + (draft.bookTitle || '原书') + '》');
+    const jump = h('button', 'texty editor-src', '来自《' + (draft.bookTitle || '原书') + '》 · 回到原文');
     jump.type = 'button';
     jump.onclick = () => api.openPassage(draft.bookId, draft.passageId);
     host.appendChild(jump);
   }
 
-  const tools = h('div', 'editor-tools');
-  const aiBtn = h('button', 'btn ghost', 'AI 解释');
-  aiBtn.type = 'button';
-  aiBtn.onclick = () => openAssistant({
-    title: draft.title, quote: draft.quote || draft.body, context: draft.body || '',
-    bookId: draft.bookId, bookTitle: draft.bookTitle, linkTo: draft.id || null
-  });
-  const pointBtn = h('button', 'btn ghost', '本地要点');
-  pointBtn.type = 'button';
-  pointBtn.onclick = () => {
-    const points = extractKeyPoints(draft.quote || draft.body || draft.title);
-    if (!points.length) return api.toast('没有足够的文字');
-    const block = points.map(p => '· ' + p).join('\n');
-    draft.body = draft.body ? draft.body + '\n\n' + block : block;
-    body.value = draft.body;
-    api.toast('已把要点写进笔记');
-  };
-  tools.append(aiBtn, pointBtn);
-  host.appendChild(tools);
-
-  const relHead = h('h3', 'rel-head', '关联');
-  host.appendChild(relHead);
   const rel = relatedOf(draft.id);
-  if (!draft.id) host.appendChild(h('p', 'editor-hint', '先保存这条笔记，再把它和其他笔记连起来。'));
-  else if (!rel.length) host.appendChild(h('p', 'editor-hint', '还没有关联。在下面选择另一条笔记，或在正文写 [[标题]]。'));
-  for (const item of rel) {
-    const row = h('div', 'rel-row');
-    const open = h('button', 'texty', item.note.title || '未命名');
-    open.type = 'button';
-    open.onclick = () => openEditor(item.note.id);
-    const cut = h('button', 'texty danger', '断开');
-    cut.type = 'button';
-    cut.onclick = async () => { await unlinkPair(draft.id, item.note.id); await reopenKeeping(draft.id); };
-    row.append(open, cut);
-    host.appendChild(row);
-  }
-  if (draft.id) {
-    const picker = h('div', 'link-picker');
-    const sel = document.createElement('select');
-    sel.appendChild(new Option('选择要关联的笔记', ''));
-    for (const other of state.notes) {
-      if (other.id === draft.id || rel.some(item => item.note.id === other.id)) continue;
-      sel.appendChild(new Option(other.title || '未命名', other.id));
+  const candidates = draft.id ? state.notes.filter(other => other.id !== draft.id && !rel.some(item => item.note.id === other.id)) : [];
+  if (draft.id && (rel.length || candidates.length)) {
+    const relSec = h('section', 'rel-section');
+    if (rel.length) {
+      const relList = h('div', 'rel-list');
+      for (const item of rel) {
+        const card = h('div', 'rel-item kind-' + kindOf(item.note));
+        const open = h('button', 'rel-open');
+        open.type = 'button';
+        const top = h('span', 'rel-open-title', item.note.title || '未命名');
+        const sub = h('span', 'rel-open-sub', [kindLabel(item.note), item.note.bookTitle ? '《' + item.note.bookTitle + '》' : ''].filter(Boolean).join(' · '));
+        open.append(top, sub);
+        open.onclick = () => openEditor(item.note.id);
+        const cut = h('button', 'rel-cut', '×');
+        cut.type = 'button';
+        cut.title = '断开关联';
+        cut.setAttribute('aria-label', '断开关联');
+        cut.onclick = async () => { await unlinkPair(draft.id, item.note.id); await reopenKeeping(draft.id); };
+        card.append(open, cut);
+        relList.appendChild(card);
+      }
+      relSec.appendChild(relList);
     }
-    const add = h('button', 'btn ghost', '建立关联');
-    add.type = 'button';
-    add.onclick = async () => {
-      if (!sel.value) return api.toast('先选择一条笔记');
-      await linkNotes(draft.id, sel.value);
-      await reopenKeeping(draft.id);
-      api.toast('已建立关联');
-    };
-    picker.append(sel, add);
-    host.appendChild(picker);
+
+    if (candidates.length) {
+      const trigger = h('button', 'rel-add-trigger', '+ 关联笔记');
+      trigger.type = 'button';
+      const picker = h('div', 'link-picker hidden');
+      const searchBox = h('div', 'link-search-wrap');
+      searchBox.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.4"/><path d="M20 20l-4.3-4.3"/></svg>';
+      const filterInput = h('input', 'link-search');
+      filterInput.type = 'search';
+      filterInput.placeholder = '输入关键词，轻点笔记即关联';
+      filterInput.setAttribute('aria-label', '搜索要关联的笔记');
+      searchBox.appendChild(filterInput);
+      const candList = h('div', 'link-cands');
+      const renderCands = () => {
+        const q = filterInput.value.trim();
+        let list = candidates;
+        if (q) {
+          list = candidates
+            .map(n => ({ n, sc: Math.max(fuzzyScore(n.title, q) * 1.2, fuzzyScore((n.quote || '') + ' ' + (n.body || '').slice(0, 120), q) * 0.8) }))
+            .filter(x => x.sc > 0)
+            .sort((a, b) => b.sc - a.sc)
+            .map(x => x.n);
+        }
+        candList.replaceChildren();
+        const shown = list.slice(0, 6);
+        if (!shown.length) {
+          candList.appendChild(h('p', 'link-empty', '没有匹配的笔记'));
+          return;
+        }
+        for (const other of shown) {
+          const btn = h('button', 'link-cand kind-' + kindOf(other));
+          btn.type = 'button';
+          const info = h('span', 'link-cand-info');
+          info.append(
+            h('span', 'link-cand-title', other.title || '未命名'),
+            h('span', 'link-cand-sub', [kindLabel(other), other.bookTitle ? '《' + other.bookTitle + '》' : ''].filter(Boolean).join(' · '))
+          );
+          btn.append(info);
+          btn.onclick = async () => {
+            await linkNotes(draft.id, other.id);
+            await reopenKeeping(draft.id);
+            api.toast('已建立关联');
+          };
+          candList.appendChild(btn);
+        }
+      };
+      filterInput.oninput = renderCands;
+      trigger.onclick = () => {
+        const show = picker.classList.contains('hidden');
+        picker.classList.toggle('hidden', !show);
+        trigger.textContent = show ? '收起' : '+ 关联笔记';
+        if (show) { renderCands(); filterInput.focus({ preventScroll: true }); }
+      };
+      picker.append(searchBox, candList);
+      relSec.append(trigger, picker);
+    }
+    host.appendChild(relSec);
   }
 
   if (draft.id) {
-    const danger = h('button', 'texty danger', '删除这条笔记');
+    const danger = h('button', 'editor-del', '删除');
     danger.type = 'button';
     danger.onclick = async () => {
       if (!confirm('删除这条笔记？书里对应的划线或摘录也会去掉。')) return;
@@ -346,21 +473,12 @@ export async function openEditor(id, keep) {
   title.focus();
 }
 
-function closeEditor() {
+async function closeEditor() {
+  stopEditorDictation();
+  await flushDraft();
   state.editing = null;
+  draftStatusEl = null;
   $('#note-editor')?.classList.add('hidden');
-}
-
-async function commitEditor() {
-  const draft = state.editing;
-  if (!draft) return;
-  const title = (draft.title || '').trim() || makeTitle(draft.quote || draft.body || '未命名');
-  const payload = { ...draft, title, tags: draft.tags || [] };
-  if (draft.id) await saveNote(payload);
-  else await createNote(payload);
-  closeEditor();
-  await refreshWorkspace();
-  api.toast('已保存到知识库');
 }
 
 /* ---------- 星海：深空知识地图 ---------- */
@@ -374,6 +492,7 @@ let graphSig = '';
 let graphMood = (() => {
   try { const m = localStorage.getItem(MOOD_KEY); return MOOD_CYCLE.includes(m) ? m : 'auto'; } catch { return 'auto'; }
 })();
+let graphTilt = false;
 
 function syncMoodButton() {
   const lbl = $('#graph-mood .menu-label');
@@ -381,16 +500,16 @@ function syncMoodButton() {
 }
 
 export function getGraphMood() { return graphMood; }
-export function getGraphTilt() { return $('#graph-tilt')?.getAttribute('aria-pressed') === 'true'; }
+export function getGraphTilt() { return graphTilt; }
 export function setGraphTilt(on) {
+  graphTilt = !!on;
   const btn = $('#graph-tilt');
-  const next = !!on;
   if (btn) {
-    btn.setAttribute('aria-pressed', next ? 'true' : 'false');
+    btn.setAttribute('aria-pressed', graphTilt ? 'true' : 'false');
     const lbl = btn.querySelector('.menu-label');
-    if (lbl) lbl.textContent = next ? '平视星图' : '2.5D 立体';
+    if (lbl) lbl.textContent = graphTilt ? '平视星图' : '2.5D 立体';
   }
-  ensureCosmos()?.setTilt(next);
+  ensureCosmos()?.setTilt(graphTilt);
 }
 export function openAiSettingsDialog() { openAiSettings(); }
 export function searchGraph(q) {
@@ -523,6 +642,86 @@ export function fitGraph() {
 }
 
 function zoomBy(factor) { ensureCosmos()?.zoomBy(factor); }
+export function zoomGraph(factor) { zoomBy(factor); }
+
+let tourCursor = 0;
+export function exploreCosmos(mode = 'tour') {
+  renderGraph(false);
+  const stars = cosmosModel?.stars || [];
+  if (!stars.length) return null;
+  let pool = stars;
+  if (mode === 'frontier') {
+    const f = stars.filter(s => s.frontier);
+    if (f.length) pool = f;
+  } else {
+    const rank = s => (s.mag === 'beacon' ? 3 : s.mag === 'star' ? 2 : 1) * 10 + (s.links || 0);
+    pool = stars.slice().sort((a, b) => rank(b) - rank(a));
+  }
+  const curIdx = pool.findIndex(s => s.id === state.focusId);
+  const nextIdx = curIdx >= 0 ? (curIdx + 1) % pool.length : (tourCursor++) % pool.length;
+  const pick = pool[nextIdx] || pool[0];
+  if (!pick) return null;
+  selectGraphNode(pick.id, true);
+  return { id: pick.id, title: pick.title, sector: pick.frontier ? '未测绘暗域' : pick.sector, links: pick.links || 0, frontier: !!pick.frontier };
+}
+
+export function focusStarByQuery(query) {
+  renderGraph(false);
+  const q = String(query || '').trim();
+  const stars = cosmosModel?.stars || [];
+  if (!q || !stars.length) return null;
+  let best = null, bestScore = 0;
+  for (const s of stars) {
+    const n = state.notes.find(x => x.id === s.id);
+    const score = Math.max(
+      fuzzyScore(s.title, q) * 1.15,
+      fuzzyScore(s.sector || '', q),
+      ...(s.tags || []).map(t => fuzzyScore(t, q)),
+      n ? fuzzyScore((n.quote || '') + ' ' + (n.body || '').slice(0, 120), q) * 0.72 : 0
+    );
+    if (score > bestScore) { bestScore = score; best = s; }
+  }
+  if (!best || bestScore < 75) return null;
+  selectGraphNode(best.id, true);
+  return { id: best.id, title: best.title, sector: best.frontier ? '未测绘暗域' : best.sector };
+}
+
+export function focusGraphNeighborhood() {
+  renderGraph(false);
+  const c = ensureCosmos();
+  const stars = cosmosModel?.stars || [];
+  if (!c || !stars.length) return null;
+  let id = state.focusId;
+  if (!id || !stars.some(s => s.id === id)) {
+    const top = stars.find(s => s.links > 0) || stars[0];
+    id = top.id;
+    selectGraphNode(id, false);
+  }
+  c.focusNeighborhood(id);
+  const st = stars.find(s => s.id === id);
+  return st ? { title: st.title, links: st.links || 0 } : null;
+}
+
+export async function linkFocusedStarTo(targetQuery) {
+  renderGraph(false);
+  const stars = cosmosModel?.stars || [];
+  if (!state.focusId || !stars.length) return { ok: false, reason: 'no-focus' };
+  const q = String(targetQuery || '').trim();
+  let target = null, bestScore = 0;
+  for (const s of stars) {
+    if (s.id === state.focusId) continue;
+    const score = Math.max(fuzzyScore(s.title, q) * 1.15, fuzzyScore(s.sector || '', q), ...(s.tags || []).map(t => fuzzyScore(t, q)));
+    if (score > bestScore) { bestScore = score; target = s; }
+  }
+  if (!target || bestScore < 75) return { ok: false, reason: 'not-found' };
+  const from = stars.find(s => s.id === state.focusId);
+  await linkNotes(state.focusId, target.id);
+  await refreshWorkspace();
+  renderGraph(false);
+  selectGraphNode(state.focusId, false);
+  ensureCosmos()?.focusNeighborhood(state.focusId);
+  return { ok: true, from: from?.title || '', to: target.title };
+}
 
 export function setGraphSearch(open) {
   const row = $('#graph-search-row');
@@ -675,15 +874,29 @@ export function workspaceHandleBack() {
   return false;
 }
 
-async function exportOutline() {
+export async function exportOutline() {
   const notes = filteredNotes();
-  if (!notes.length) { api.toast('没有可以导出的笔记'); return; }
+  if (!notes.length) { api.toast('没有可以导出的笔记'); return false; }
   const md = notes.map(note => {
     const tags = (note.tags || []).map(tag => '#' + tag).join(' ');
     return ['## ' + (note.title || '未命名'), tags, note.quote ? '> ' + note.quote : '', note.body || ''].filter(Boolean).join('\n\n');
   }).join('\n\n---\n\n');
   const ok = await api.copyText(md);
   api.toast(ok ? '已复制大纲，可以贴进写作' : '复制失败');
+  return ok;
+}
+
+export async function createDecisionNote() {
+  const note = await createNote({
+    title: '一次判断',
+    kind: 'note',
+    tags: [],
+    body: '## 问题\n\n\n## 手里的材料\n\n\n## 判断\n\n'
+  });
+  await refreshWorkspace();
+  showPane('knowledge');
+  openEditor(note.id);
+  return note;
 }
 
 export function initWorkspace(nextApi) {
@@ -692,17 +905,7 @@ export function initWorkspace(nextApi) {
     btn.addEventListener('click', () => showPane(btn.dataset.pane));
   });
   $('#btn-new-note')?.addEventListener('click', () => { showPane('knowledge'); openEditor(null); });
-  $('#btn-new-decision')?.addEventListener('click', async () => {
-    const note = await createNote({
-      title: '一次判断',
-      kind: 'note',
-      tags: [],
-      body: '## 问题\n\n\n## 手里的材料\n\n\n## 判断\n\n'
-    });
-    await refreshWorkspace();
-    showPane('knowledge');
-    openEditor(note.id);
-  });
+  $('#btn-new-decision')?.addEventListener('click', () => createDecisionNote());
   $('#btn-export-notes')?.addEventListener('click', () => exportOutline());
   $('#note-search')?.addEventListener('input', e => { state.filter.q = e.target.value; renderNotes(); });
   $('#note-search-clear')?.addEventListener('click', () => {

@@ -362,11 +362,17 @@ function buildWorldField(model, theme) {
     x0 = Math.min(x0, s.x - s.R); x1 = Math.max(x1, s.x + s.R);
     y0 = Math.min(y0, s.y - s.R); y1 = Math.max(y1, s.y + s.R);
   }
-  const pad = 380;
+  const pad = 460;
   x0 -= pad; x1 += pad; y0 -= pad; y1 += pad;
   const W = x1 - x0, H = y1 - y0;
   const GW = 156, GH = clamp(Math.round(GW * H / W), 108, 192);
   const fbm = makeNoise(20261120 ^ hash(sectors.map(s => s.name).join('|')));
+  const radEdge = (gx, gy) => {
+    const rx = (gx / (GW - 1) - 0.5) * 2;
+    const ry = (gy / (GH - 1) - 0.5) * 2;
+    const r = Math.hypot(rx, ry) + (fbm(gx * 0.036 + 1.7, gy * 0.036 + 3.1, 2) - 0.5) * 0.28;
+    return smoothstep(0.95, 0.34, r);
+  };
   const rnd = seeded(90412026 ^ hash(stars.map(s => s.id).join('|')));
   const byId = new Map(stars.map(s => [s.id, s]));
   const chartedSectors = sectors.filter(s => !s.frontier);
@@ -413,9 +419,7 @@ function buildWorldField(model, theme) {
         const dx = wx - l.mx, dy = wy - l.my;
         p += Math.exp(-(dx * dx + dy * dy) * l.inv) * 0.26;
       }
-      const ex = Math.min(ix / (GW * 0.22), (GW - 1 - ix) / (GW * 0.22), 1);
-      const ey = Math.min(iy / (GH * 0.22), (GH - 1 - iy) / (GH * 0.22), 1);
-      const edge = smoothstep(0, 1, Math.min(ex, ey));
+      const edge = radEdge(ix, iy);
       const v = p * edge;
       const gi = iy * GW + ix;
       pot[gi] = v;
@@ -475,9 +479,7 @@ function buildWorldField(model, theme) {
   for (let sy = 6; sy < GH - 6; sy += 5.4) {
     for (let sx = 6; sx < GW - 6; sx += 5.4) {
       const gx = sx + (rnd() - 0.5) * 4.5, gy = sy + (rnd() - 0.5) * 4.5;
-      const ex = Math.min(gx / (GW * 0.22), (GW - gx) / (GW * 0.22), 1);
-      const ey = Math.min(gy / (GH * 0.22), (GH - gy) / (GH * 0.22), 1);
-      const edge = smoothstep(0, 1, Math.min(ex, ey));
+      const edge = radEdge(gx, gy);
       const v = samplePot(gx, gy);
       if (v < 0.05 || rnd() > 0.72 * edge) continue;
       const gi = clamp(Math.floor(gy), 0, GH - 1) * GW + clamp(Math.floor(gx), 0, GW - 1);
@@ -499,9 +501,7 @@ function buildWorldField(model, theme) {
     for (let sx = 5; sx < GW - 5; sx += stepGrid) {
       const gx = sx + (rnd() - 0.5) * stepGrid * 0.94;
       const gy = sy + (rnd() - 0.5) * stepGrid * 0.94;
-      const ex = Math.min(gx / (GW * 0.2), (GW - gx) / (GW * 0.2), 1);
-      const ey = Math.min(gy / (GH * 0.2), (GH - gy) / (GH * 0.2), 1);
-      const edge = smoothstep(0, 1, Math.min(ex, ey));
+      const edge = radEdge(gx, gy);
       const v = samplePot(gx, gy);
       const cloud = fbm(gx * 0.042 + 2.3, gy * 0.042 + 5.1, 3);
       const keep = (smoothstep(0.04, 0.36, v) * 0.68 + cloud * 0.42) * edge;
@@ -1235,16 +1235,28 @@ export class Cosmos {
   paintSky(t, animate) {
     const g = this.skyCtx, dpr = this.dpr, W = this.SW, H = this.SH;
     const th = this.theme;
+    // 深空多层景深视差：缩放和平移时天穹以更柔和的比率随之呼吸伸缩，避免前景星云像孤立平面漂浮
+    const skyScale = 1.07 + clamp((this.cam.k - 0.72) * 0.08, -0.02, 0.16);
+    const maxShiftX = this.sky.width * (skyScale - 1) * 0.45;
+    const maxShiftY = this.sky.height * (skyScale - 1) * 0.45;
+    const panX = clamp(this.cam.x * dpr * 0.024, -maxShiftX, maxShiftX);
+    const panY = clamp(this.cam.y * dpr * 0.024, -maxShiftY, maxShiftY);
+    const drawSkyLayer = img => {
+      const dw = this.sky.width * skyScale, dh = this.sky.height * skyScale;
+      const dx = (this.sky.width - dw) / 2 + panX;
+      const dy = (this.sky.height - dh) / 2 + panY;
+      g.drawImage(img, dx, dy, dw, dh);
+    };
     g.setTransform(1, 0, 0, 1, 0, 0);
     if (this.moodFade && this.moodFade.prevBg) {
       const p = clamp((t - this.moodFade.t0) / this.moodFade.dur, 0, 1);
       const e = p * p * (3 - 2 * p);
-      g.drawImage(this.moodFade.prevBg, 0, 0, this.sky.width, this.sky.height);
+      drawSkyLayer(this.moodFade.prevBg);
       g.globalAlpha = e;
-      g.drawImage(this.bg, 0, 0);
+      drawSkyLayer(this.bg);
       g.globalAlpha = 1;
     } else {
-      g.drawImage(this.bg, 0, 0);
+      drawSkyLayer(this.bg);
     }
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
 
@@ -1268,8 +1280,9 @@ export class Cosmos {
         g.quadraticCurveTo(x0 + dx * 0.5 - dy * 0.14, y0 + dy * 0.5 + dx * 0.14, x0 + dx, y0 + dy);
         g.stroke();
       }
-      // 日/月柔和呼吸光潮
-      const ox = W * th.orbX, oy = H * th.orbY;
+      // 日/月柔和呼吸光潮（同步随天穹视差微动）
+      const ox = W * 0.5 + (W * (th.orbX - 0.5)) * skyScale + panX / dpr;
+      const oy = H * 0.5 + (H * (th.orbY - 0.5)) * skyScale + panY / dpr;
       const pulse = 0.5 + 0.5 * Math.sin(t * 0.0009);
       const hr = clamp(Math.min(W, H) * 0.16, 56, 110) * (0.94 + pulse * 0.12);
       const og = g.createRadialGradient(ox, oy, 0, ox, oy, hr);
@@ -1279,12 +1292,15 @@ export class Cosmos {
       g.beginPath(); g.arc(ox, oy, hr, 0, TAU); g.fill();
     }
 
-    // 2. 随四时明暗自适应的远景繁星
+    // 2. 随四时明暗自适应的三层远景繁星（独立缩放视差，呈现真正深空纵深）
     const sa = th.starAlpha;
     for (const L of this.field) {
       const ox = this.cam.x * L.f, oy = this.cam.y * L.f;
+      const zMul = 1 + clamp((this.cam.k - 1) * L.f * 3.4, -0.18, 0.42);
       for (const s of L.stars) {
-        const x = ((s.x * W + ox) % W + W) % W, y = ((s.y * H + oy) % H + H) % H;
+        const rx = (s.x - 0.5) * W * zMul + W * 0.5 + ox;
+        const ry = (s.y - 0.5) * H * zMul + H * 0.5 + oy;
+        const x = ((rx % W) + W) % W, y = ((ry % H) + H) % H;
         const tw = animate ? 0.72 + 0.28 * Math.sin(t * 0.0012 * s.sp + s.ph) : 1;
         g.fillStyle = `hsla(${s.h},${s.sat}%,92%,${(s.a * tw * sa).toFixed(3)})`;
         if (s.s > 1.5) {
