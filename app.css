@@ -704,6 +704,14 @@ body.theme-night .textLayer span.rr-mark.an{background:rgba(10,132,255,.35)}
 .confirm-cancel{background:var(--app-fill);color:var(--app-fg)}
 .confirm-ok{background:var(--app-fg);color:var(--app-bg)}
 
+/* 20 秒护眼远眺呼吸小憩（零按钮，轻触任意处即回到原文） */
+.eye-rest-mask{position:fixed;inset:0;z-index:97;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;padding:24px;background:radial-gradient(circle at 50% 42%,#24302c 0%,#141a18 68%,#0c100f 100%);color:#eef2ee;text-align:center;cursor:pointer;user-select:none;animation:fadeIn .45s ease-out}
+.eye-rest-mask.hidden{display:none}
+.eye-rest-orb{width:118px;height:118px;border-radius:50%;background:radial-gradient(circle at 38% 36%,rgba(205,228,210,.82),rgba(136,178,154,.28) 58%,transparent 76%);box-shadow:0 0 60px rgba(154,196,170,.24);animation:eyeBreath 8s ease-in-out infinite}
+@keyframes eyeBreath{0%,100%{transform:scale(.82);opacity:.68}45%{transform:scale(1.16);opacity:1}}
+.eye-rest-title{margin:8px 0 0;font-family:var(--serif);font-size:20px;font-weight:500;letter-spacing:.08em;color:rgba(242,247,242,.92)}
+.eye-rest-sub{margin:0;font-size:13px;letter-spacing:.08em;color:rgba(210,224,214,.62)}
+
 @media (prefers-reduced-motion:reduce){
   *,*::before,*::after{animation:none!important;transition:none!important}
 }

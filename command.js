@@ -5,7 +5,7 @@ import { aiConfigured, complete, transcribeAudio } from './ai.js';
 
 const WAKE_KEY = 'rr-voice-wake';
 const WAKE_RE = /^(?:hey\s+|hi\s+|你好\s*)?(?:zone|小域|小雨|小玉|小宇|小余|宗)[，,、。\s]*(.*)$/i;
-const RESERVED_OPEN = /^(?:目录|书签|星海|星图|知识|笔记|摘录|护眼|深色|浅色|夜间|日间|双语|对照|翻译|语音|唤醒|立体|全图|设置|整理|搜索|AI)/i;
+const RESERVED_OPEN = /^(?:目录|书签|星海|星图|知识|笔记|摘录|护眼|深色|浅色|夜间|日间|双语|对照|翻译|语音|唤醒|立体|全图|设置|整理|搜索|AI|左手|左撇子|右手|右撇子|墨水屏|竖排|横排|舒眼|休息|朗读|听书)/i;
 
 const SpeechRec = typeof window !== 'undefined'
   ? (window.SpeechRecognition || window.webkitSpeechRecognition || null)
@@ -257,10 +257,26 @@ function parseSingleClause(rawClause, ctx = {}) {
     ops.push({ op: 'eink', on: true });
   }
 
-  if (/(?:关|关闭|关掉|取消|退出).{0,4}(?:左手|左撇子)|(?:右手模式|恢复右手|切换右手|惯用右手)/.test(text)) {
+  if (/(?:关|关闭|关掉|取消|退出).{0,4}(?:左手|左撇子)|(?:右手模式|右撇子|右手习惯|右手阅读|右手操作|恢复右手|切换右手|惯用右手|开右手)/.test(text)) {
     ops.push({ op: 'leftHand', on: false });
   } else if (/(?:左手模式|左撇子|左手习惯|左手阅读|左手操作|切换左手|开左手)/.test(text)) {
     ops.push({ op: 'leftHand', on: true });
+  }
+
+  // 10b. 缓解视觉疲劳：舒眼一键排版 / 20 秒远眺呼吸小憩 / 闭眼听书朗读
+  if (/(?:眼睛累|看累了|视觉疲劳|缓解疲劳|舒眼模式|柔和一点|放松眼睛)/.test(text)) {
+    ops.push({ op: 'eyeComfort' });
+  }
+  if (/(?:休息一下|护眼小憩|远眺休息|歇一会|歇一会儿)/.test(text)) {
+    ops.push({ op: 'eyeRest' });
+    return ops;
+  }
+  if (/(?:停止|关闭|关掉|取消|别|不要).{0,3}(?:朗读|听书|读了|语音阅读)/.test(text)) {
+    ops.push({ op: 'tts', on: false });
+    return ops;
+  } else if (/(?:读给我听|开始朗读|朗读这一?页|朗读|听书模式|听书|帮我读)/.test(text)) {
+    ops.push({ op: 'tts', on: true });
+    return ops;
   }
 
   if (/(?:上下翻页|上下滚动|竖向翻页|滚动阅读|上下滑动)/.test(text)) {

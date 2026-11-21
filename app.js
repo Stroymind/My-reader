@@ -1181,16 +1181,23 @@ $('#btn-delete-picked').onclick = async () => {
   const done = await deleteBooks(books.filter(b => picked.has(b.id)));
   if (done && !picked.size) exitPick();
 };
+let importHideTimer = null;
+const scheduleImportHide = (ms = 4200) => {
+  clearTimeout(importHideTimer);
+  importHideTimer = setTimeout(() => $('#import-status')?.classList.add('hidden'), ms);
+};
+$('#import-status')?.addEventListener('click', () => { clearTimeout(importHideTimer); $('#import-status')?.classList.add('hidden'); });
 $('#file-input').onchange = async e => {
   showShelfPage();
   const files = Array.from(e.target.files || []); e.target.value = '';
   if (!files.length) return;
   try { await navigator.storage?.persist?.(); } catch {}
+  clearTimeout(importHideTimer);
   const st = $('#import-status'); st.classList.remove('hidden');
   const onlyManifest = files.every(f => /\.json$/i.test(f.name));
   if (onlyManifest) {
     let n = 0; for (const f of files) { try { const m = parseManifest(JSON.parse(await f.text())); if (m) n += await applyManifestToLibrary(m); } catch {} }
-    st.textContent = `已为 ${n} 本书恢复阅读进度。`; renderLibrary(); return;
+    st.textContent = `已为 ${n} 本书恢复阅读进度。`; renderLibrary(); scheduleImportHide(3600); return;
   }
   const res = await importFiles(files, { pdfjsLib, onStatus: t => (st.textContent = t) });
   let msg = `导入完成：新增 ${res.added} 本`;
@@ -1200,6 +1207,7 @@ $('#file-input').onchange = async e => {
   if (res.fail.length) msg += `\n失败 ${res.fail.length} 个：\n` + res.fail.map(f => `· ${f.title}：${f.reason}`).join('\n');
   st.textContent = msg;
   renderLibrary();
+  scheduleImportHide(res.fail.length ? 5200 : 3800);
 };
 
 /* ---------------- 阅读器 ---------------- */
@@ -1356,6 +1364,7 @@ function closeBook() {
   closing = (async () => {
     viewGen++;
     autoPaceOn = false;
+    stopTts();
     clearTimeout(autoPaceTimer);
     clearTimeout(saveTimer);
     try { await persist(); } catch (e) { console.error(e); }
@@ -2010,6 +2019,56 @@ function pickVisiblePassage(eng, opts = {}) {
   };
 }
 
+let eyeRestTimer = null;
+function closeEyeRest() {
+  clearInterval(eyeRestTimer);
+  eyeRestTimer = null;
+  const m = $('#eye-rest-mask');
+  if (!m || m.classList.contains('hidden')) return false;
+  m.classList.add('hidden');
+  return true;
+}
+function openEyeRest(seconds = 20) {
+  const m = $('#eye-rest-mask');
+  const cnt = $('#eye-rest-count');
+  if (!m) return;
+  clearInterval(eyeRestTimer);
+  let left = seconds;
+  if (cnt) cnt.textContent = `${left}s · 轻触任意处返回`;
+  m.classList.remove('hidden');
+  eyeRestTimer = setInterval(() => {
+    left--;
+    if (left <= 0) { closeEyeRest(); toast('休息好了，继续阅读吧'); return; }
+    if (cnt) cnt.textContent = `${left}s · 轻触任意处返回`;
+  }, 1000);
+}
+$('#eye-rest-mask')?.addEventListener('click', () => closeEyeRest());
+
+let ttsActive = false;
+function stopTts() {
+  ttsActive = false;
+  try { window.speechSynthesis?.cancel(); } catch {}
+}
+function speakCurrentPage() {
+  if (!ttsActive || !engine) return;
+  const text = (engine.pageText?.() || '').replace(/\s+/g, ' ').trim();
+  if (!text) { stopTts(); return; }
+  if (!('speechSynthesis' in window)) { ttsActive = false; toast('当前环境不支持语音朗读'); return; }
+  try {
+    window.speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = isMostlyCjk(text) ? 'zh-CN' : 'en-US';
+    u.rate = 0.96;
+    u.onend = async () => {
+      if (!ttsActive || !engine || lastState?.atEnd) { ttsActive = false; return; }
+      await turn(1, true);
+      setTimeout(() => speakCurrentPage(), 350);
+    };
+    u.onerror = () => { ttsActive = false; };
+    window.speechSynthesis.speak(u);
+  } catch { ttsActive = false; }
+}
+
 command = createCommandController({
   toast,
   closeMenus: () => { closeIntent(false); closeStackMenus(false); closeBookPeek(); },
@@ -2073,6 +2132,24 @@ command = createCommandController({
         saveSettings();
         applyAppearance();
         return { label: settings.leftHand ? '已切到左手模式' : '已恢复右手模式', undoable: true };
+      }
+      case 'eyeComfort': {
+        settings.theme = 'sepia';
+        settings.lh = Math.max(settings.lh || 1.8, 2.1);
+        settings.size = Math.min(40, Math.max(21, (settings.size || 19) + 2));
+        await applyReaderPrefs();
+        return { label: '已切至舒眼柔和排版（护眼暖纸 · 宽松行距 · 放大字号）', undoable: true };
+      }
+      case 'eyeRest': {
+        openEyeRest(20);
+        return { label: '护眼远眺小憩 20 秒' };
+      }
+      case 'tts': {
+        if (!a.on) { stopTts(); return { label: '已停止朗读' }; }
+        if (!reading) return { label: '打开一本书后即可闭眼听书' };
+        ttsActive = true;
+        speakCurrentPage();
+        return { label: '已开始轻声朗读，闭上眼歇一会儿吧' };
       }
       case 'flow': {
         settings.flow = a.value === 'scrolled' ? 'scrolled' : 'paginated';

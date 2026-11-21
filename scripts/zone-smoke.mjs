@@ -959,8 +959,10 @@ try {
   assert.equal(await page.evaluate(() => document.documentElement.classList.contains('mode-eink')), false);
   await page.evaluate(() => window.__app.runCommand('开左手模式'));
   assert.equal(await page.evaluate(() => document.documentElement.classList.contains('left-hand')), true);
-  await page.evaluate(() => window.__app.runCommand('恢复右手'));
+  await page.evaluate(() => window.__app.runCommand('打开右撇子模式'));
   assert.equal(await page.evaluate(() => document.documentElement.classList.contains('left-hand')), false);
+  await page.evaluate(() => window.__app.runCommand('眼睛累了'));
+  assert.equal(await page.evaluate(async () => { const s = (await import('./settings.js')).settings; return s.theme === 'sepia' && s.lh >= 2.0; }), true);
   await page.evaluate(() => window.__app.runCommand('上下翻页'));
   assert.equal(await page.evaluate(() => document.body.classList.contains('flow-scrolled') && document.querySelector('.txtcols').classList.contains('scrolled')), true);
   await page.evaluate(() => window.__app.runCommand('竖排阅读'));
