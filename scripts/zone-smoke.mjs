@@ -1045,6 +1045,19 @@ try {
   assert.deepEqual(formatCheck.cmdStyleUi, { op: 'styleUi', prompt: '把背景变成浅墨绿' });
   report.checks.push('All-format offline importers (MOBI/AZW3, DOCX, Markdown, SRT/VTT transcripts, PNG/JPG visual booklets) + Voice Stack control + Direct Voice-to-AI + Live UI Styling verified');
 
+  // 「思潮 × Zone」独立判断闭环端到端验证：语音打开 -> 选事件 -> 独立判断 -> 解锁 AI 视角 -> 沉淀判断星 -> 判断档案
+  await page.evaluate(() => window.__app.runCommand('今日思潮'));
+  await page.waitForFunction(() => !document.querySelector('#sichao-mask').classList.contains('hidden') && document.querySelectorAll('.sc-card').length >= 3);
+  await page.click('.sc-card');
+  await page.waitForSelector('.sc-opt[data-v="D"]');
+  await page.click('.sc-opt[data-v="D"]');
+  await page.click('#sc-submit');
+  await page.waitForSelector('.sc-ai');
+  await page.screenshot({ path: path.resolve(root, 'test-results/zone-sichao.png') });
+  await page.evaluate(() => window.__app.handleBack());
+  await page.waitForFunction(() => document.querySelector('#sichao-mask').classList.contains('hidden'));
+  report.checks.push('思潮 × Zone end-to-end judgment loop (event facts -> independent A~E verdict -> AI partner unlock -> sync to 星海 -> archive) verified');
+
   for (const width of [390, 1100]) {
     await page.setViewport({ width, height: 844 });
     for (const pane of ['knowledge', 'graph', 'shelf']) {

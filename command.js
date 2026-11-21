@@ -5,7 +5,7 @@ import { aiConfigured, complete, transcribeAudio } from './ai.js';
 
 const WAKE_KEY = 'rr-voice-wake';
 const WAKE_RE = /^(?:hey\s+|hi\s+|你好\s*)?(?:zone|小域|小雨|小玉|小宇|小余|宗)[，,、。\s]*(.*)$/i;
-const RESERVED_OPEN = /^(?:目录|书签|星海|星图|知识|笔记|摘录|护眼|深色|浅色|夜间|日间|双语|对照|翻译|语音|唤醒|立体|全图|设置|整理|搜索|AI|左手|左撇子|右手|右撇子|墨水屏|竖排|横排|舒眼|休息|朗读|听书)/i;
+const RESERVED_OPEN = /^(?:目录|书签|星海|星图|知识|笔记|摘录|护眼|深色|浅色|夜间|日间|双语|对照|翻译|语音|唤醒|立体|全图|设置|整理|搜索|AI|左手|左撇子|右手|右撇子|墨水屏|竖排|横排|舒眼|休息|朗读|听书|思潮|情报)/i;
 
 const SpeechRec = typeof window !== 'undefined'
   ? (window.SpeechRecognition || window.webkitSpeechRecognition || null)
@@ -133,6 +133,9 @@ function parseSingleClause(rawClause, ctx = {}) {
   }
   if (/^(?:恢复默认界面|重置界面|清除自定义样式|还原界面)$/.test(text)) {
     return [{ op: 'resetUi' }];
+  }
+  if (/(?:今日思潮|打开思潮|看思潮|进入思潮|思潮|情报判断|判断档案|每日情报)/.test(text)) {
+    return [{ op: 'openSichao' }];
   }
 
   // 1b. 语音直接改界面（AI 实时生成安全 CSS 定制层）

@@ -2,6 +2,7 @@ import * as pdfjsLib from './vendor/pdf.min.mjs';
 import { db } from './db.js';
 import { importArticleUrl, importBlob, importFiles, parseManifest, applyManifestToLibrary } from './importer.js';
 import { findAndFetchBook, getOpdsUrl, setOpdsUrl } from './book-finder.js';
+import { initSichao } from './sichao.js';
 import { BookletEngine, EpubEngine, PdfEngine, TxtEngine } from './engines.js';
 import { aiConfigured, complete as aiComplete } from './ai.js';
 import { settings, saveSettings, applyBodyTheme, applyAppearance, appearancePref, cycleAppearance, applyCustomFontBlob, FONTS, THEMES } from './settings.js';
@@ -1950,6 +1951,8 @@ function handleBack() {
   if (closeStackMenus(true)) return true;
   if (!$('#note-mask').classList.contains('hidden')) { $('#note-mask').classList.add('hidden'); noteSel = null; return true; }
   if (document.body.classList.contains('selecting')) { exitSelect(); return true; }
+  if (closeEyeRest()) return true;
+  if (sichao.close()) return true;
   if (closeReaderPanel()) return true;
   if (!$('#settings').classList.contains('hidden')) { $('#settings').classList.add('hidden'); return true; }
   if (!$('#lib-panel').classList.contains('hidden')) { $('#lib-panel').classList.add('hidden'); return true; }
@@ -2083,6 +2086,8 @@ function speakCurrentPage() {
     window.speechSynthesis.speak(u);
   } catch { ttsActive = false; }
 }
+
+const sichao = initSichao({ toast, onNoteCreated: () => refreshWorkspace() });
 
 command = createCommandController({
   toast,
@@ -2298,6 +2303,11 @@ command = createCommandController({
         } catch (err) {
           return { label: err?.message || '找书失败，请检查网络或书源地址' };
         }
+      }
+      case 'openSichao': {
+        if (reading) await closeBook();
+        sichao.open();
+        return { label: '已打开「思潮」独立判断空间' };
       }
       case 'askAi': {
         const pageTxt = reading ? (engine?.pageText?.() || '').trim().slice(0, 1200) : '';
