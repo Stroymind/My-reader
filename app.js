@@ -5,9 +5,9 @@ import { findAndFetchBook, getOpdsUrl, setOpdsUrl } from './book-finder.js';
 import { fetchLiveSignals, getSichaoApi, initSichao, setSichaoApi } from './sichao.js';
 import { getPhoneUseStatus, openPhoneUseSettings, runPhoneUseTask } from './phone-use.js';
 import { closeMicroApp, consumeLaunchDeepLink, craftMicroApp, isMicroAppOpen, listMicroApps, openMicroApp, pinToDesktop } from './agent-surface.js';
-import { applyThemePlugin, closeBotStudio, getActiveBot, getActiveThemePlugin, getPrimaryBot, isPluginEnabled, listBots, openBotStudio, renderBotSvg, setActiveBot, syncToAndroidWidget } from './bots.js';
+import { applyThemePlugin, closeBotStudio, getActiveBot, getActiveThemePlugin, getBotPlugins, getPrimaryBot, isPluginEnabled, isPluginMountedOnBot, listBots, listGroups, listPlugins, openBotStudio, renderBotSvg, renderGroupAvatarHtml, setActiveBot, syncToAndroidWidget, toggleBotPlugin } from './bots.js';
 import { BookletEngine, EpubEngine, PdfEngine, TxtEngine } from './engines.js';
-import { aiConfigured, complete as aiComplete, getAiConfig } from './ai.js';
+import { aiConfigured, complete as aiComplete, getAiConfig, getAiUsage, recordAiUsage, resetAiUsage, setAiBudget } from './ai.js';
 import { settings, saveSettings, applyBodyTheme, applyAppearance, appearancePref, cycleAppearance, applyCustomFontBlob, FONTS, THEMES } from './settings.js';
 import { isMostlyCjk, translateVisible } from './bilingual.js';
 import { backfillFromBooks, createNote, deleteBookBundle, parseTags, syncBook } from './knowledge.js';
@@ -1948,8 +1948,171 @@ $('#btn-aa')?.addEventListener('click', () => { const s = $('#settings'); const 
 
 let rz; window.addEventListener('resize', () => { clearTimeout(rz); rz = setTimeout(() => engine?.resize(), 250); });
 
+function closeBotReaderSheet() {
+  const mask = document.getElementById('zone-reader-sheet-mask');
+  if (!mask || mask.classList.contains('hidden')) return false;
+  mask.classList.add('hidden');
+  return true;
+}
+
+async function openBotReaderSheet() {
+  if (!isPluginEnabled('reading-cosmos')) {
+    toast('请先在插件中开启「阅读器」开关');
+    return;
+  }
+  let mask = document.getElementById('zone-reader-sheet-mask');
+  if (!mask) {
+    mask = document.createElement('div');
+    mask.id = 'zone-reader-sheet-mask';
+    mask.className = 'bots-mask hidden';
+    document.body.appendChild(mask);
+  }
+  const books = await db.all('books');
+  sortBooks(books, 'recent');
+  const escHtml = s => String(s || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  mask.innerHTML = `
+    <div class="bots-sheet" role="dialog" aria-label="Bot 内置阅读器">
+      <div class="bots-head">
+        <div>
+          <h3>阅读器</h3>
+          <p>仅在 Bot 对话内按需使用，不改变外部主界面</p>
+        </div>
+        <button type="button" class="bots-close" data-r-act="close">完成</button>
+      </div>
+      <div class="prof-group">
+        <button type="button" class="prof-row" data-r-act="import">
+          <div class="prof-row-main"><strong>导入文件 / 书 / 文档 / 音视频</strong><span>EPUB · PDF · MOBI · DOCX · MD · 音视频字幕</span></div>
+          <span class="prof-row-val">导入 ›</span>
+        </button>
+        <button type="button" class="prof-row" data-r-act="cosmos">
+          <div class="prof-row-main"><strong>知识星海与笔记</strong><span>查看划线、双链笔记与星海图谱</span></div>
+          <span class="prof-row-val">进入 ›</span>
+        </button>
+      </div>
+      <div class="bots-list">
+        ${books.length ? books.slice(0, 12).map(b => `
+          <button type="button" class="roster-item" data-r-book="${escHtml(b.id)}">
+            <div class="roster-txt">
+              <strong>${escHtml(b.title || '未命名')}</strong>
+              <span>${escHtml(b.author || b.format || '文档')}${b.progress ? ` · ${Math.round(b.progress * 100)}%` : ''}</span>
+            </div>
+            <span class="prof-row-val">阅读 ›</span>
+          </button>
+        `).join('') : '<p class="sc-empty" style="padding:18px 0">还没有导入阅读材料，点上方「导入」即可随时打开阅读。</p>'}
+      </div>
+    </div>`;
+  mask.onclick = e => { if (e.target === mask) closeBotReaderSheet(); };
+  mask.querySelector('[data-r-act="close"]').onclick = () => closeBotReaderSheet();
+  mask.querySelector('[data-r-act="import"]').onclick = () => { closeBotReaderSheet(); $('#file-input')?.click(); };
+  mask.querySelector('[data-r-act="cosmos"]').onclick = () => {
+    closeBotReaderSheet();
+    closeBotChat();
+    document.documentElement.classList.add('legacy-reader-home');
+    showPane('graph', { whisper: true });
+  };
+  mask.querySelectorAll('[data-r-book]').forEach(btn => {
+    btn.onclick = async () => {
+      closeBotReaderSheet();
+      await openBook(btn.dataset.rBook);
+    };
+  });
+  mask.classList.remove('hidden');
+}
+
+function closeBotPluginsSheet() {
+  const mask = document.getElementById('zone-bot-plugins-mask');
+  if (!mask || mask.classList.contains('hidden')) return false;
+  mask.classList.add('hidden');
+  return true;
+}
+
+function openBotPluginsSheet(bot = getActiveBot()) {
+  if (!bot) return;
+  let mask = document.getElementById('zone-bot-plugins-mask');
+  if (!mask) {
+    mask = document.createElement('div');
+    mask.id = 'zone-bot-plugins-mask';
+    mask.className = 'bots-mask hidden';
+    document.body.appendChild(mask);
+  }
+  const escHtml = s => String(s || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const draw = () => {
+    const plugins = listPlugins();
+    const mounted = getBotPlugins(bot.id);
+    mask.innerHTML = `
+      <div class="bots-sheet" role="dialog" aria-label="为 ${escHtml(bot.name)} 加载插件">
+        <div class="bots-head">
+          <div>
+            <h3>为「${escHtml(bot.name)}」加载插件</h3>
+            <p>仅在当前 Bot 对话中加载与展示，不影响其他 Bot 和主页</p>
+          </div>
+          <button type="button" class="bots-close" data-bp-act="close">完成</button>
+        </div>
+        <div class="bots-list">
+          ${plugins.map(pl => {
+            const on = pl.enabled && mounted.includes(pl.id);
+            return `
+              <div class="plugin-row" data-bp-row="${escHtml(pl.id)}">
+                <div class="bot-meta">
+                  <strong>${escHtml(pl.name)}${!pl.enabled ? '（全局已关）' : ''}</strong>
+                  <span>${escHtml(pl.desc)}</span>
+                </div>
+                <label class="ios-switch" aria-label="在此 Bot 加载 ${escHtml(pl.name)}">
+                  <input type="checkbox" data-bp-toggle="${escHtml(pl.id)}" ${on ? 'checked' : ''} ${!pl.enabled ? 'disabled' : ''}>
+                  <span></span>
+                </label>
+              </div>`;
+          }).join('')}
+        </div>
+        <button type="button" class="bots-secondary" data-bp-act="manage">前往插件中心管理或安装 MCP ›</button>
+      </div>`;
+    mask.onclick = e => { if (e.target === mask) closeBotPluginsSheet(); };
+    mask.querySelector('[data-bp-act="close"]').onclick = () => closeBotPluginsSheet();
+    mask.querySelector('[data-bp-act="manage"]').onclick = () => {
+      closeBotPluginsSheet();
+      openBotsFromHub({ initialTab: 'plugins' });
+    };
+    mask.querySelectorAll('[data-bp-toggle]').forEach(chk => {
+      chk.onchange = () => {
+        const pid = chk.dataset.bpToggle;
+        const nowOn = toggleBotPlugin(bot.id, pid, chk.checked);
+        const pl = listPlugins().find(p => p.id === pid);
+        renderBotMountedBar(bot);
+        toast(nowOn
+          ? `已在「${bot.name}」对话中加载「${pl?.short || pl?.name || pid}」`
+          : `已从「${bot.name}」对话卸载「${pl?.short || pl?.name || pid}」`, 2400);
+        draw();
+      };
+    });
+    mask.querySelectorAll('[data-bp-row]').forEach(row => {
+      row.onclick = e => {
+        if (e.target.closest('.ios-switch')) return;
+        const pid = row.dataset.bpRow;
+        const pl = listPlugins().find(p => p.id === pid);
+        if (!pl?.enabled) {
+          closeBotPluginsSheet();
+          openBotsFromHub({ initialTab: 'plugins' });
+          return;
+        }
+        if (!getBotPlugins(bot.id).includes(pid)) {
+          toggleBotPlugin(bot.id, pid, true);
+          renderBotMountedBar(bot);
+        }
+        closeBotPluginsSheet();
+        if (pl.launchable) launchPluginById(pid, bot);
+        else toast(`已在「${bot.name}」对话中启用「${pl.short || pl.name}」`, 2200);
+      };
+    });
+  };
+  draw();
+  mask.classList.remove('hidden');
+}
+
 function handleBack() {
   if (command?.closeBar(true)) return true;
+  if (closeBotPluginsSheet()) return true;
+  if (closeBotReaderSheet()) return true;
+  if (closeProfileSheet()) return true;
   if (closeBotStudio()) return true;
   if (closeMicroApp()) return true;
   if (closeBotChat()) return true;
@@ -2658,6 +2821,19 @@ command = createCommandController({
           return { label: '尚未绑定本地电脑桥接' };
         }
         const goal = String(a.goal || '').trim();
+        const curBot = getActiveBot();
+        const ok = await requestChatConfirm({
+          botId: curBot.id,
+          icon: 'computer',
+          provider: '本机电脑 · Computer-Use',
+          title: '确认在本地电脑执行任务',
+          meta: bridge,
+          badge: '待确认',
+          detail: goal || '执行本地桌面任务',
+          rejectLabel: '取消',
+          approveLabel: '确认执行'
+        });
+        if (!ok) return { label: '已取消本地电脑执行' };
         showAgentLiveCard({ title: 'Computer-Use · 远程执行中', body: `正在向本地电脑 (${bridge}) 下发任务：${goal}` });
         try {
           const aiCfg = getAiConfig();
@@ -2670,15 +2846,36 @@ command = createCommandController({
           const r = await fetch(`${bridge}/api/computer-use/run`, {
             method: 'POST',
             headers: hdrs,
-            body: JSON.stringify({ goal, bot: getActiveBot().name, rules: getActiveBot().rules || '' })
+            body: JSON.stringify({ goal, bot: curBot.name, rules: curBot.rules || '' })
           });
           const data = await r.json().catch(() => ({}));
           if (!r.ok) throw new Error(data?.detail || `HTTP ${r.status}`);
-          const msg = data?.summary || data?.result || '已下发至本地电脑执行';
-          showAgentLiveCard({ title: 'Computer-Use · 本地电脑回报', body: String(msg) });
+          const msg = String(data?.summary || data?.result || '已下发至本地电脑执行');
+          postChatCard(curBot.id, {
+            kind: 'result',
+            icon: 'computer',
+            provider: '本机电脑 · Computer-Use',
+            status: 'Done',
+            statusTone: 'ok',
+            title: goal || '本地电脑任务完成',
+            meta: bridge,
+            badge: '已完成',
+            detail: msg.slice(0, 220),
+            url: data?.url || '',
+            secondaryLabel: data?.url ? '复制链接' : '',
+            primaryLabel: data?.url ? '打开链接' : ''
+          });
           return { label: '本地电脑已响应' };
         } catch (err) {
-          showAgentLiveCard({ title: 'Computer-Use · 连接失败', body: `无法连接本地电脑节点 ${bridge}：${err?.message || '请确认电脑端桥接服务已启动'}` });
+          postChatCard(curBot.id, {
+            kind: 'result',
+            icon: 'computer',
+            provider: '本机电脑 · Computer-Use',
+            status: '连接失败',
+            title: `无法连接 ${bridge}`,
+            meta: bridge,
+            detail: err?.message || '请确认电脑端桥接服务已启动'
+          });
           return { label: '本地电脑未连通' };
         }
       }
@@ -2699,11 +2896,20 @@ command = createCommandController({
         });
         renderAgentHub();
         if (res.ok && res.app) {
-          showAgentLiveCard({
-            title: `微应用 · ${res.app.title}`,
-            body: `已生成苹果风独立微应用「${res.app.title}」，随时可全屏打开或钉到手机桌面。`,
-            onOpen: () => openMicroApp(res.app.id),
-            pinSpec: { id: `microapp-${res.app.id}`, label: res.app.title, uri: `zone://open/microapp/${res.app.id}`, glyph: res.app.title.slice(0, 1) }
+          postChatCard(getActiveBot().id, {
+            kind: 'result',
+            icon: 'app',
+            provider: 'Zone 微应用',
+            status: 'Done',
+            statusTone: 'ok',
+            title: res.app.title,
+            meta: `zone://open/microapp/${res.app.id}`,
+            badge: '已就绪',
+            detail: `已生成独立微应用「${res.app.title}」，随时可全屏运行或钉到桌面。`,
+            appId: res.app.id,
+            pinSpec: { id: `microapp-${res.app.id}`, label: res.app.title, uri: `zone://open/microapp/${res.app.id}`, glyph: res.app.title.slice(0, 1) },
+            secondaryLabel: '放到桌面',
+            primaryLabel: '立即打开'
           });
         }
         return { label: res.message };
@@ -2712,7 +2918,17 @@ command = createCommandController({
         const st = await getPhoneUseStatus();
         if (!st.available) return { label: '手机控屏需在 Android 版 Zone 中开启' };
         if (st.enabled) return { label: 'Zone 手机控屏无障碍服务已开启，直接说出任务即可' };
-        const go = await showConfirmSheet('去系统设置开启「Zone 手机控屏 (Phone-Use)」无障碍服务？开启后即可用你自己的 AI 语音跨 App 办事。', '去开启');
+        const go = await requestChatConfirm({
+          botId: getActiveBot().id,
+          icon: 'phone',
+          provider: '手机控屏 · Phone-Use',
+          title: '开启 Android 无障碍控屏权限',
+          meta: '系统无障碍服务',
+          badge: '需授权',
+          detail: '开启后可用你自己的 AI 语音跨 App 办事，并支持悬浮球随时急停。',
+          rejectLabel: '暂不开启',
+          approveLabel: '去开启'
+        });
         if (go) await openPhoneUseSettings();
         return { label: go ? '已打开系统无障碍设置' : '已取消' };
       }
@@ -2721,9 +2937,20 @@ command = createCommandController({
         const goal = String(a.goal || '').trim();
         if (!goal) return { label: '请说出要帮你在手机上执行的任务' };
         toast(`控屏启动：${goal.slice(0, 18)}…`);
+        const curBot = getActiveBot();
         const res = await runPhoneUseTask(goal, {
           onStatus: msg => toast(msg, 3400),
-          onConfirm: msg => showConfirmSheet(msg, '允许继续'),
+          onConfirm: msg => requestChatConfirm({
+            botId: curBot.id,
+            icon: 'shield',
+            provider: '手机控屏 · 安全确认',
+            title: '请确认敏感手机操作',
+            meta: goal.slice(0, 32),
+            badge: '敏感拦截',
+            detail: msg,
+            rejectLabel: '取消操作',
+            approveLabel: '允许继续'
+          }),
           onNeedAi: () => openAiSettingsDialog(),
           onNoteSaved: () => refreshWorkspace()
         });
@@ -2870,9 +3097,11 @@ let taskThreads = (() => {
   try { const x = JSON.parse(localStorage.getItem(THREADS_KEY) || '[]'); return Array.isArray(x) ? x : []; } catch { return []; }
 })();
 let activeThreadId = null;
+let activeGroupId = null;
+let newlyBornBotId = '';
 
 function saveTaskThreads() {
-  try { localStorage.setItem(THREADS_KEY, JSON.stringify(taskThreads.slice(0, 20))); } catch {}
+  try { localStorage.setItem(THREADS_KEY, JSON.stringify(taskThreads.slice(0, 30))); } catch {}
 }
 
 function ensureActiveTaskThread(seedTitle, botId) {
@@ -2897,31 +3126,388 @@ function closeBotChat() {
   if (!modal || modal.classList.contains('hidden')) return false;
   modal.classList.add('hidden');
   modal.classList.remove('typing', 'thinking');
+  activeGroupId = null;
   renderAgentHub();
   return true;
 }
 
-function renderChatThreadsBar(bot) {
-  const bar = $('#zone-chat-threads');
-  if (!bar) return;
-  const botThreads = taskThreads.filter(t => t.botId === bot.id);
+function renderChatThreadsBar() {}
+
+function insertNewTopicDivider() {
+  const thread = activeGroupId
+    ? taskThreads.find(t => t.groupId === activeGroupId)
+    : taskThreads.find(t => t.botId === getActiveBot().id && !t.groupId);
+  if (!thread || !thread.messages.filter(m => !m.internal).length) { toast('当前已是全新话题'); return; }
+  const visible = thread.messages.filter(m => !m.internal);
+  const last = visible[visible.length - 1];
+  if (last?.role === 'divider') { toast('已经开启新话题，直接发消息即可'); return; }
+  thread.messages.push({ role: 'divider', content: '新话题 · 以上不带入上下文', at: Date.now() });
+  thread.updatedAt = Date.now();
+  saveTaskThreads();
+  renderChatBox(thread);
+  $('#zone-chat-input')?.focus();
+}
+
+const pendingCardResolvers = new Map();
+
+function cardIconSvg(icon) {
+  if (icon === 'computer') return '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>';
+  if (icon === 'phone') return '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="2.5" width="12" height="19" rx="2.5"/><path d="M10.5 18.5h3"/></svg>';
+  if (icon === 'shield') return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l7 3v5c0 4.5-3 8.2-7 10-4-1.8-7-5.5-7-10V6l7-3z"/><path d="M9.5 12l1.8 1.8 3.4-3.6"/></svg>';
+  if (icon === 'app') return '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="7" height="7" rx="2"/><rect x="13" y="4" width="7" height="7" rx="2"/><rect x="4" y="13" width="7" height="7" rx="2"/><rect x="13" y="13" width="7" height="7" rx="2"/></svg>';
+  if (icon === 'link') return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 14l4-4M7.5 16.5a3.5 3.5 0 0 1 0-5l2-2a3.5 3.5 0 0 1 5 5M16.5 7.5a3.5 3.5 0 0 1 0 5l-2 2a3.5 3.5 0 0 1-5-5"/></svg>';
+  return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.5 18h9.8a4.2 4.2 0 0 0 .8-8.3A5.5 5.5 0 0 0 7.4 8.5 4.4 4.4 0 0 0 7.5 18z"/></svg>';
+}
+
+function getOrCreateBotThread(botId) {
+  const bot = listBots().find(b => b.id === botId) || getActiveBot();
+  let thread = taskThreads.find(t => t.botId === bot.id);
+  if (!thread) {
+    thread = { id: `th-${bot.id}`, title: bot.name, botId: bot.id, messages: [], updatedAt: Date.now() };
+    taskThreads.unshift(thread);
+  }
+  return { bot, thread };
+}
+
+function postChatCard(botId, spec = {}) {
+  const { bot, thread } = getOrCreateBotThread(botId || getActiveBot().id);
+  const card = {
+    id: spec.id || `card-${uid()}`,
+    kind: spec.kind || 'result',
+    icon: spec.icon || 'cloud',
+    provider: spec.provider || '云端 Agent',
+    status: spec.status || 'Done',
+    statusTone: spec.statusTone || '',
+    title: spec.title || '任务更新',
+    meta: spec.meta || '',
+    badge: spec.badge || '',
+    detail: spec.detail || '',
+    url: spec.url || '',
+    appId: spec.appId || '',
+    pinSpec: spec.pinSpec || null,
+    actionCmd: spec.actionCmd || '',
+    secondaryLabel: spec.secondaryLabel ?? '',
+    primaryLabel: spec.primaryLabel ?? '',
+    resolved: spec.resolved || ''
+  };
+  thread.messages.push({ role: 'card', card, at: Date.now() });
+  thread.updatedAt = Date.now();
+  activeThreadId = thread.id;
+  saveTaskThreads();
+  setActiveBot(bot.id);
+  renderChatBox(thread);
+  renderBotRoster();
+  return card;
+}
+
+function requestChatConfirm(spec = {}) {
+  const botId = spec.botId || getActiveBot().id;
+  const card = postChatCard(botId, {
+    kind: 'confirm',
+    icon: spec.icon || 'shield',
+    provider: spec.provider || '任务确认',
+    status: '待确认',
+    statusTone: 'warn',
+    title: spec.title || '请确认是否继续执行',
+    meta: spec.meta || '',
+    badge: spec.badge || '',
+    detail: spec.detail || '',
+    url: spec.url || '',
+    actionCmd: spec.actionCmd || '',
+    secondaryLabel: spec.rejectLabel || '取消',
+    primaryLabel: spec.approveLabel || '确认执行',
+    resolved: ''
+  });
+  return new Promise(resolve => {
+    pendingCardResolvers.set(card.id, resolve);
+  });
+}
+
+function renderBubbleRichText(container, text) {
+  const str = String(text || '');
+  const re = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|(https?:\/\/[^\s<>"')]+)|\*\*([^*]+)\*\*|`([^`]+)`/g;
+  let last = 0;
+  let m;
+  while ((m = re.exec(str)) !== null) {
+    if (m.index > last) container.appendChild(document.createTextNode(str.slice(last, m.index)));
+    if (m[1] && m[2]) {
+      const a = document.createElement('a');
+      a.className = 'chat-link';
+      a.href = m[2];
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      a.textContent = m[1];
+      container.appendChild(a);
+    } else if (m[3]) {
+      const a = document.createElement('a');
+      a.className = 'chat-link';
+      a.href = m[3];
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      a.textContent = m[3];
+      container.appendChild(a);
+    } else if (m[4]) {
+      const strong = document.createElement('strong');
+      strong.textContent = m[4];
+      container.appendChild(strong);
+    } else if (m[5]) {
+      const code = document.createElement('code');
+      code.textContent = m[5];
+      container.appendChild(code);
+    }
+    last = re.lastIndex;
+  }
+  if (last < str.length) container.appendChild(document.createTextNode(str.slice(last)));
+}
+
+function parseBotCardDirectives(raw) {
+  let clean = String(raw || '');
+  const cards = [];
+  clean = clean.replace(/\[\[CONFIRM:([^\]]+)\]\]/g, (_, body) => {
+    const [title = '', meta = '', detail = '', action = ''] = body.split('|').map(s => s.trim());
+    const isUrl = /^https?:\/\//i.test(action);
+    cards.push({
+      kind: 'confirm',
+      icon: 'shield',
+      provider: '任务确认',
+      status: '待确认',
+      statusTone: 'warn',
+      title: title || '请确认执行此任务',
+      meta: meta || (isUrl ? action : ''),
+      badge: '待你确认',
+      detail,
+      url: isUrl ? action : '',
+      actionCmd: isUrl ? '' : action,
+      secondaryLabel: '取消',
+      primaryLabel: '确认执行',
+      resolved: ''
+    });
+    return '';
+  });
+  clean = clean.replace(/\[\[CARD:([^\]]+)\]\]/g, (_, body) => {
+    const [provider = '云端 Agent', title = '', meta = '', detail = '', url = ''] = body.split('|').map(s => s.trim());
+    cards.push({
+      kind: 'result',
+      icon: url ? 'link' : 'cloud',
+      provider: provider || '云端 Agent',
+      status: 'Done',
+      statusTone: 'ok',
+      title: title || '任务结果卡片',
+      meta,
+      detail,
+      url: /^https?:\/\//i.test(url) ? url : '',
+      secondaryLabel: /^https?:\/\//i.test(url) ? '复制链接' : '',
+      primaryLabel: /^https?:\/\//i.test(url) ? '打开链接' : ''
+    });
+    return '';
+  });
+  return { text: clean.replace(/\n{3,}/g, '\n\n').trim(), cards };
+}
+
+function renderBotMountedBar(bot) {
+  const bar = $('#zone-chat-plugins-bar');
+  if (!bar || !bot) return;
+  const mountedIds = getBotPlugins(bot.id);
+  const allPlugs = listPlugins();
+  const visiblePlugs = mountedIds
+    .map(id => allPlugs.find(p => p.id === id))
+    .filter(p => p && p.enabled && (p.launchable || p.id.startsWith('ext-')));
   bar.replaceChildren();
-  if (botThreads.length <= 1) { bar.classList.add('hidden'); return; }
+  if (!visiblePlugs.length) {
+    bar.classList.add('hidden');
+    return;
+  }
   bar.classList.remove('hidden');
-  for (const th of botThreads.slice(0, 8)) {
-    const pill = document.createElement('button');
-    pill.type = 'button';
-    pill.className = 'task-pill' + (th.id === activeThreadId ? ' on' : '');
-    const dot = document.createElement('i');
-    dot.className = 'task-dot';
-    const lbl = document.createElement('span');
-    lbl.textContent = th.title || bot.name;
-    pill.append(dot, lbl);
-    pill.onclick = () => {
-      activeThreadId = th.id;
-      renderChatBox(th);
+  for (const pl of visiblePlugs) {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'bot-mounted-chip';
+    if (pl.id === 'reading-cosmos') chip.id = 'btn-chat-reader';
+    chip.dataset.mountedPlug = pl.id;
+    const dot = document.createElement('span');
+    dot.className = 'bot-mounted-dot';
+    chip.append(dot, document.createTextNode(pl.short || pl.name));
+    chip.onclick = () => {
+      if (pl.launchable) launchPluginById(pl.id, bot);
+      else toast(`已在此对话挂载外部插件「${pl.name}」${pl.url ? ` (${pl.url})` : ''}`, 2600);
     };
-    bar.appendChild(pill);
+    bar.appendChild(chip);
+  }
+  const addChip = document.createElement('button');
+  addChip.type = 'button';
+  addChip.className = 'bot-mounted-chip add-more';
+  addChip.textContent = '+ 插件';
+  addChip.onclick = () => openBotPluginsSheet(bot);
+  bar.appendChild(addChip);
+}
+
+function renderChatCardElement(card, thread) {
+  const wrap = document.createElement('div');
+  wrap.className = 'chat-card-wrap';
+  const el = document.createElement('div');
+  el.className = 'chat-card';
+  el.dataset.cardId = card.id || '';
+
+  const head = document.createElement('div');
+  head.className = 'chat-card-head';
+  const ico = document.createElement('span');
+  ico.className = 'chat-card-ico';
+  ico.innerHTML = cardIconSvg(card.icon);
+  const prov = document.createElement('span');
+  prov.className = 'chat-card-prov';
+  prov.textContent = card.provider || '云端 Agent';
+  const st = document.createElement('span');
+  st.className = 'chat-card-status' + (card.statusTone ? ` ${card.statusTone}` : '');
+  st.textContent = card.status || 'Done';
+  head.append(ico, prov, st);
+  el.appendChild(head);
+
+  if (card.title) {
+    const title = document.createElement('div');
+    title.className = 'chat-card-title';
+    title.textContent = card.title;
+    el.appendChild(title);
+  }
+
+  if (card.meta || card.badge) {
+    const meta = document.createElement('div');
+    meta.className = 'chat-card-meta';
+    const mt = document.createElement('span');
+    mt.className = 'chat-card-meta-txt';
+    mt.textContent = card.meta || '';
+    meta.appendChild(mt);
+    if (card.badge) {
+      const bd = document.createElement('span');
+      bd.className = 'chat-card-badge';
+      bd.textContent = card.badge;
+      meta.appendChild(bd);
+    }
+    el.appendChild(meta);
+  }
+
+  if (card.detail) {
+    const det = document.createElement('p');
+    det.className = 'chat-card-detail';
+    det.textContent = card.detail;
+    el.appendChild(det);
+  }
+
+  const hasActs = card.kind === 'confirm' || card.secondaryLabel || card.primaryLabel || card.url || card.appId;
+  if (hasActs) {
+    const acts = document.createElement('div');
+    acts.className = 'chat-card-acts';
+    if (card.kind === 'confirm') {
+      const done = !!card.resolved;
+      const bNo = document.createElement('button');
+      bNo.type = 'button';
+      bNo.className = 'chat-card-btn';
+      bNo.dataset.cardAct = 'reject';
+      bNo.textContent = card.resolved === 'rejected' ? '已取消' : (card.secondaryLabel || '取消');
+      bNo.disabled = done;
+      bNo.onclick = () => {
+        card.resolved = 'rejected';
+        card.status = '已取消';
+        card.badge = '已终止';
+        card.statusTone = '';
+        saveTaskThreads();
+        renderChatBox(thread);
+        const fn = pendingCardResolvers.get(card.id);
+        if (fn) { pendingCardResolvers.delete(card.id); fn(false); }
+        else toast('已取消该操作');
+      };
+
+      const bYes = document.createElement('button');
+      bYes.type = 'button';
+      bYes.className = 'chat-card-btn primary';
+      bYes.dataset.cardAct = 'approve';
+      bYes.textContent = card.resolved === 'approved' ? '已确认 ✓' : (card.primaryLabel || '确认执行');
+      bYes.disabled = done;
+      bYes.onclick = async () => {
+        card.resolved = 'approved';
+        card.status = '已确认';
+        card.badge = '已授权';
+        card.statusTone = 'ok';
+        saveTaskThreads();
+        renderChatBox(thread);
+        const fn = pendingCardResolvers.get(card.id);
+        if (fn) {
+          pendingCardResolvers.delete(card.id);
+          fn(true);
+          return;
+        }
+        if (card.url) {
+          window.open(card.url, '_blank', 'noopener');
+          toast('已确认并打开任务链接');
+        } else if (card.actionCmd) {
+          const ops = parseNaturalCommands(card.actionCmd, { reading: false, pane: currentPane() });
+          if (ops.length && ops[0].op !== 'askAi') await command.run(card.actionCmd);
+          else await chatWithActiveBot(`已确认执行「${card.title}」：${card.actionCmd}`);
+        } else {
+          await chatWithActiveBot(`我已确认执行「${card.title}」，请继续完成并汇报结果。`);
+        }
+      };
+      acts.append(bNo, bYes);
+    } else {
+      if (card.secondaryLabel) {
+        const bSec = document.createElement('button');
+        bSec.type = 'button';
+        bSec.className = 'chat-card-btn';
+        bSec.textContent = card.secondaryLabel;
+        bSec.onclick = async () => {
+          if (card.pinSpec) {
+            const r = await pinToDesktop(card.pinSpec);
+            toast(r.message, 2600);
+          } else if (card.url) {
+            await copyText(card.url);
+            toast('已复制链接');
+          }
+        };
+        acts.appendChild(bSec);
+      }
+      if (card.primaryLabel || card.url || card.appId) {
+        const bPri = document.createElement('button');
+        bPri.type = 'button';
+        bPri.className = 'chat-card-btn primary';
+        bPri.textContent = card.primaryLabel || (card.appId ? '立即打开' : '打开链接');
+        bPri.onclick = () => {
+          if (card.appId) openMicroApp(card.appId);
+          else if (card.url) window.open(card.url, '_blank', 'noopener');
+        };
+        acts.appendChild(bPri);
+      }
+    }
+    el.appendChild(acts);
+  }
+  wrap.appendChild(el);
+  return wrap;
+}
+
+function renderGroupMentionBar(group) {
+  const bar = $('#zone-chat-plugins-bar');
+  if (!bar || !group) return;
+  const bots = listBots();
+  const members = (group.memberIds || []).map(id => bots.find(b => b.id === id)).filter(Boolean);
+  bar.replaceChildren();
+  bar.classList.remove('hidden');
+  const addMention = label => {
+    const inp = $('#zone-chat-input');
+    if (!inp) return;
+    inp.value = `${inp.value ? inp.value.trimEnd() + ' ' : ''}@${label} `;
+    inp.focus();
+  };
+  const allBtn = document.createElement('button');
+  allBtn.type = 'button';
+  allBtn.className = 'group-mention-chip';
+  allBtn.textContent = '@所有人';
+  allBtn.onclick = () => addMention('所有人');
+  bar.appendChild(allBtn);
+  for (const b of members) {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'group-mention-chip';
+    chip.textContent = `@${b.name}`;
+    chip.onclick = () => addMention(b.name);
+    bar.appendChild(chip);
   }
 }
 
@@ -2929,38 +3515,80 @@ function renderChatBox(thread, pendingText = '') {
   const modal = $('#zone-chat-modal');
   const listEl = $('#zone-chat-messages');
   if (!modal || !listEl) return;
-  const bot = listBots().find(b => b.id === (thread?.botId || getActiveBot().id)) || getActiveBot();
+  const bots = listBots();
+  const isGroup = !!thread?.groupId;
+  const group = isGroup ? listGroups().find(g => g.id === thread.groupId) : null;
+  const bot = !isGroup ? (bots.find(b => b.id === (thread?.botId || getActiveBot().id)) || getActiveBot()) : getActiveBot();
   const avEl = $('#chat-head-av');
-  if (avEl) avEl.innerHTML = renderBotSvg(bot.shape, bot.accent);
   const nameEl = $('#chat-head-name');
-  if (nameEl) nameEl.textContent = bot.name;
   const inp = $('#zone-chat-input');
-  if (inp) inp.placeholder = `给 ${bot.name} 发消息，或直接说话…`;
-  renderChatThreadsBar(bot);
+
+  if (isGroup && group) {
+    const members = (group.memberIds || []).map(id => bots.find(b => b.id === id)).filter(Boolean);
+    if (avEl) avEl.innerHTML = renderGroupAvatarHtml(group.memberIds);
+    if (nameEl) nameEl.textContent = `${group.name} (${members.length})`;
+    if (inp) inp.placeholder = `在「${group.name}」发消息，可 @ 指定 Bot…`;
+    renderGroupMentionBar(group);
+  } else {
+    if (avEl) avEl.innerHTML = renderBotSvg(bot.shape, bot.accent);
+    if (nameEl) nameEl.textContent = bot.name;
+    if (inp) inp.placeholder = `给 ${bot.name} 发消息，或直接说话…`;
+    renderBotMountedBar(bot);
+  }
 
   listEl.replaceChildren();
-  const msgs = thread?.messages || [];
-  const allMsgs = pendingText ? [...msgs, { role: 'assistant', content: pendingText, pending: true }] : msgs;
+  const visibleMsgs = (thread?.messages || []).filter(m => !m.internal);
+  const allMsgs = pendingText ? [...visibleMsgs, { role: 'assistant', content: pendingText, pending: true, botId: isGroup ? (group?.memberIds?.[0] || bot.id) : bot.id }] : visibleMsgs;
   if (!allMsgs.length) {
     const empty = document.createElement('div');
     empty.className = 'bot-chat-empty';
     const av = document.createElement('div');
-    av.className = 'bot-chat-empty-av';
-    av.innerHTML = renderBotSvg(bot.shape, bot.accent);
+    av.className = 'bot-chat-empty-av' + (!isGroup && newlyBornBotId === bot.id ? ' bot-born' : '');
+    av.innerHTML = (isGroup && group) ? renderGroupAvatarHtml(group.memberIds) : renderBotSvg(bot.shape, bot.accent, bot.id);
+    if (!isGroup && newlyBornBotId === bot.id) newlyBornBotId = '';
     const h4 = document.createElement('h4');
-    h4.textContent = bot.name;
+    h4.textContent = (isGroup && group) ? group.name : bot.name;
     const p = document.createElement('p');
-    p.textContent = bot.rules ? bot.rules : `在下方直接给 ${bot.name} 发消息或说话；点顶部头像可随时定制形象与规则。`;
+    p.textContent = (isGroup && group)
+      ? `群聊成员：${(group.memberIds || []).map(id => bots.find(b => b.id === id)?.name).filter(Boolean).join('、')}。直接发消息或 @ 某位 Bot 分工协作。`
+      : (bot.rules ? bot.rules : `直接发消息或说话；点左下角 + 可为 ${bot.name} 加载阅读器、电脑或控屏等专属插件。`);
     empty.append(av, h4, p);
     listEl.appendChild(empty);
   } else {
+    let lastTs = 0;
     for (const m of allMsgs) {
+      if (m.at && m.role !== 'divider' && m.role !== 'handoff' && (!lastTs || m.at - lastTs > 900000)) {
+        const tsEl = document.createElement('div');
+        tsEl.className = 'chat-ts';
+        tsEl.textContent = formatShortTime(m.at);
+        listEl.appendChild(tsEl);
+        lastTs = m.at;
+      }
+      if (m.role === 'divider') {
+        const div = document.createElement('div');
+        div.className = 'chat-divider';
+        div.textContent = m.content || '新话题 · 以上不带入上下文';
+        listEl.appendChild(div);
+        continue;
+      }
+      if (m.role === 'handoff') {
+        const hp = document.createElement('div');
+        hp.className = 'chat-handoff-pill';
+        hp.textContent = `➤ 已后台联系 ${m.targetName || '其他 Bot'}${m.summary ? `：${m.summary.slice(0, 26)}` : ''}`;
+        listEl.appendChild(hp);
+        continue;
+      }
+      if (m.role === 'card' && m.card) {
+        listEl.appendChild(renderChatCardElement(m.card, thread));
+        continue;
+      }
       const row = document.createElement('div');
       row.className = 'chat-row ' + (m.role === 'user' ? 'user' : 'bot');
+      const senderBot = m.role !== 'user' ? (bots.find(b => b.id === m.botId) || bot) : null;
       if (m.role !== 'user') {
         const av = document.createElement('div');
         av.className = 'chat-mini-av';
-        av.innerHTML = renderBotSvg(bot.shape, bot.accent);
+        av.innerHTML = renderBotSvg(senderBot.shape, senderBot.accent);
         row.appendChild(av);
       }
       const bub = document.createElement('div');
@@ -2976,9 +3604,9 @@ function renderChatBox(thread, pendingText = '') {
         tp.textContent = thinkM[1].trim();
         det.append(sum, tp);
         bub.appendChild(det);
-        bub.appendChild(document.createTextNode(thinkM[2].trim()));
+        renderBubbleRichText(bub, thinkM[2].trim());
       } else {
-        bub.textContent = raw;
+        renderBubbleRichText(bub, raw);
       }
       if (m.needKey) {
         const cta = document.createElement('button');
@@ -2989,7 +3617,17 @@ function renderChatBox(thread, pendingText = '') {
         bub.appendChild(document.createElement('br'));
         bub.appendChild(cta);
       }
-      row.appendChild(bub);
+      if (isGroup && m.role !== 'user') {
+        const col = document.createElement('div');
+        col.className = 'chat-bot-col';
+        const sName = document.createElement('span');
+        sName.className = 'chat-sender-name';
+        sName.textContent = m.botName || senderBot.name;
+        col.append(sName, bub);
+        row.appendChild(col);
+      } else {
+        row.appendChild(bub);
+      }
       listEl.appendChild(row);
     }
   }
@@ -2997,25 +3635,163 @@ function renderChatBox(thread, pendingText = '') {
   requestAnimationFrame(() => { listEl.scrollTop = listEl.scrollHeight; });
 }
 
+function parseBotRelayDirectives(raw) {
+  let clean = String(raw || '');
+  const relays = [];
+  clean = clean.replace(/\[\[MSG_BOT:([^|\]]+)\|([^\]]+)\]\]/g, (_, targetName, msgBody) => {
+    relays.push({ targetName: targetName.trim(), message: msgBody.trim() });
+    return '';
+  });
+  return { text: clean.replace(/\n{3,}/g, '\n\n').trim(), relays };
+}
+
+async function relayBotToBotMessage(fromBot, targetBot, messageText) {
+  const { thread: targetThread } = getOrCreateBotThread(targetBot.id);
+  const { thread: fromThread } = getOrCreateBotThread(fromBot.id);
+  fromThread.lastHandoff = { to: targetBot.name, text: messageText.slice(0, 60), at: Date.now() };
+  fromThread.updatedAt = Date.now();
+  // 记录为内部静默日志（internal: true），不打扰用户可见对话流
+  targetThread.messages.push({
+    role: 'user',
+    content: `[来自同事 Bot「${fromBot.name}」的静默协作] ${messageText}`,
+    internal: true,
+    at: Date.now()
+  });
+  let reply = '';
+  if (aiConfigured()) {
+    const sys = [
+      targetBot.rules ? targetBot.rules : `你是 ${targetBot.name}。`,
+      `你正在后台与同事 Bot「${fromBot.name}」静默协作，请直接给出精炼、可执行的结论或数据，供对方汇总汇报给用户。`
+    ].join('\n');
+    const recentTarget = targetThread.messages
+      .filter(m => !m.needKey && (m.role === 'user' || m.role === 'assistant'))
+      .slice(-8)
+      .map(m => ({ role: m.role, content: m.content }));
+    reply = String(await aiComplete([{ role: 'system', content: sys }, ...recentTarget]) || '').trim();
+  } else {
+    reply = `（${targetBot.name} 已收到静默委托：${messageText}，配置 API Key 后可自动回复）`;
+  }
+  targetThread.messages.push({ role: 'assistant', content: reply, internal: true, at: Date.now() });
+  targetThread.updatedAt = Date.now();
+  saveTaskThreads();
+  renderBotRoster();
+  return reply;
+}
+
+async function chatWithActiveGroup(text) {
+  const q = String(text || '').trim();
+  if (!q || !activeGroupId) return;
+  const group = listGroups().find(g => g.id === activeGroupId);
+  if (!group) return;
+  const bots = listBots();
+  const members = (group.memberIds || []).map(id => bots.find(b => b.id === id)).filter(Boolean);
+  if (!members.length) return;
+
+  let thread = taskThreads.find(t => t.groupId === group.id);
+  if (!thread) {
+    thread = { id: `th-${group.id}`, title: group.name, groupId: group.id, messages: [], updatedAt: Date.now() };
+    taskThreads.unshift(thread);
+  }
+  activeThreadId = thread.id;
+  thread.messages.push({ role: 'user', content: q, at: Date.now() });
+  thread.updatedAt = Date.now();
+  saveTaskThreads();
+
+  if (!aiConfigured()) {
+    thread.messages.push({
+      role: 'assistant',
+      botId: members[0].id,
+      botName: members[0].name,
+      content: `群聊「${group.name}」已就绪（成员：${members.map(b => b.name).join('、')}）。填入你自己的 AI API Key（纯 BYOK）后，群内所有 Bot 就能按分工与 @ 提及协作回复啦。`,
+      needKey: true,
+      at: Date.now()
+    });
+    saveTaskThreads();
+    renderChatBox(thread);
+    renderBotRoster();
+    return;
+  }
+
+  // 解析 @ 指定 Bot；若未指定或 @所有人 则按群内成员顺序轮流协同
+  const mentionAll = /@(所有人|all|everyone)/i.test(q);
+  const mentioned = mentionAll ? [] : members.filter(b => q.includes(`@${b.name}`));
+  const queue = (mentioned.length ? mentioned : members).slice(0, 4);
+  const respondedIds = new Set();
+
+  $('#zone-chat-modal')?.classList.add('thinking');
+  try {
+    let startIdx = 0;
+    for (let i = thread.messages.length - 1; i >= 0; i--) {
+      if (thread.messages[i]?.role === 'divider') { startIdx = i + 1; break; }
+    }
+    const buildGroupCtx = () => thread.messages
+      .slice(startIdx)
+      .filter(m => !m.needKey && !m.internal && (m.role === 'user' || m.role === 'assistant'))
+      .slice(-16)
+      .map(m => ({
+        role: m.role,
+        content: m.role === 'assistant' ? `[${m.botName || 'Bot'}]: ${m.content}` : m.content
+      }));
+
+    let handoffCount = 0;
+    for (let idx = 0; idx < queue.length; idx++) {
+      const b = queue[idx];
+      if (respondedIds.has(b.id)) continue;
+      respondedIds.add(b.id);
+      renderChatBox(thread, `${b.name} 正在群内回复…`);
+      const peers = members.filter(x => x.id !== b.id).map(x => `${x.name}${x.rules ? `(${x.rules.slice(0, 20)})` : ''}`).join('、');
+      const sysPrompt = [
+        b.rules ? b.rules : `你是群聊中的智能体「${b.name}」。`,
+        `当前你在多 Bot 群聊「${group.name}」中，同群成员有：${peers || '无'}。`,
+        '请站在你的职责与视角简洁发言，不要重复前面同事已说过的观点；若本轮无需你发言，请仅回复 [[PASS]]。',
+        '如需交接给同群某位成员继续，可在回复中 @对方名字；如需用户确认某项操作，可输出 [[CONFIRM:标题|目标|说明|指令]]；如需输出卡片，可输出 [[CARD:来源|标题|副标题|详情|https://链接]]。'
+      ].join('\n');
+      const rawAns = String(await aiComplete([{ role: 'system', content: sysPrompt }, ...buildGroupCtx()]) || '').trim();
+      if (!rawAns || /^\[\[PASS\]\]$/i.test(rawAns)) continue;
+      const parsed = parseBotCardDirectives(rawAns);
+      if (parsed.text) {
+        thread.messages.push({ role: 'assistant', botId: b.id, botName: b.name, content: parsed.text, at: Date.now() });
+      }
+      for (const c of parsed.cards) {
+        thread.messages.push({ role: 'card', card: { id: `card-${uid()}`, ...c }, at: Date.now() });
+      }
+      // 若该 Bot 在群聊里 @ 了同群另一位尚未发言的 Bot，自动拉入本轮接力（最多 1 次接力防止死循环）
+      if (handoffCount < 1 && parsed.text) {
+        const nextPeer = members.find(x => x.id !== b.id && !respondedIds.has(x.id) && parsed.text.includes(`@${x.name}`));
+        if (nextPeer) { queue.push(nextPeer); handoffCount++; }
+      }
+      thread.updatedAt = Date.now();
+      saveTaskThreads();
+      renderChatBox(thread);
+    }
+  } catch (err) {
+    thread.messages.push({ role: 'assistant', botId: members[0].id, botName: members[0].name, content: `群聊连接模型失败：${err?.message || '请检查 API 设置'}`, needKey: true, at: Date.now() });
+    saveTaskThreads();
+    renderChatBox(thread);
+  } finally {
+    $('#zone-chat-modal')?.classList.remove('thinking');
+    renderBotRoster();
+  }
+}
+
 async function chatWithActiveBot(text) {
+  if (activeGroupId) { await chatWithActiveGroup(text); return; }
   const q = String(text || '').trim();
   if (!q) return;
   const bot = getActiveBot();
-  let thread = taskThreads.find(t => t.id === activeThreadId && t.botId === bot.id);
+  let thread = taskThreads.find(t => t.botId === bot.id && !t.groupId);
   if (!thread) {
     thread = {
-      id: `th-${Date.now().toString(36)}`,
-      title: q.slice(0, 14),
+      id: `th-${bot.id}`,
+      title: bot.name,
       botId: bot.id,
       messages: [],
       updatedAt: Date.now()
     };
     taskThreads.unshift(thread);
-    activeThreadId = thread.id;
-  } else if (!thread.messages.length) {
-    thread.title = q.slice(0, 14);
   }
-  thread.messages.push({ role: 'user', content: q });
+  activeThreadId = thread.id;
+  thread.messages.push({ role: 'user', content: q, at: Date.now() });
   thread.updatedAt = Date.now();
   saveTaskThreads();
 
@@ -3023,20 +3799,27 @@ async function chatWithActiveBot(text) {
     thread.messages.push({
       role: 'assistant',
       content: `你好，我是 ${bot.name}。填上你自己的 AI API Key（支持 OpenAI / DeepSeek / Claude / Gemini 兼容接口，纯 BYOK 零平台扣费）后，就能直接在这里和我连续对话啦。`,
-      needKey: true
+      needKey: true,
+      at: Date.now()
     });
     saveTaskThreads();
     renderChatBox(thread);
     renderBotRoster();
     return;
   }
-  const wantsCloudTools = isPluginEnabled('mcp-bridge') && getSichaoApi()
+  const wantsCloudTools = isPluginMountedOnBot(bot.id, 'mcp-bridge') && getSichaoApi()
     && /(https?:\/\/|搜索|查一下|帮我查|帮我搜|帮我找|联网|最新|github|arxiv|论文|调研|汇总|对比|新闻|网页|分析这个链接)/i.test(q);
   renderChatBox(thread, wantsCloudTools ? '正在联网检索与多步推理…' : '思考中…');
   $('#zone-chat-modal')?.classList.add('thinking');
   try {
-    const ctxMsgs = thread.messages.filter(m => !m.needKey).slice(-14).map(m => ({ role: m.role, content: m.content }));
+    // 只携带最后一条「新话题分割线」之后的上下文，彻底零串味、省 Token
+    let startIdx = 0;
+    for (let i = thread.messages.length - 1; i >= 0; i--) {
+      if (thread.messages[i]?.role === 'divider') { startIdx = i + 1; break; }
+    }
+    const ctxMsgs = thread.messages.slice(startIdx).filter(m => !m.needKey && !m.internal && (m.role === 'user' || m.role === 'assistant')).slice(-14).map(m => ({ role: m.role, content: m.content }));
     let ans = '';
+    let cloudSteps = [];
     if (wantsCloudTools) {
       try {
         const cfg = getAiConfig();
@@ -3057,10 +3840,11 @@ async function chatWithActiveBot(text) {
           if (r.ok) {
             const data = await r.json();
             if (data?.ok && data.reply) {
-              const steps = Array.isArray(data.steps) ? data.steps : [];
-              if (steps.length) {
-                const trace = steps.map((st, i) => `${i + 1}. [${st.tool}] ${st.arg}\n${st.preview}`).join('\n\n');
-                ans = `<think>已通过云端多步引擎执行 ${steps.length} 次真实联网工具：\n${trace}</think>\n${data.reply}`;
+              cloudSteps = Array.isArray(data.steps) ? data.steps : [];
+              recordAiUsage(Math.ceil((JSON.stringify(ctxMsgs).length + data.reply.length + cloudSteps.length * 400) * 0.65), cfg.model || '');
+              if (cloudSteps.length) {
+                const trace = cloudSteps.map((st, i) => `${i + 1}. [${st.tool}] ${st.arg}\n${st.preview}`).join('\n\n');
+                ans = `<think>已通过云端多步引擎执行 ${cloudSteps.length} 次真实联网工具：\n${trace}</think>\n${data.reply}`;
               } else {
                 ans = data.reply;
               }
@@ -3069,16 +3853,74 @@ async function chatWithActiveBot(text) {
         } finally { clearTimeout(timer); }
       } catch {}
     }
+    const otherBots = listBots().filter(b => b.id !== bot.id);
     if (!ans) {
-      const sys = bot.rules ? [{ role: 'system', content: bot.rules }] : [];
-      ans = await aiComplete([...sys, ...ctxMsgs]);
+      const peerHint = otherBots.length
+        ? `你可后台静默联系的其他 Bot：${otherBots.map(b => `${b.name}${b.rules ? `(${b.rules.slice(0, 22)})` : ''}`).join('、')}。如任务需要交给某位 Bot 协同，可输出 [[MSG_BOT:对方Bot名|具体委托内容]]，系统会后台静默通讯并把结果交回给你，不会打扰用户。`
+        : '';
+      const cardHint = '如需用户点击卡片确认后再执行关键任务，可在回复末尾另起一行输出 [[CONFIRM:标题|目标或链接|简短说明|确认后指令]]；如产出关键链接/PR/报告卡片，可输出 [[CARD:来源|标题|副标题|详情|https://链接]]。';
+      const sysContent = [bot.rules || '', peerHint, cardHint].filter(Boolean).join('\n\n');
+      ans = await aiComplete([{ role: 'system', content: sysContent }, ...ctxMsgs]);
     }
-    thread.messages.push({ role: 'assistant', content: String(ans || '未收到回复') });
+    // 处理 Bot 间静默后台通讯（最多 2 次接力，绝不刷屏、绝不死循环）
+    const relayParsed = parseBotRelayDirectives(String(ans || ''));
+    if (relayParsed.relays.length && otherBots.length) {
+      const relayNotes = [];
+      for (const rel of relayParsed.relays.slice(0, 2)) {
+        const target = otherBots.find(b => b.name.toLowerCase() === rel.targetName.toLowerCase() || b.name.includes(rel.targetName));
+        if (!target) continue;
+        renderChatBox(thread, `后台正与「${target.name}」静默协同…`);
+        const targetReply = await relayBotToBotMessage(bot, target, rel.message);
+        thread.messages.push({ role: 'handoff', targetId: target.id, targetName: target.name, summary: rel.message, at: Date.now() });
+        relayNotes.push(`[${target.name} 回复]: ${targetReply}`);
+      }
+      if (relayNotes.length) {
+        renderChatBox(thread, '已收到后台协作结果，正在汇总…');
+        const synth = await aiComplete([
+          ...(bot.rules ? [{ role: 'system', content: bot.rules }] : []),
+          ...ctxMsgs,
+          { role: 'user', content: `以下为其他 Bot 在后台静默协作返回的结果（不要输出 MSG_BOT 标签），请直接整理成清晰结果回复用户：\n${relayNotes.join('\n')}` }
+        ]);
+        ans = String(synth || relayParsed.text || relayNotes.join('\n'));
+      } else {
+        ans = relayParsed.text || ans;
+      }
+    }
+    const parsed = parseBotCardDirectives(String(ans || '未收到回复'));
+    if (parsed.text) {
+      thread.messages.push({ role: 'assistant', content: parsed.text, at: Date.now() });
+    }
+    for (const c of parsed.cards) {
+      thread.messages.push({ role: 'card', card: { id: `card-${uid()}`, ...c }, at: Date.now() });
+    }
+    if (cloudSteps.length && !parsed.cards.length) {
+      const allText = `${parsed.text}\n${cloudSteps.map(s => `${s.arg} ${s.preview}`).join('\n')}`;
+      const urlHit = allText.match(/https?:\/\/[^\s<>"')]+/);
+      thread.messages.push({
+        role: 'card',
+        card: {
+          id: `card-${uid()}`,
+          kind: 'result',
+          icon: 'cloud',
+          provider: '云端 Agent',
+          status: 'Done',
+          statusTone: 'ok',
+          title: q.slice(0, 36),
+          meta: urlHit ? urlHit[0] : cloudSteps.map(s => s.tool).join(' · '),
+          badge: `${cloudSteps.length} 步工具`,
+          detail: cloudSteps.map(s => `${s.tool}: ${s.arg}`).join('；').slice(0, 140),
+          url: urlHit ? urlHit[0] : '',
+          secondaryLabel: urlHit ? '复制链接' : '',
+          primaryLabel: urlHit ? '打开链接' : ''
+        },
+        at: Date.now()
+      });
+    }
     thread.updatedAt = Date.now();
     saveTaskThreads();
     renderChatBox(thread);
   } catch (err) {
-    thread.messages.push({ role: 'assistant', content: `连接模型失败：${err?.message || '请检查 API 地址、模型名或密钥'}`, needKey: true });
+    thread.messages.push({ role: 'assistant', content: `连接模型失败：${err?.message || '请检查 API 地址、模型名或密钥'}`, needKey: true, at: Date.now() });
     saveTaskThreads();
     renderChatBox(thread);
   } finally {
@@ -3158,6 +4000,14 @@ function showAgentLiveCard({ title, body, onOpen = null, pinSpec = null, threadI
 function syncPluginStates() {
   const readerOn = isPluginEnabled('reading-cosmos');
   document.documentElement.classList.toggle('plugin-reader-off', !readerOn);
+  if (!$('#zone-chat-modal')?.classList.contains('hidden')) {
+    if (activeGroupId) {
+      const grp = listGroups().find(g => g.id === activeGroupId);
+      if (grp) renderGroupMentionBar(grp);
+    } else {
+      renderBotMountedBar(getActiveBot());
+    }
+  }
   if (!readerOn) {
     $('#zone-agent-hub')?.classList.remove('compact');
     if ($('#reader')?.classList.contains('active')) closeBook();
@@ -3167,10 +4017,12 @@ function syncPluginStates() {
   }
 }
 
-function openBotConversation(bot, { fresh = false } = {}) {
+function openBotConversation(bot, { fresh = false, created = false } = {}) {
   if (!bot) return;
+  activeGroupId = null;
   setActiveBot(bot.id);
-  let thread = !fresh ? taskThreads.find(t => t.botId === bot.id) : null;
+  if (created) newlyBornBotId = bot.id;
+  let thread = !fresh ? taskThreads.find(t => t.botId === bot.id && !t.groupId) : null;
   if (!thread) {
     thread = {
       id: `th-${Date.now().toString(36)}`,
@@ -3187,49 +4039,252 @@ function openBotConversation(bot, { fresh = false } = {}) {
   renderChatBox(thread);
 }
 
+function openGroupConversation(group) {
+  if (!group) return;
+  activeGroupId = group.id;
+  let thread = taskThreads.find(t => t.groupId === group.id);
+  if (!thread) {
+    thread = {
+      id: `th-${group.id}`,
+      title: group.name,
+      groupId: group.id,
+      messages: [],
+      updatedAt: Date.now()
+    };
+    taskThreads.unshift(thread);
+    saveTaskThreads();
+  }
+  activeThreadId = thread.id;
+  renderAgentHub();
+  renderChatBox(thread);
+}
+
+function formatShortTime(ts) {
+  if (!ts) return '';
+  const d = new Date(ts);
+  const now = new Date();
+  if (d.toDateString() === now.toDateString()) {
+    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  }
+  const diffDays = Math.floor((now - d) / 86400000);
+  if (diffDays <= 1) return '昨天';
+  return `${d.getMonth() + 1}/${d.getDate()}`;
+}
+
 function renderBotRoster() {
   const roster = $('#zone-bot-roster');
   if (!roster) return;
   const bots = listBots();
+  const groups = listGroups();
   const primary = getPrimaryBot();
-  const others = bots.filter(b => b.id !== primary.id);
-  // 其它 Bot 按最近对话时间自然排序，顶部主位永不移动
-  others.sort((a, b) => {
-    const ta = taskThreads.find(t => t.botId === a.id)?.updatedAt || 0;
-    const tb = taskThreads.find(t => t.botId === b.id)?.updatedAt || 0;
-    return tb - ta;
-  });
+  const q = ($('#zone-bot-search')?.value || '').trim().toLowerCase();
+
+  const entries = [];
+  for (const g of groups) {
+    const th = taskThreads.find(t => t.groupId === g.id);
+    const membersText = (g.memberIds || []).map(id => bots.find(b => b.id === id)?.name || '').join(' ');
+    const msgsText = (th?.messages || []).filter(m => !m.internal).map(m => m.content || '').join(' ').toLowerCase();
+    if (!q || (g.name || '').toLowerCase().includes(q) || membersText.toLowerCase().includes(q) || msgsText.includes(q)) {
+      entries.push({ kind: 'group', group: g, th, updatedAt: th?.updatedAt || g.createdAt || 0 });
+    }
+  }
+  const botCandidates = q ? bots : bots.filter(b => b.id !== primary.id);
+  for (const b of botCandidates) {
+    const th = taskThreads.find(t => t.botId === b.id && !t.groupId);
+    const msgsText = (th?.messages || []).filter(m => !m.internal).map(m => m.content || '').join(' ').toLowerCase();
+    if (!q || (b.name || '').toLowerCase().includes(q) || (b.rules || '').toLowerCase().includes(q) || msgsText.includes(q)) {
+      entries.push({ kind: 'bot', bot: b, th, updatedAt: th?.updatedAt || 0 });
+    }
+  }
+  entries.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+
   roster.replaceChildren();
-  if (!others.length) { roster.classList.add('hidden'); return; }
+  if (!entries.length) { roster.classList.add('hidden'); return; }
   roster.classList.remove('hidden');
 
-  for (const b of others) {
+  for (const entry of entries) {
     const item = document.createElement('button');
     item.type = 'button';
     item.className = 'roster-item';
     const av = document.createElement('div');
     av.className = 'roster-av';
-    av.innerHTML = renderBotSvg(b.shape, b.accent);
     const txt = document.createElement('div');
     txt.className = 'roster-txt';
+    const top = document.createElement('div');
+    top.className = 'roster-top';
     const nameEl = document.createElement('strong');
-    nameEl.textContent = b.name;
-    const th = taskThreads.find(t => t.botId === b.id);
-    const lastMsg = th?.messages?.[th.messages.length - 1]?.content || '';
+    const timeEl = document.createElement('span');
+    timeEl.className = 'roster-time';
+    timeEl.textContent = formatShortTime(entry.th?.updatedAt || entry.updatedAt);
+    top.append(nameEl, timeEl);
+
     const subEl = document.createElement('span');
-    subEl.textContent = lastMsg ? String(lastMsg).replace(/<think>[\s\S]*?<\/think>\s*/, '').slice(0, 40) : (b.rules ? b.rules.slice(0, 32) : '轻触进入对话');
-    txt.append(nameEl, subEl);
+    const visibleMsgs = (entry.th?.messages || []).filter(m => m.role !== 'divider' && !m.internal);
+    const lastEntry = visibleMsgs[visibleMsgs.length - 1];
+
+    if (entry.kind === 'group') {
+      const g = entry.group;
+      av.innerHTML = renderGroupAvatarHtml(g.memberIds);
+      nameEl.textContent = g.name;
+      const lastTxt = lastEntry?.role === 'card'
+        ? `[${lastEntry.card?.status || '卡片'}] ${lastEntry.card?.title || ''}`
+        : lastEntry?.content
+          ? `${lastEntry.botName ? `${lastEntry.botName}: ` : ''}${String(lastEntry.content).replace(/<think>[\s\S]*?<\/think>\s*/, '')}`
+          : `群聊 · ${(g.memberIds || []).length} 个 Bot`;
+      subEl.textContent = lastTxt.slice(0, 42);
+      item.onclick = () => openGroupConversation(g);
+    } else {
+      const b = entry.bot;
+      av.innerHTML = renderBotSvg(b.shape, b.accent, b.id);
+      if (newlyBornBotId && newlyBornBotId === b.id) item.classList.add('bot-born');
+      nameEl.textContent = b.name;
+      let preview = '';
+      if (entry.th?.lastHandoff && (!lastEntry?.at || entry.th.lastHandoff.at >= lastEntry.at)) {
+        preview = `➤ 已发消息给 ${entry.th.lastHandoff.to}: ${entry.th.lastHandoff.text}`;
+      } else if (lastEntry?.role === 'handoff') {
+        preview = `➤ 已发消息给 ${lastEntry.targetName}: ${lastEntry.summary || ''}`;
+      } else if (lastEntry?.role === 'card') {
+        preview = `[${lastEntry.card?.status || '卡片'}] ${lastEntry.card?.title || ''}`;
+      } else if (lastEntry?.content) {
+        preview = String(lastEntry.content).replace(/<think>[\s\S]*?<\/think>\s*/, '');
+      }
+      subEl.textContent = preview ? preview.slice(0, 42) : (b.rules ? b.rules.slice(0, 32) : '轻触进入对话');
+      item.onclick = () => openBotConversation(b);
+    }
+    txt.append(top, subEl);
     item.append(av, txt);
-    item.onclick = () => openBotConversation(b);
     roster.appendChild(item);
   }
+}
+
+function closeProfileSheet() {
+  const mask = document.getElementById('zone-profile-mask');
+  if (!mask || mask.classList.contains('hidden')) return false;
+  mask.classList.add('hidden');
+  return true;
+}
+
+function formatTokens(n) {
+  const v = Number(n || 0);
+  if (v >= 1000000) return (v / 1000000).toFixed(2) + 'M';
+  if (v >= 1000) return (v / 1000).toFixed(1) + 'K';
+  return String(v);
+}
+
+function openProfileSheet() {
+  let mask = document.getElementById('zone-profile-mask');
+  if (!mask) {
+    mask = document.createElement('div');
+    mask.id = 'zone-profile-mask';
+    mask.className = 'bots-mask hidden';
+    document.body.appendChild(mask);
+  }
+  const draw = () => {
+    const u = getAiUsage();
+    const cfg = getAiConfig();
+    const pct = Math.min(100, Math.round((u.monthTokens / Math.max(1, u.budget)) * 100));
+    const appMap = { system: '跟随系统', light: '浅色', dark: '深色' };
+    mask.innerHTML = `
+      <div class="bots-sheet" role="dialog" aria-label="Zone 账号与 API 用量">
+        <div class="bots-head">
+          <div>
+            <h3>我的 Zone</h3>
+            <p>纯 BYOK · 所有 AI 额度均来自你自己的 API Key</p>
+          </div>
+          <button type="button" class="bots-close" data-p-act="close">完成</button>
+        </div>
+        <div class="prof-group">
+          <button type="button" class="prof-row" data-p-act="ai-cfg">
+            <div class="prof-row-main">
+              <strong>AI 模型与密钥（BYOK）</strong>
+              <span>${aiConfigured() ? `${cfg.model} · 已配置自有密钥` : '未配置密钥 · 点此填入'}</span>
+            </div>
+            <span class="prof-row-val">配置 ›</span>
+          </button>
+          <button type="button" class="prof-row" data-p-act="usage-budget">
+            <div class="prof-row-main">
+              <strong>API 用量（本月）</strong>
+              <span>今日 ${formatTokens(u.todayTokens)} · 本月 ${formatTokens(u.monthTokens)} / ${formatTokens(u.budget)}（${u.calls} 次调用）</span>
+            </div>
+            <span class="prof-row-val">${pct}% ›</span>
+          </button>
+          <div class="prof-usage-bar"><div class="prof-usage-fill" style="width:${pct}%"></div></div>
+          <button type="button" class="prof-row" data-p-act="usage-reset">
+            <div class="prof-row-main">
+              <strong>重置用量统计</strong>
+              <span>清零本机记录的今日与本月 Token 计数</span>
+            </div>
+            <span class="prof-row-val">清零</span>
+          </button>
+        </div>
+        <div class="prof-group">
+          <button type="button" class="prof-row" data-p-act="plugins">
+            <div class="prof-row-main">
+              <strong>连接应用、插件与主题</strong>
+              <span>Phone-Use · Computer-Use · MCP · 阅读器</span>
+            </div>
+            <span class="prof-row-val">›</span>
+          </button>
+          <button type="button" class="prof-row" data-p-act="automations">
+            <div class="prof-row-main">
+              <strong>定时任务与新闻推送</strong>
+              <span>自定义周期运行与推送任务</span>
+            </div>
+            <span class="prof-row-val">›</span>
+          </button>
+          <button type="button" class="prof-row" data-p-act="import-mem">
+            <div class="prof-row-main">
+              <strong>导入外部记忆（Import Memory）</strong>
+              <span>支持导入 Markdown / TXT / 文档到知识库</span>
+            </div>
+            <span class="prof-row-val">›</span>
+          </button>
+        </div>
+        <div class="prof-group">
+          <button type="button" class="prof-row" data-p-act="appearance">
+            <div class="prof-row-main">
+              <strong>外观</strong>
+              <span>界面浅色 / 深色 / 跟随系统</span>
+            </div>
+            <span class="prof-row-val">${appMap[appearancePref()] || '跟随系统'} ›</span>
+          </button>
+          <div class="prof-row">
+            <div class="prof-row-main">
+              <strong>安全与权限审批</strong>
+              <span>付款 / 删除 / 正式发送强拦截 · 内网 SSRF 防护</span>
+            </div>
+            <span class="prof-row-val">已开启</span>
+          </div>
+        </div>
+      </div>`;
+    mask.onclick = e => { if (e.target === mask) closeProfileSheet(); };
+    mask.querySelector('[data-p-act="close"]').onclick = () => closeProfileSheet();
+    mask.querySelector('[data-p-act="ai-cfg"]').onclick = () => { closeProfileSheet(); openAiSettingsDialog(); };
+    mask.querySelector('[data-p-act="usage-budget"]').onclick = () => {
+      const nextBudget = u.budget === 1000000 ? 5000000 : u.budget === 5000000 ? 10000000 : u.budget === 10000000 ? 500000 : 1000000;
+      setAiBudget(nextBudget);
+      toast(`已将月度用量参考上限设为 ${formatTokens(nextBudget)} tokens`, 2400);
+      draw();
+    };
+    mask.querySelector('[data-p-act="usage-reset"]').onclick = () => {
+      resetAiUsage();
+      toast('已清零本地 API 用量统计', 2000);
+      draw();
+    };
+    mask.querySelector('[data-p-act="plugins"]').onclick = () => { closeProfileSheet(); openBotsFromHub({ initialTab: 'plugins' }); };
+    mask.querySelector('[data-p-act="automations"]').onclick = () => { closeProfileSheet(); openBotsFromHub({ initialTab: 'automations' }); };
+    mask.querySelector('[data-p-act="import-mem"]').onclick = () => { closeProfileSheet(); $('#file-input')?.click(); };
+    mask.querySelector('[data-p-act="appearance"]').onclick = () => { cycleAppearance(); draw(); };
+  };
+  draw();
+  mask.classList.remove('hidden');
 }
 
 function renderAgentHub() {
   syncPluginStates();
   const primary = getPrimaryBot();
   const glyphEl = $('#zone-hero-glyph');
-  if (glyphEl) glyphEl.innerHTML = renderBotSvg(primary.shape, primary.accent);
+  if (glyphEl) glyphEl.innerHTML = renderBotSvg(primary.shape, primary.accent, primary.id);
   const nameEl = $('#zone-hero-name');
   if (nameEl) nameEl.textContent = primary.name;
   renderBotRoster();
@@ -3252,12 +4307,13 @@ function renderAgentHub() {
   }
 }
 
-function launchPluginById(id) {
+function launchPluginById(id, bot = getActiveBot()) {
+  const targetBot = bot || getActiveBot();
   if (id === 'sichao') { openSichaoSheet(); return; }
   if (id === 'phone-use') { command.run('开启手机控屏'); return; }
   if (id === 'computer-use') {
     const curUrl = (() => { try { return localStorage.getItem('zone-cu-bridge') || ''; } catch { return ''; } })();
-    openBotConversation(getActiveBot());
+    openBotConversation(targetBot);
     const inp = $('#zone-chat-input');
     if (inp) {
       inp.value = curUrl ? `电脑控屏 ` : `连接电脑 http://192.168.1.100:8765`;
@@ -3266,7 +4322,11 @@ function launchPluginById(id) {
     toast(curUrl ? `已绑定本地电脑桥接：${curUrl}` : '输入电脑桥接地址即可遥控本地电脑', 3400);
     return;
   }
-  if (id === 'reading-cosmos') { showPane('graph', { whisper: true }); return; }
+  if (id === 'reading-cosmos') {
+    openBotConversation(targetBot);
+    openBotReaderSheet();
+    return;
+  }
 }
 async function runAutomationItem(auto, opts = {}) {
   if (opts?.disabled) {
@@ -3303,18 +4363,28 @@ async function runAutomationItem(auto, opts = {}) {
   }
 }
 const openBotsFromHub = (opts = {}) => openBotStudio({
-  onSelect: bot => openBotConversation(bot),
+  onSelect: (bot, meta) => openBotConversation(bot, { created: !!meta?.created }),
+  onSelectGroup: grp => openGroupConversation(grp),
   onStatus: msg => { renderAgentHub(); if (!$('#zone-chat-modal')?.classList.contains('hidden')) renderChatBox(taskThreads.find(t => t.id === activeThreadId)); toast(msg, 2600); },
   onLaunchPlugin: launchPluginById,
   onRunAutomation: runAutomationItem,
   ...opts
 });
 $('#zone-hero-card')?.addEventListener('click', () => openBotConversation(getPrimaryBot()));
+$('#btn-hub-profile')?.addEventListener('click', () => openProfileSheet());
 $('#btn-hub-newbot')?.addEventListener('click', () => openBotsFromHub({ startNew: true }));
 $('#btn-hub-plugins')?.addEventListener('click', () => openBotsFromHub({ initialTab: 'plugins' }));
+$('#zone-bot-search')?.addEventListener('input', () => renderBotRoster());
 $('#btn-chat-back')?.addEventListener('click', () => closeBotChat());
-$('#btn-chat-botmeta')?.addEventListener('click', () => openBotsFromHub({ editBotId: getActiveBot().id }));
-$('#btn-chat-new')?.addEventListener('click', () => openBotConversation(getActiveBot(), { fresh: true }));
+$('#btn-chat-botmeta')?.addEventListener('click', () => {
+  if (activeGroupId) openBotsFromHub({ editGroupId: activeGroupId });
+  else openBotsFromHub({ editBotId: getActiveBot().id });
+});
+$('#btn-chat-plugins')?.addEventListener('click', () => {
+  if (activeGroupId) openBotsFromHub({ editGroupId: activeGroupId });
+  else openBotPluginsSheet(getActiveBot());
+});
+$('#btn-chat-new')?.addEventListener('click', () => insertNewTopicDivider());
 $('#zone-chat-mic')?.addEventListener('click', () => command.openBar({ listen: true }));
 $('#zone-chat-input')?.addEventListener('focus', () => $('#zone-chat-modal')?.classList.add('typing'));
 $('#zone-chat-input')?.addEventListener('blur', () => $('#zone-chat-modal')?.classList.remove('typing'));
@@ -3324,6 +4394,11 @@ $('#zone-chat-form')?.addEventListener('submit', async e => {
   const text = (inp?.value || '').trim();
   if (!text) { command.openBar({ listen: true }); return; }
   inp.value = '';
+  if (activeGroupId) {
+    await chatWithActiveGroup(text);
+    renderAgentHub();
+    return;
+  }
   const ops = parseNaturalCommands(text, { reading: false, pane: currentPane() });
   if (ops.length && ops[0].op !== 'askAi') {
     await command.run(text);
@@ -3338,4 +4413,4 @@ renderAgentHub();
 consumeLaunchDeepLink(openDeepLink);
 syncToAndroidWidget();
 
-window.__app = { db, openBook, closeBook, importFiles, importBlob, importArticleUrl, handleBack, openDeepLink, openMicroApp, closeMicroApp, isMicroAppOpen, pinToDesktop, get engine() { return engine; }, renderLibrary, stacks: { list: listStacks }, runCommand: text => command.run(text), openCommand: opts => command.openBar(opts), openPeek: openBookPeek, closePeek: closeBookPeek, openAuthGate, getAuthUser, getOpdsUrl, setOpdsUrl };
+window.__app = { db, openBook, closeBook, importFiles, importBlob, importArticleUrl, handleBack, openDeepLink, openMicroApp, closeMicroApp, isMicroAppOpen, pinToDesktop, postChatCard, requestChatConfirm, openBotConversation, openGroupConversation, relayBotToBotMessage, get engine() { return engine; }, renderLibrary, stacks: { list: listStacks }, runCommand: text => command.run(text), openCommand: opts => command.openBar(opts), openPeek: openBookPeek, closePeek: closeBookPeek, openAuthGate, getAuthUser, getOpdsUrl, setOpdsUrl };

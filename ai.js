@@ -1,7 +1,47 @@
 // 兼容 OpenAI 的解释与问答。密钥只留在 localStorage，调用方在没有密钥时走本地要点。
 
 const KEY = 'rr-ai';
+const USAGE_KEY = 'zone-ai-usage-v1';
 const DEFAULTS = { baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o-mini', apiKey: '' };
+
+function todayTag() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+function monthTag() {
+  return todayTag().slice(0, 7);
+}
+export function getAiUsage() {
+  const def = { month: monthTag(), day: todayTag(), todayTokens: 0, monthTokens: 0, calls: 0, budget: 1000000, lastModel: '' };
+  try {
+    const u = Object.assign({}, def, JSON.parse(localStorage.getItem(USAGE_KEY) || '{}'));
+    if (u.month !== monthTag()) { u.month = monthTag(); u.monthTokens = 0; u.calls = 0; }
+    if (u.day !== todayTag()) { u.day = todayTag(); u.todayTokens = 0; }
+    return u;
+  } catch { return def; }
+}
+export function recordAiUsage(tokens, model = '') {
+  const n = Math.max(0, Math.round(Number(tokens) || 0));
+  const u = getAiUsage();
+  u.todayTokens += n;
+  u.monthTokens += n;
+  u.calls += 1;
+  if (model) u.lastModel = model;
+  try { localStorage.setItem(USAGE_KEY, JSON.stringify(u)); } catch {}
+  return u;
+}
+export function setAiBudget(tokens) {
+  const u = getAiUsage();
+  u.budget = Math.max(10000, Math.round(Number(tokens) || 1000000));
+  try { localStorage.setItem(USAGE_KEY, JSON.stringify(u)); } catch {}
+  return u;
+}
+export function resetAiUsage() {
+  const u = getAiUsage();
+  u.todayTokens = 0; u.monthTokens = 0; u.calls = 0;
+  try { localStorage.setItem(USAGE_KEY, JSON.stringify(u)); } catch {}
+  return u;
+}
 
 export function getAiConfig() {
   try { return Object.assign({}, DEFAULTS, JSON.parse(localStorage.getItem(KEY) || '{}')); }
@@ -60,6 +100,9 @@ export async function complete(messages, override) {
   const reasoning = msgObj.reasoning_content;
   if (!text) throw new Error('模型没有返回文字');
   const out = String(text).trim();
+  const realTotal = Number(data?.usage?.total_tokens || 0);
+  const est = Math.ceil((JSON.stringify(messages).length + out.length + String(reasoning || '').length) * 0.6);
+  recordAiUsage(realTotal > 0 ? realTotal : est, cfg.model || DEFAULTS.model);
   return reasoning ? `<think>${String(reasoning).trim()}</think>\n${out}` : out;
 }
 

@@ -51,9 +51,7 @@
           <div id="import-status" class="status hidden"></div>
           <section id="zone-agent-hub" class="agent-hub" aria-label="Zone 智能体中枢">
             <div class="agent-top-acts">
-              <button id="btn-hub-plugins" class="agent-icon-btn" type="button" aria-label="定时任务与插件主题" title="定时任务与插件">
-                <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="6.5" height="6.5" rx="2"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="2"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="2"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="2"/></svg>
-              </button>
+              <button id="btn-hub-profile" class="agent-avatar-btn" type="button" aria-label="账号、API 用量与设置" title="用量与设置">Z</button>
               <button id="btn-hub-newbot" class="agent-icon-btn" type="button" aria-label="新建 Bot" title="新建 Bot">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
               </button>
@@ -67,6 +65,15 @@
             <div id="zone-live-card" class="agent-live hidden" aria-live="polite"></div>
             <div id="zone-bot-roster" class="bot-roster hidden" aria-label="Bot 对话列表"></div>
             <div id="zone-microapp-strip" class="agent-apps hidden" aria-label="我的微应用"></div>
+            <div class="agent-bottom-bar" aria-label="快捷入口">
+              <button id="btn-hub-plugins" class="agent-icon-btn" type="button" aria-label="插件与定时任务" title="插件与定时任务">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="6.5" height="6.5" rx="2"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="2"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="2"/><path d="M16.75 13.75v6M13.75 16.75h6"/></svg>
+              </button>
+              <label class="agent-search-pill">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.4"/><path d="M20 20l-4.3-4.3"/></svg>
+                <input id="zone-bot-search" type="search" placeholder="搜索" autocomplete="off" aria-label="搜索 Bot 或对话">
+              </label>
+            </div>
           </section>
           <div id="empty" class="empty empty-quiet hidden" aria-hidden="true">
             <button id="btn-empty-import" class="sr" type="button" tabindex="-1">导入</button>
@@ -355,12 +362,17 @@
       <span id="chat-head-av" class="bot-chat-av" aria-hidden="true"></span>
       <span id="chat-head-name" class="bot-chat-name">Zone</span>
     </button>
-    <button id="btn-chat-new" class="bot-chat-pill" type="button">新对话</button>
+    <div class="bot-chat-right">
+      <button id="btn-chat-new" class="bot-chat-pill" type="button">新话题</button>
+    </div>
   </header>
-  <div id="zone-chat-threads" class="bot-chat-threads hidden" aria-label="该 Bot 的任务线程"></div>
+  <div id="zone-chat-plugins-bar" class="bot-mounted-bar hidden" aria-label="当前 Bot 已加载插件"></div>
   <div id="zone-chat-messages" class="bot-chat-messages" aria-live="polite"></div>
   <form id="zone-chat-form" class="bot-chat-foot">
     <div class="agent-capsule">
+      <button id="btn-chat-plugins" class="chat-plus-btn" type="button" aria-label="在当前 Bot 加载插件" title="为当前 Bot 加载或管理插件">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+      </button>
       <input id="zone-chat-input" type="text" placeholder="发消息，或直接说话…" autocomplete="off" enterkeyhint="send" aria-label="发消息给 Bot">
       <button id="zone-chat-mic" class="agent-mic" type="button" aria-label="语音输入" title="直接说话">
         <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="4" width="6" height="10" rx="3"/><path d="M6.5 11.5a5.5 5.5 0 0 0 11 0M12 17v3.2M9 20.2h6"/></svg>

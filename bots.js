@@ -4,6 +4,7 @@
 // 3) 开放插件与主题（Phone-Use 手机操控 / 外部 MCP & DeepSeek 互通 / 主题插件）
 
 const BOTS_KEY = 'zone-bots-v3';
+const GROUPS_KEY = 'zone-groups-v1';
 const ACTIVE_KEY = 'zone-active-bot-id';
 const PRIMARY_KEY = 'zone-primary-bot-id';
 const PLUGINS_KEY = 'zone-skill-plugins-v4';
@@ -17,7 +18,8 @@ const DEFAULT_BOTS = [
     role: '轻触形象切换样式、写规则、管定时任务与插件',
     rules: '',
     shape: 'onigiri',
-    accent: '#111111'
+    accent: '#111111',
+    plugins: ['mcp-bridge']
   }
 ];
 
@@ -33,10 +35,11 @@ const DEFAULT_AUTOMATIONS = [
 ];
 
 const DEFAULT_PLUGINS = [
-  { id: 'phone-use', name: 'Phone-Use 手机操控', desc: 'Android 原生无障碍跨 App 执行与悬浮急停', enabled: true, launchable: true },
-  { id: 'computer-use', name: 'Computer-Use 连接本地电脑', desc: '对接本地桌面桥接节点（OpenClaw / 桌面守护进程），手机遥控电脑', enabled: true, launchable: true },
-  { id: 'mcp-bridge', name: '云端 Skills / MCP 互通', desc: '兼容 MCP / DeepSeek / Codex 等开放技能协议，随时接入', enabled: true, launchable: false },
-  { id: 'reading-cosmos', name: '阅读器', desc: '按需打开沉浸阅读、文档/音视频小册子与知识星海', enabled: true, launchable: true }
+  { id: 'reading-cosmos', name: '阅读器', short: '阅读器', desc: '仅在已加载此插件的 Bot 对话中展示书籍、文档与知识星海', enabled: true, launchable: true },
+  { id: 'phone-use', name: 'Phone-Use 手机操控', short: '手机控屏', desc: 'Android 原生无障碍跨 App 执行、卡片确认与悬浮急停', enabled: true, launchable: true },
+  { id: 'computer-use', name: 'Computer-Use 本地电脑', short: '本地电脑', desc: '对接本地桌面桥接节点（OpenClaw / Codex / 桌面操控），卡片确认执行', enabled: true, launchable: true },
+  { id: 'mcp-bridge', name: '云端 Skills / MCP 联网', short: '云端联网', desc: '实时联网检索、GitHub / ArXiv 调研与外部 MCP 技能互通', enabled: true, launchable: false },
+  { id: 'sichao', name: '思潮新闻推送', short: '思潮', desc: '在 Bot 对话中拉取全球 AI 与科技前沿信号卡片', enabled: true, launchable: true }
 ];
 
 const THEME_PLUGINS = [
@@ -80,6 +83,56 @@ function saveBots(list) {
   syncToAndroidWidget(list);
 }
 
+export function listGroups() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(GROUPS_KEY) || 'null');
+    if (Array.isArray(saved)) return saved;
+  } catch {}
+  return [];
+}
+
+function saveGroups(list) {
+  try { localStorage.setItem(GROUPS_KEY, JSON.stringify(list)); } catch {}
+}
+
+export function createGroup({ name = '', memberIds = [] } = {}) {
+  const bots = listBots();
+  const cleanIds = Array.from(new Set(memberIds)).filter(id => bots.some(b => b.id === id));
+  if (!cleanIds.length && bots.length) cleanIds.push(bots[0].id);
+  const autoName = cleanIds.map(id => bots.find(b => b.id === id)?.name).filter(Boolean).slice(0, 3).join('、') || 'Bot 群聊';
+  const group = {
+    id: `grp-${Date.now().toString(36)}`,
+    name: String(name || '').trim() || autoName,
+    memberIds: cleanIds,
+    createdAt: Date.now()
+  };
+  const next = [group, ...listGroups()];
+  saveGroups(next);
+  return group;
+}
+
+export function updateGroup(id, patch = {}) {
+  const list = listGroups();
+  const idx = list.findIndex(g => g.id === id);
+  if (idx < 0) return null;
+  list[idx] = { ...list[idx], ...patch };
+  saveGroups(list);
+  return list[idx];
+}
+
+export function deleteGroup(id) {
+  const next = listGroups().filter(g => g.id !== id);
+  saveGroups(next);
+  return next;
+}
+
+export function renderGroupAvatarHtml(memberIds = []) {
+  const bots = listBots();
+  const members = (memberIds || []).map(id => bots.find(b => b.id === id)).filter(Boolean).slice(0, 4);
+  if (!members.length && bots[0]) members.push(bots[0]);
+  return `<div class="grp-av-grid grp-av-n${Math.min(4, members.length)}">${members.map(b => renderBotSvg(b.shape, b.accent, b.id)).join('')}</div>`;
+}
+
 export function listAutomations() {
   try {
     const saved = JSON.parse(localStorage.getItem(AUTO_KEY) || 'null');
@@ -95,7 +148,16 @@ function saveAutomations(list) {
 export function listPlugins() {
   try {
     const saved = JSON.parse(localStorage.getItem(PLUGINS_KEY) || 'null');
-    if (Array.isArray(saved) && saved.length) return saved;
+    if (Array.isArray(saved) && saved.length) {
+      const merged = saved.map(p => {
+        const def = DEFAULT_PLUGINS.find(d => d.id === p.id);
+        return def ? { ...def, ...p, short: p.short || def.short } : p;
+      });
+      for (const def of DEFAULT_PLUGINS) {
+        if (!merged.some(p => p.id === def.id)) merged.push({ ...def });
+      }
+      return merged;
+    }
   } catch {}
   return DEFAULT_PLUGINS.map(p => ({ ...p }));
 }
@@ -107,6 +169,39 @@ function savePlugins(list) {
 export function isPluginEnabled(id) {
   const hit = listPlugins().find(p => p.id === id);
   return hit ? !!hit.enabled : true;
+}
+
+export function getBotPlugins(botId) {
+  const bot = listBots().find(b => b.id === botId);
+  const raw = Array.isArray(bot?.plugins) ? bot.plugins : ['mcp-bridge'];
+  return raw.filter(pid => isPluginEnabled(pid));
+}
+
+export function isPluginMountedOnBot(botId, pluginId) {
+  return isPluginEnabled(pluginId) && getBotPlugins(botId).includes(pluginId);
+}
+
+export function toggleBotPlugin(botId, pluginId, forceVal) {
+  const list = listBots();
+  const idx = list.findIndex(b => b.id === botId);
+  if (idx < 0) return false;
+  const cur = Array.isArray(list[idx].plugins) ? [...list[idx].plugins] : ['mcp-bridge'];
+  const exists = cur.includes(pluginId);
+  const nextOn = typeof forceVal === 'boolean' ? forceVal : !exists;
+  const nextIds = nextOn ? (exists ? cur : [...cur, pluginId]) : cur.filter(x => x !== pluginId);
+  list[idx] = { ...list[idx], plugins: nextIds };
+  saveBots(list);
+  return nextOn;
+}
+
+export function setBotPlugins(botId, pluginIds) {
+  const list = listBots();
+  const idx = list.findIndex(b => b.id === botId);
+  if (idx < 0) return [];
+  const nextIds = Array.from(new Set(Array.isArray(pluginIds) ? pluginIds : []));
+  list[idx] = { ...list[idx], plugins: nextIds };
+  saveBots(list);
+  return nextIds;
 }
 
 export function getActiveThemePlugin() {
@@ -163,14 +258,28 @@ export function syncToAndroidWidget(list = listBots(), activeIndex = -1) {
   p.syncWidgetBots({ botsJson: JSON.stringify(slim), activeIndex: idx }).catch(() => {});
 }
 
-export function renderBotSvg(shape = 'onigiri', accent = '#111111') {
+function animTimingFor(seedStr) {
+  let h = 2166136261;
+  for (let i = 0; i < seedStr.length; i++) {
+    h ^= seedStr.charCodeAt(i);
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  const floatDur = (4.4 + ((h % 25) / 10)).toFixed(2);       // 4.40s ~ 6.80s
+  const floatDel = (((h >>> 5) % 58) / 10).toFixed(2);        // 0.00s ~ 5.70s
+  const eyeDur = (4.6 + (((h >>> 11) % 34) / 10)).toFixed(2); // 4.60s ~ 7.90s
+  const eyeDel = (((h >>> 17) % 66) / 10).toFixed(2);         // 0.00s ~ 6.50s
+  return `--float-dur:${floatDur}s;--float-del:-${floatDel}s;--eye-dur:${eyeDur}s;--eye-del:-${eyeDel}s`;
+}
+
+export function renderBotSvg(shape = 'onigiri', accent = '#111111', seed = '') {
   const spec = SHAPES.find(s => s.id === shape) || SHAPES.find(s => s.id === 'onigiri');
   const color = accent || '#111111';
   const ex1 = 41 + (spec.eyeDx || 0);
   const ex2 = 57 + (spec.eyeDx || 0);
   const ey = 43 + (spec.eyeDy || 0);
   const rot = spec.tilt || 0;
-  return `<svg class="bot-glyph" viewBox="0 0 100 100" aria-hidden="true">
+  const timing = animTimingFor(`${seed || ''}:${spec.id}:${color}`);
+  return `<svg class="bot-glyph" style="${timing}" viewBox="0 0 100 100" aria-hidden="true">
     <g transform="rotate(${rot} 50 50)">
       <path d="${spec.path}" fill="${color}" stroke="none"/>
       <g class="bot-eyes">
@@ -185,7 +294,7 @@ function esc(s) {
   return String(s || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
-export function openBotStudio({ onSelect, onStatus, onLaunchPlugin, onRunAutomation, initialTab = 'bots', startNew = false, editBotId = '' } = {}) {
+export function openBotStudio({ onSelect, onSelectGroup, onStatus, onLaunchPlugin, onRunAutomation, initialTab = 'bots', startNew = false, startNewGroup = false, editBotId = '', editGroupId = '' } = {}) {
   let mask = document.getElementById('zone-bots-mask');
   if (!mask) {
     mask = document.createElement('div');
@@ -195,8 +304,11 @@ export function openBotStudio({ onSelect, onStatus, onLaunchPlugin, onRunAutomat
   }
   let tab = initialTab;
   let editing = startNew
-    ? { isNew: true, name: '', role: '', rules: '', shape: 'onigiri', accent: '#9A6332' }
-    : (editBotId ? (() => { const h = listBots().find(x => x.id === editBotId); return h ? { ...h, isNew: false } : null; })() : null);
+    ? { isNew: true, name: '', role: '', rules: '', shape: 'onigiri', accent: '#9A6332', plugins: ['mcp-bridge'] }
+    : (editBotId ? (() => { const h = listBots().find(x => x.id === editBotId); return h ? { ...h, plugins: Array.isArray(h.plugins) ? [...h.plugins] : ['mcp-bridge'], isNew: false } : null; })() : null);
+  let editingGroup = startNewGroup
+    ? { isNew: true, name: '', memberIds: listBots().slice(0, 3).map(b => b.id) }
+    : (editGroupId ? (() => { const g = listGroups().find(x => x.id === editGroupId); return g ? { ...g, memberIds: [...(g.memberIds || [])], isNew: false } : null; })() : null);
   let addingAuto = false;
   let addingPlugin = false;
 
@@ -207,6 +319,90 @@ export function openBotStudio({ onSelect, onStatus, onLaunchPlugin, onRunAutomat
     const plugins = listPlugins();
     const curTheme = getActiveThemePlugin();
 
+    if (editingGroup) {
+      mask.innerHTML = `
+        <div class="bots-sheet" role="dialog" aria-label="${editingGroup.isNew ? '创建 Bot 群聊' : '管理群聊'}">
+          <div class="bots-head">
+            <h3>${editingGroup.isNew ? '创建群聊' : '群聊管理'}</h3>
+            <button type="button" class="bots-close" data-act="cancel-grp">返回</button>
+          </div>
+          ${editingGroup.isNew ? `
+            <div class="bots-seg" role="tablist">
+              <button type="button" role="tab" data-new-kind="bot">新建 Bot</button>
+              <button type="button" role="tab" class="on" data-new-kind="group">创建群聊</button>
+            </div>
+          ` : ''}
+          <div class="bots-form">
+            <input id="grp-f-name" class="bot-name-inp" type="text" placeholder="群聊名称（留空自动按成员命名）" value="${esc(editingGroup.name)}">
+            <div class="bots-list">
+              ${list.map(b => {
+                const picked = editingGroup.memberIds.includes(b.id);
+                return `
+                  <button type="button" class="bot-row ${picked ? 'active' : ''}" data-grp-mem="${esc(b.id)}">
+                    <div class="bot-avatar">${renderBotSvg(b.shape, b.accent)}</div>
+                    <div class="bot-meta">
+                      <strong>${esc(b.name)}</strong>
+                      <span>${esc(b.rules ? b.rules.slice(0, 28) : '可加入群聊协作')}</span>
+                    </div>
+                    <span class="grp-check ${picked ? 'on' : ''}">${picked ? '✓' : ''}</span>
+                  </button>`;
+              }).join('')}
+            </div>
+            ${list.length < 2 ? '<p class="sc-empty" style="padding:2px 0">提示：可先多建几个不同分工的 Bot，再拉入群聊一起协同。</p>' : ''}
+            <button type="button" class="bots-primary" data-act="save-grp">${editingGroup.isNew ? `创建群聊（已选 ${editingGroup.memberIds.length} 个 Bot）` : '保存群聊'}</button>
+            ${!editingGroup.isNew ? '<button type="button" class="bots-danger" data-act="del-grp">解散此群聊</button>' : ''}
+          </div>
+        </div>`;
+      mask.onclick = e => { if (e.target === mask) mask.classList.add('hidden'); };
+      mask.querySelector('[data-act="cancel-grp"]').onclick = () => {
+        if (startNew || startNewGroup || editGroupId) { mask.classList.add('hidden'); return; }
+        editingGroup = null; draw();
+      };
+      const swBot = mask.querySelector('[data-new-kind="bot"]');
+      if (swBot) swBot.onclick = () => {
+        editingGroup = null;
+        editing = { isNew: true, name: '', role: '', rules: '', shape: 'onigiri', accent: '#9A6332', plugins: ['mcp-bridge'] };
+        draw();
+      };
+      mask.querySelectorAll('[data-grp-mem]').forEach(btn => {
+        btn.onclick = () => {
+          editingGroup.name = mask.querySelector('#grp-f-name').value;
+          const id = btn.dataset.grpMem;
+          if (editingGroup.memberIds.includes(id)) {
+            if (editingGroup.memberIds.length > 1) editingGroup.memberIds = editingGroup.memberIds.filter(x => x !== id);
+          } else {
+            editingGroup.memberIds.push(id);
+          }
+          draw();
+        };
+      });
+      mask.querySelector('[data-act="save-grp"]').onclick = () => {
+        const name = mask.querySelector('#grp-f-name').value.trim();
+        if (!editingGroup.memberIds.length) return;
+        if (editingGroup.isNew) {
+          const grp = createGroup({ name, memberIds: editingGroup.memberIds });
+          editingGroup = null;
+          mask.classList.add('hidden');
+          onSelectGroup?.(grp);
+          onStatus?.(`已创建群聊「${grp.name}」`);
+          return;
+        }
+        const grp = updateGroup(editingGroup.id, { name: name || editingGroup.name, memberIds: editingGroup.memberIds });
+        editingGroup = null;
+        mask.classList.add('hidden');
+        if (grp) onSelectGroup?.(grp);
+        onStatus?.('已保存群聊成员与名称');
+      };
+      const delGrp = mask.querySelector('[data-act="del-grp"]');
+      if (delGrp) delGrp.onclick = () => {
+        deleteGroup(editingGroup.id);
+        editingGroup = null;
+        mask.classList.add('hidden');
+        onStatus?.('已解散群聊');
+      };
+      return;
+    }
+
     if (editing) {
       mask.innerHTML = `
         <div class="bots-sheet" role="dialog" aria-label="定制 Bot">
@@ -214,7 +410,13 @@ export function openBotStudio({ onSelect, onStatus, onLaunchPlugin, onRunAutomat
             <h3>${editing.isNew ? '新建 Bot' : '定制 Bot'}</h3>
             <button type="button" class="bots-close" data-act="cancel">返回</button>
           </div>
-          <div class="bots-preview">${renderBotSvg(editing.shape, editing.accent)}</div>
+          ${editing.isNew ? `
+            <div class="bots-seg" role="tablist">
+              <button type="button" role="tab" class="on" data-new-kind="bot">新建 Bot</button>
+              <button type="button" role="tab" data-new-kind="group">创建群聊</button>
+            </div>
+          ` : ''}
+          <div class="bots-preview ${editing.isNew || editing.justPicked ? 'bot-born' : ''}">${renderBotSvg(editing.shape, editing.accent, editing.id || 'preview')}</div>
           <div class="bots-form">
             <input id="bot-f-name" class="bot-name-inp" type="text" placeholder="给你的 Bot 起个名字" value="${esc(editing.name)}">
             <div class="bots-shape-grid">
@@ -229,7 +431,17 @@ export function openBotStudio({ onSelect, onStatus, onLaunchPlugin, onRunAutomat
             ${!editing.isNew && list.length > 1 ? `<button type="button" class="bots-danger" data-act="del">删除此 Bot</button>` : ''}
           </div>
         </div>`;
-      mask.querySelector('[data-act="cancel"]').onclick = () => { editing = null; draw(); };
+      mask.onclick = e => { if (e.target === mask) mask.classList.add('hidden'); };
+      mask.querySelector('[data-act="cancel"]').onclick = () => {
+        if (startNew || editBotId) { mask.classList.add('hidden'); return; }
+        editing = null; draw();
+      };
+      const swGrp = mask.querySelector('[data-new-kind="group"]');
+      if (swGrp) swGrp.onclick = () => {
+        editing = null;
+        editingGroup = { isNew: true, name: '', memberIds: list.slice(0, 3).map(b => b.id) };
+        draw();
+      };
       const pinBtn = mask.querySelector('[data-act="pin-primary"]');
       if (pinBtn) pinBtn.onclick = () => {
         setPrimaryBot(editing.id);
@@ -252,6 +464,7 @@ export function openBotStudio({ onSelect, onStatus, onLaunchPlugin, onRunAutomat
           editing.name = mask.querySelector('#bot-f-name').value;
           editing.rules = mask.querySelector('#bot-f-rules').value;
           editing.shape = b.dataset.shape;
+          editing.justPicked = true;
           draw();
         };
       });
@@ -270,7 +483,7 @@ export function openBotStudio({ onSelect, onStatus, onLaunchPlugin, onRunAutomat
         const role = rules ? rules.slice(0, 26) : '轻触形象切换样式、写规则、管定时任务与插件';
         const nextList = listBots();
         if (editing.isNew) {
-          const item = { id: `bot-${Date.now().toString(36)}`, name, role, rules, shape: editing.shape, accent: editing.accent };
+          const item = { id: `bot-${Date.now().toString(36)}`, name, role, rules, shape: editing.shape, accent: editing.accent, plugins: Array.isArray(editing.plugins) ? [...editing.plugins] : ['mcp-bridge'] };
           nextList.push(item);
           saveBots(nextList);
           setActiveBot(item.id);
@@ -404,15 +617,28 @@ export function openBotStudio({ onSelect, onStatus, onLaunchPlugin, onRunAutomat
         ` : `
           <div class="bots-list">
             ${plugins.map(pl => `
-              <div class="plugin-row" data-launch="${pl.launchable ? esc(pl.id) : ''}">
-                <div class="bot-meta">
-                  <strong>${esc(pl.name)}</strong>
-                  <span>${esc(pl.desc)}</span>
+              <div class="plugin-card">
+                <div class="plugin-row" data-launch="${pl.launchable ? esc(pl.id) : ''}">
+                  <div class="bot-meta">
+                    <strong>${esc(pl.name)}</strong>
+                    <span>${esc(pl.desc)}</span>
+                  </div>
+                  <label class="ios-switch" aria-label="开关 ${esc(pl.name)}">
+                    <input type="checkbox" data-toggle="${esc(pl.id)}" ${pl.enabled ? 'checked' : ''}>
+                    <span></span>
+                  </label>
                 </div>
-                <label class="ios-switch" aria-label="开关 ${esc(pl.name)}">
-                  <input type="checkbox" data-toggle="${esc(pl.id)}" ${pl.enabled ? 'checked' : ''}>
-                  <span></span>
-                </label>
+                ${pl.enabled ? `
+                  <div class="plugin-assign">
+                    <span class="plugin-assign-lbl">展示于 Bot 对话：</span>
+                    <div class="plugin-assign-chips">
+                      ${list.map(b => {
+                        const mounted = getBotPlugins(b.id).includes(pl.id);
+                        return `<button type="button" class="plugin-bot-chip ${mounted ? 'on' : ''}" data-assign-bot="${esc(b.id)}" data-assign-plug="${esc(pl.id)}">${esc(b.name)}${mounted ? ' ✓' : ''}</button>`;
+                      }).join('')}
+                    </div>
+                  </div>
+                ` : ''}
               </div>
             `).join('')}
           </div>
@@ -497,12 +723,23 @@ export function openBotStudio({ onSelect, onStatus, onLaunchPlugin, onRunAutomat
           if (hit) {
             hit.enabled = chk.checked;
             savePlugins(next);
-            onStatus?.(`${hit.name}已${hit.enabled ? '开启' : '关闭'}`);
-            if (hit.enabled && hit.launchable && id !== 'reading-cosmos' && onLaunchPlugin) {
-              mask.classList.add('hidden');
-              onLaunchPlugin(hit.id);
-            }
+            onStatus?.(`${hit.name}已${hit.enabled ? '开启（可在下方选定展示的 Bot）' : '关闭'}`);
+            draw();
           }
+        };
+      });
+      mask.querySelectorAll('[data-assign-bot]').forEach(btn => {
+        btn.onclick = e => {
+          e.stopPropagation();
+          const bid = btn.dataset.assignBot;
+          const pid = btn.dataset.assignPlug;
+          const botObj = listBots().find(x => x.id === bid);
+          const plugObj = listPlugins().find(x => x.id === pid);
+          const nowOn = toggleBotPlugin(bid, pid);
+          onStatus?.(nowOn
+            ? `已将「${plugObj?.short || plugObj?.name || pid}」加载到「${botObj?.name || 'Bot'}」对话`
+            : `已从「${botObj?.name || 'Bot'}」对话移除「${plugObj?.short || plugObj?.name || pid}」`);
+          draw();
         };
       });
       mask.querySelectorAll('[data-launch]').forEach(row => {
@@ -511,8 +748,10 @@ export function openBotStudio({ onSelect, onStatus, onLaunchPlugin, onRunAutomat
         row.onclick = e => {
           if (e.target.closest('.ios-switch')) return;
           if (!isPluginEnabled(id)) { onStatus?.('请先打开右侧开关启用此插件'); return; }
+          const curBot = getActiveBot();
+          if (!getBotPlugins(curBot.id).includes(id)) toggleBotPlugin(curBot.id, id, true);
           mask.classList.add('hidden');
-          onLaunchPlugin?.(id);
+          onLaunchPlugin?.(id, curBot);
         };
       });
     }

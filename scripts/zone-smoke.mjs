@@ -37,13 +37,22 @@ try {
   assert.equal(await page.evaluate(() => window.__app.getAuthUser()?.mode), 'guest');
   await sleep(360);
   await page.screenshot({ path: path.resolve(root, 'test-results/zone-agent-home.png') });
-  // Tap + to verify clean Bot Creator (no outside input box!)
+  // Verify top-left Profile & real BYOK API Usage sheet
+  await page.click('#btn-hub-profile');
+  await page.waitForFunction(() => !document.querySelector('#zone-profile-mask').classList.contains('hidden'));
+  await sleep(240);
+  await page.screenshot({ path: path.resolve(root, 'test-results/zone-profile-usage.png') });
+  await page.click('#zone-profile-mask [data-p-act="close"]');
+  await page.waitForFunction(() => document.querySelector('#zone-profile-mask').classList.contains('hidden'));
+  // Tap + to verify clean Bot Creator
   await page.click('#btn-hub-newbot');
   await page.waitForFunction(() => !document.querySelector('#zone-bots-mask').classList.contains('hidden'));
   await sleep(240);
   await page.screenshot({ path: path.resolve(root, 'test-results/zone-bot-create.png') });
   await page.click('#zone-bots-mask [data-act="cancel"]');
-  await sleep(200);
+  await page.waitForFunction(() => document.querySelector('#zone-bots-mask').classList.contains('hidden'));
+  await page.click('#btn-hub-plugins');
+  await page.waitForFunction(() => !document.querySelector('#zone-bots-mask').classList.contains('hidden'));
   await page.click('#zone-bots-mask [data-tab="automations"]');
   await sleep(220);
   await page.screenshot({ path: path.resolve(root, 'test-results/zone-automations.png') });
@@ -57,19 +66,126 @@ try {
   await page.click('#zone-bots-mask label.ios-switch:has([data-toggle="reading-cosmos"])');
   await sleep(160);
   assert.equal(await page.evaluate(() => document.documentElement.classList.contains('plugin-reader-off')), false, 'toggling 阅读器 on restores reader');
+  assert.ok((await page.$$('#zone-bots-mask [data-assign-bot]')).length >= 1, 'plugin sheet shows per-Bot assignment chips');
   await page.click('#zone-bots-mask [data-act="close"]');
   await page.waitForFunction(() => document.querySelector('#zone-bots-mask').classList.contains('hidden'));
-  // Verify tapping the top Hero Bot card opens full-screen Bot Chat and replies cleanly
+  // Verify tapping the top Hero Bot card opens full-screen Bot Chat
   await page.click('#zone-hero-card');
   await page.waitForFunction(() => !document.querySelector('#zone-chat-modal').classList.contains('hidden'));
+  // Per-Bot plugin loading: initially 阅读器 is not mounted on Zone; tap + to load it ONLY into this Bot's chat
+  assert.equal(await page.$('#btn-chat-reader'), null, '阅读器 not cluttered into Bot chat until mounted for this Bot');
+  await page.click('#btn-chat-plugins');
+  await page.waitForFunction(() => !document.querySelector('#zone-bot-plugins-mask').classList.contains('hidden'));
+  await page.click('#zone-bot-plugins-mask label.ios-switch:has([data-bp-toggle="reading-cosmos"])');
+  await sleep(160);
+  await page.click('#zone-bot-plugins-mask [data-bp-act="close"]');
+  await page.waitForFunction(() => document.querySelector('#zone-bot-plugins-mask').classList.contains('hidden'));
+  assert.equal(await page.$eval('#btn-chat-reader', el => getComputedStyle(el).display !== 'none'), true, '阅读器 pill loaded into THIS Bot chat');
   await page.type('#zone-chat-input', '你好，帮我规划今天');
   await page.keyboard.press('Enter');
   await page.waitForFunction(() => document.querySelectorAll('#zone-chat-messages .chat-row').length >= 2);
+  // Test 新话题 context divider line (1 Bot = 1 clean stream, zero nested pills)
+  await page.click('#btn-chat-new');
+  await page.waitForFunction(() => document.querySelectorAll('#zone-chat-messages .chat-divider').length === 1);
+  // Test Grok-style Interactive Confirmation Card + Task Result Link Card inside Bot Chat
+  const confirmOutcome = await page.evaluate(async () => {
+    const p = window.__app.requestChatConfirm({
+      icon: 'computer',
+      provider: '本机电脑 · Computer-Use',
+      title: '确认在本地电脑执行任务',
+      meta: 'http://192.168.1.100:8765',
+      badge: '待确认',
+      detail: '整理桌面截图并生成今日汇报文档',
+      rejectLabel: '取消',
+      approveLabel: '确认执行'
+    });
+    const approveBtn = document.querySelector('#zone-chat-messages .chat-card [data-card-act="approve"]');
+    approveBtn.click();
+    const ok = await p;
+    window.__app.postChatCard(null, {
+      kind: 'result',
+      icon: 'cloud',
+      provider: '云端 Agent',
+      status: 'Done',
+      statusTone: 'ok',
+      title: 'My-reader 升级：苹果风格的 AI 阅读与知识工作台',
+      meta: 'github.com/Stroymind/My-reader',
+      badge: 'PR #5',
+      detail: '已完成检索与校验，点击下方按钮可复制或打开链接。',
+      url: 'https://github.com/Stroymind/My-reader',
+      secondaryLabel: '复制链接',
+      primaryLabel: '查看链接'
+    });
+    return {
+      ok,
+      cardCount: document.querySelectorAll('#zone-chat-messages .chat-card').length,
+      statuses: [...document.querySelectorAll('#zone-chat-messages .chat-card-status')].map(e => e.textContent)
+    };
+  });
+  assert.equal(confirmOutcome.ok, true, 'in-chat Confirmation Card resolves true on approve');
+  assert.equal(confirmOutcome.cardCount, 2, 'renders both Confirmation Card and Task Link Card');
+  assert.deepEqual(confirmOutcome.statuses, ['已确认', 'Done']);
   await sleep(260);
   await page.screenshot({ path: path.resolve(root, 'test-results/zone-bot-chat.png') });
   await page.click('#btn-chat-back');
   await page.waitForFunction(() => document.querySelector('#zone-chat-modal').classList.contains('hidden'));
-  report.checks.push('Mobile startup, zero-button Spatial Z Portal entry, pure Apple Zone Agent Home, Bot Studio, Plugin Switches, and Zone heading/title');
+  // Create a 2nd Bot (verify birth-from-zero animation + async non-synced animation timing) and a Multi-Bot Group Chat + silent Bot-to-Bot relay
+  await page.click('#btn-hub-newbot');
+  await page.waitForFunction(() => !document.querySelector('#zone-bots-mask').classList.contains('hidden'));
+  assert.equal(await page.$eval('#zone-bots-mask .bots-preview', el => el.classList.contains('bot-born')), true, 'new Bot preview plays birth-from-zero animation');
+  await page.type('#bot-f-name', '土豆');
+  await page.click('#zone-bots-mask [data-shape="orb"]');
+  await page.click('#zone-bots-mask [data-accent="#FF6B00"]');
+  await page.click('#zone-bots-mask [data-act="save"]');
+  await page.waitForFunction(() => !document.querySelector('#zone-chat-modal').classList.contains('hidden') && document.querySelector('#chat-head-name').textContent === '土豆');
+  // Verify 土豆 does NOT inherit Zone's 阅读器 plugin (strict per-Bot plugin isolation!)
+  assert.equal(await page.$('#btn-chat-reader'), null, '阅读器 mounted on Zone does NOT leak to 土豆');
+  await page.click('#btn-chat-back');
+  await page.waitForFunction(() => document.querySelector('#zone-chat-modal').classList.contains('hidden'));
+  // Verify two Bots have different (non-synchronized) animation timing CSS variables
+  const asyncTimings = await page.evaluate(() => [...document.querySelectorAll('#zone-agent-hub .bot-glyph')].map(el => el.getAttribute('style')));
+  assert.ok(asyncTimings.length >= 2 && asyncTimings[0] !== asyncTimings[1], `Bots must have non-synced animation timings: ${JSON.stringify(asyncTimings)}`);
+  // Test Multi-Bot Group Chat creation via + -> 创建群聊
+  await page.click('#btn-hub-newbot');
+  await page.waitForFunction(() => !document.querySelector('#zone-bots-mask').classList.contains('hidden'));
+  await page.click('#zone-bots-mask [data-new-kind="group"]');
+  await page.waitForSelector('#grp-f-name');
+  await page.type('#grp-f-name', '产品研发群');
+  await page.click('#zone-bots-mask [data-act="save-grp"]');
+  await page.waitForFunction(() => !document.querySelector('#zone-chat-modal').classList.contains('hidden') && document.querySelector('#chat-head-name').textContent.includes('产品研发群'));
+  const mentionChips = await page.$$eval('#zone-chat-plugins-bar .group-mention-chip', els => els.map(e => e.textContent));
+  assert.ok(mentionChips.includes('@所有人') && mentionChips.includes('@Zone') && mentionChips.includes('@土豆'), `Group mention chips: ${JSON.stringify(mentionChips)}`);
+  await page.type('#zone-chat-input', '@土豆 汇总下最新进度');
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(() => document.querySelectorAll('#zone-chat-messages .chat-row').length >= 2);
+  await sleep(220);
+  await page.screenshot({ path: path.resolve(root, 'test-results/zone-group-chat.png') });
+  await page.click('#btn-chat-back');
+  await page.waitForFunction(() => document.querySelector('#zone-chat-modal').classList.contains('hidden'));
+  // Test silent Bot-to-Bot relay updates sender's Home Roster with ➤ preview while staying hidden from receiver's visible chat
+  const relayCheck = await page.evaluate(async () => {
+    const botsMod = await import('./bots.js');
+    const all = botsMod.listBots();
+    const potato = all.find(b => b.name === '土豆');
+    const zone = all.find(b => b.name === 'Zone');
+    await window.__app.relayBotToBotMessage(potato, zone, '帮我检查 PR #5');
+    const rosterSub = [...document.querySelectorAll('#zone-bot-roster .roster-item')].map(el => el.textContent).join(' | ');
+    return { rosterSub };
+  });
+  assert.ok(relayCheck.rosterSub.includes('➤ 已发消息给 Zone'), `Roster shows silent bot-to-bot handoff: ${relayCheck.rosterSub}`);
+  await sleep(160);
+  await page.screenshot({ path: path.resolve(root, 'test-results/zone-agent-home.png') });
+  report.checks.push('Mobile startup, Spatial Z Portal, pure Apple Zone Agent Home, Profile/API Usage, Per-Bot Plugin Isolation, Grok-style Confirmation & Link Cards, Async Bot Animations + Birth Animation, Multi-Bot Group Chat, and Silent Bot-to-Bot Relay');
+  // Enter legacy reader/stream view for the full 35-item Reader & Cosmos regression suite
+  await page.evaluateOnNewDocument(() => {
+    document.addEventListener('DOMContentLoaded', () => {
+      if (sessionStorage.getItem('zone-test-legacy') === '1') document.documentElement.classList.add('legacy-reader-home');
+    });
+  });
+  await page.evaluate(() => {
+    sessionStorage.setItem('zone-test-legacy', '1');
+    document.documentElement.classList.add('legacy-reader-home');
+  });
 
   const chrome = await page.evaluate(() => ({
     gone: ['.appbar', '#btn-search-toggle', '#btn-menu', '.tabbar', '.pane-head', '.pane-intro', '.flow', '.pillars', '.tagline', '#desk-block', '#desk-list', '.sidebar', '.side-mark', '.book-grid', '.cosmos-hud', '#cosmos-stats', '#graph-search-toggle', '#graph-in', '#graph-out'].filter(s => document.querySelector(s)),
@@ -128,6 +244,7 @@ try {
   });
   assert.equal(ids.notes.length, 2); assert.equal(ids.links.length, 1);
   await page.reload(); await page.waitForFunction(() => window.__app);
+  await page.evaluate(() => document.documentElement.classList.add('legacy-reader-home'));
   assert.equal(await page.evaluate(async () => (await (await import('./knowledge.js')).listNotes()).length), 2);
   report.checks.push('Notes/tags persisted across reload; title link created');
   await page.evaluate(async () => { const w = await import('./workspace.js'); await w.refreshWorkspace(); });
