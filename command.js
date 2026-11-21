@@ -467,6 +467,8 @@ function parseSingleClause(rawClause, ctx = {}) {
   if (/(?:打开排版|手动排版|排版设置|调排版)/.test(text)) ops.push({ op: 'openSettings' });
   if (/(?:进入整理|整理列表|多选|建堆)/.test(text)) ops.push({ op: 'selectMode' });
   if (/(?:看摘录|打开摘录|我的摘录)/.test(text)) ops.push({ op: 'excerpts' });
+  if (/(?:导出|同步).{0,4}(?:obsidian|notion|markdown|md|双向链接)/i.test(text)) { ops.push({ op: 'exportVault' }); return ops; }
+  if (/(?:导出|同步).{0,4}(?:word|wps|office|文档)/i.test(text)) { ops.push({ op: 'exportWord' }); return ops; }
   if (/(?:复制大纲|导出大纲|导出笔记)/.test(text)) ops.push({ op: 'exportOutline' });
   if (/(?:AI\s*设置|配置\s*AI|设置密钥)/i.test(text)) ops.push({ op: 'aiSettings' });
 
@@ -511,7 +513,7 @@ const SAFE_OPS = new Set([
   'bilingual', 'autoPace', 'turn', 'seek', 'goPage', 'goChapter', 'voiceMark', 'bookmark', 'toc', 'bookmarks', 'highlights', 'closeBook', 'openSettings',
   'pane', 'graphTilt', 'graphFit', 'graphMood', 'openBook', 'createNote', 'search', 'exportOutline', 'importBooks',
   'findBook', 'importUrl', 'setOpds', 'stackCreate', 'stackRemove', 'stackMerge', 'stackDissolve',
-  'openSichao', 'setSichaoApi', 'askAi', 'styleUi', 'resetUi',
+  'openSichao', 'setSichaoApi', 'askAi', 'styleUi', 'resetUi', 'exportVault', 'exportWord',
   'cosmosExplore', 'cosmosNeighbors', 'cosmosFocus', 'cosmosLink', 'cosmosZoom'
 ]);
 

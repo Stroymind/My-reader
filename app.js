@@ -2308,6 +2308,47 @@ command = createCommandController({
         setSichaoApi(a.url || '');
         return { label: a.url ? '已连接思潮 24/7 云端情报底座' : '已切回本机离线思潮模式' };
       }
+      case 'exportVault': {
+        const { listNotes, listLinks } = await import('./knowledge.js');
+        const notes = await listNotes();
+        const links = await listLinks();
+        if (!notes.length) return { label: '还没有可导出的笔记' };
+        const byId = new Map(notes.map(n => [n.id, n]));
+        const zip = new window.JSZip();
+        for (const n of notes) {
+          const safe = (n.title || '未命名').replace(/[\\/:*?"<>|]/g, '_').slice(0, 60);
+          const relTitles = links
+            .filter(l => l.fromId === n.id || l.toId === n.id)
+            .map(l => byId.get(l.fromId === n.id ? l.toId : l.fromId)?.title)
+            .filter(Boolean);
+          const fm = `---\ntitle: "${(n.title || '未命名').replace(/"/g, '\\"')}"\ntags: [${(n.tags || []).map(t => `"${t}"`).join(', ')}]\nsource: "${(n.bookTitle || '').replace(/"/g, '\\"')}"\n---\n\n`;
+          const quote = n.quote ? `> ${n.quote.replace(/\n/g, '\n> ')}\n\n` : '';
+          const relSec = relTitles.length ? `\n\n## 关联\n${relTitles.map(t => `- [[${t}]]`).join('\n')}\n` : '';
+          zip.file(`${safe}.md`, fm + quote + (n.body || '') + relSec);
+        }
+        const blob = await zip.generateAsync({ type: 'blob' });
+        const aEl = document.createElement('a');
+        aEl.href = URL.createObjectURL(blob);
+        aEl.download = `Zone-Obsidian-Notion-${new Date().toISOString().slice(0, 10)}.zip`;
+        aEl.click();
+        setTimeout(() => URL.revokeObjectURL(aEl.href), 4000);
+        return { label: `已导出 ${notes.length} 条 Markdown 笔记包（兼容 Obsidian / Notion）` };
+      }
+      case 'exportWord': {
+        const { listNotes } = await import('./knowledge.js');
+        const notes = await listNotes();
+        if (!notes.length) return { label: '还没有可导出的笔记' };
+        const esc = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        const bodyHtml = notes.map(n => `<h2>${esc(n.title || '未命名')}</h2>${n.bookTitle ? `<p><em>出处：《${esc(n.bookTitle)}》</em></p>` : ''}${n.quote ? `<blockquote>${esc(n.quote)}</blockquote>` : ''}<p>${esc(n.body || '').replace(/\n/g, '<br>')}</p>`).join('<hr>');
+        const docHtml = `<!doctype html><html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word"><head><meta charset="utf-8"><title>Zone 笔记导出</title><style>body{font-family:"Microsoft YaHei",serif;line-height:1.7}blockquote{border-left:3px solid #666;padding-left:10px;color:#555}</style></head><body><h1>Zone 知识笔记汇总</h1>${bodyHtml}</body></html>`;
+        const blob = new Blob(['\uFEFF' + docHtml], { type: 'application/msword;charset=utf-8' });
+        const aEl = document.createElement('a');
+        aEl.href = URL.createObjectURL(blob);
+        aEl.download = `Zone-WPS-Word-${new Date().toISOString().slice(0, 10)}.doc`;
+        aEl.click();
+        setTimeout(() => URL.revokeObjectURL(aEl.href), 4000);
+        return { label: `已导出 ${notes.length} 条笔记为 Word / WPS 文档` };
+      }
       case 'openSichao': {
         if (reading) await closeBook();
         sichao.open();
