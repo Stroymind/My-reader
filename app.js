@@ -1342,7 +1342,7 @@ function enterSelect(x, y) {
   if (!engine) return;
   document.body.classList.add('selecting');
   setBars(false);
-  $('#panel').classList.add('hidden');
+  closeReaderPanel();
   $('#settings').classList.add('hidden');
   $('#select-bar').classList.remove('hidden');
   engine.setSelectMode?.(true);
@@ -1398,7 +1398,7 @@ async function bumpSize(delta) {
   const tap = $('#tap'), viewer = $('#viewer'), stage = $('#stage'), readerEl = $('#reader');
   let sx = 0, sy = 0, st = 0, pid = null, timer = null, suppressUp = false, moved = false;
   const pointers = new Map();
-  let pinchDist = 0, pinchScale = 1, zoomingOut = false;
+  let pinchDist = 0, pinchScale = 1, zoomingOut = false, pageDragging = false, dragDx = 0;
   const pinchSpan = () => {
     const pts = [...pointers.values()];
     if (pts.length < 2) return 0;
@@ -1409,12 +1409,39 @@ async function bumpSize(delta) {
     pinchScale = 1;
     if (stage) { stage.style.transition = ''; stage.style.transform = ''; stage.style.opacity = ''; stage.style.borderRadius = ''; }
   };
+  const resetPageDrag = () => {
+    pageDragging = false;
+    dragDx = 0;
+    viewer.classList.remove('turning-drag');
+    viewer.style.transform = '';
+    viewer.style.opacity = '';
+  };
+  const canAnimateTurn = () => !document.documentElement.classList.contains('mode-eink')
+    && !matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const animatedTurn = async dir => {
+    if (!canAnimateTurn()) { resetPageDrag(); await turn(dir); return; }
+    viewer.classList.remove('turning-drag');
+    const outX = dir > 0 ? -36 : 36;
+    viewer.style.transform = `translate3d(${outX}px, 0, 0)`;
+    viewer.style.opacity = '0.25';
+    await wait(115);
+    await turn(dir);
+    viewer.classList.add('turning-drag');
+    viewer.style.transform = `translate3d(${-outX * 0.45}px, 0, 0)`;
+    viewer.style.opacity = '0.55';
+    void viewer.offsetWidth;
+    viewer.classList.remove('turning-drag');
+    viewer.style.transform = '';
+    viewer.style.opacity = '';
+    pageDragging = false;
+    dragDx = 0;
+  };
   const clearTimer = () => { clearTimeout(timer); timer = null; };
   const down = e => {
     if (e.button != null && e.button !== 0) return;
-    sx = e.clientX; sy = e.clientY; st = Date.now(); pid = e.pointerId; moved = false;
+    sx = e.clientX; sy = e.clientY; st = Date.now(); pid = e.pointerId; moved = false; pageDragging = false; dragDx = 0;
     pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    if (pointers.size >= 2) { pinchDist = pinchSpan(); pinchScale = 1; zoomingOut = false; moved = true; clearTimer(); return; }
+    if (pointers.size >= 2) { resetPageDrag(); pinchDist = pinchSpan(); pinchScale = 1; zoomingOut = false; moved = true; clearTimer(); return; }
     clearTimer();
     if (!engine) return;
     timer = setTimeout(() => {
@@ -1430,7 +1457,22 @@ async function bumpSize(delta) {
       const d = pinchSpan();
       const ratio = d / pinchDist;
       pinchScale = ratio;
-      if (ratio < 0.96 && !document.body.classList.contains('pdf-zoom')) {
+      // 放大字号
+      if (ratio > 1.18) {
+        resetStageZoom();
+        pinchDist = d;
+        suppressUp = true;
+        bumpSize(2);
+        return;
+      }
+      // 缩小手势：若当前字号大于默认(19)，先顺滑缩回字号；若已在默认或更小(<=19)，继续捏合则 Z 轴拉远进入全书鸟瞰目录！
+      if (ratio < 0.84 && (settings.size || 19) > 19 && !zoomingOut) {
+        pinchDist = d;
+        suppressUp = true;
+        bumpSize(-2);
+        return;
+      }
+      if (ratio < 0.94 && (settings.size || 19) <= 19 && !document.body.classList.contains('pdf-zoom')) {
         zoomingOut = true;
         suppressUp = true;
         const clamped = Math.max(0.74, Math.min(1, ratio));
@@ -1446,16 +1488,28 @@ async function bumpSize(delta) {
           resetStageZoom();
           openReaderPanel('toc');
         }
-      } else if (ratio > 1.18) {
-        resetStageZoom();
-        pinchDist = d;
-        suppressUp = true;
-        bumpSize(2);
       }
       return;
     }
     if (pid !== e.pointerId) return;
-    if (Math.abs(e.clientX - sx) > 12 || Math.abs(e.clientY - sy) > 12) { moved = true; clearTimer(); }
+    const dx = e.clientX - sx, dy = e.clientY - sy;
+    if (Math.abs(dx) > 12 || Math.abs(dy) > 12) { moved = true; clearTimer(); }
+    // 苹果级跟手翻页物理反馈：横向滑动时书页实时跟随手指位移并带阻尼
+    const zoomed = document.body.classList.contains('pdf-zoom');
+    const scrolled = settings.flow === 'scrolled' && settings.writing !== 'vertical-rl' && cur?.type !== 'pdf';
+    if (!zoomed && !scrolled && !document.body.classList.contains('selecting') && canAnimateTurn()) {
+      if (!pageDragging && Math.abs(dx) > 12 && Math.abs(dx) > Math.abs(dy) * 1.15) {
+        pageDragging = true;
+        viewer.classList.add('turning-drag');
+      }
+      if (pageDragging) {
+        dragDx = Math.max(-130, Math.min(130, dx));
+        const shift = dragDx * 0.42;
+        const fade = Math.max(0.68, 1 - Math.abs(dragDx) / 360);
+        viewer.style.transform = `translate3d(${shift.toFixed(1)}px, 0, 0)`;
+        viewer.style.opacity = fade.toFixed(3);
+      }
+    }
   };
   const up = e => {
     pointers.delete(e.pointerId);
@@ -1468,9 +1522,10 @@ async function bumpSize(delta) {
     clearTimer();
     if (pid != null && pid !== e.pointerId) return;
     pid = null;
-    if (!engine) return;
-    if (suppressUp) { suppressUp = false; return; }
+    if (!engine) { resetPageDrag(); return; }
+    if (suppressUp) { suppressUp = false; resetPageDrag(); return; }
     if (document.body.classList.contains('selecting')) {
+      resetPageDrag();
       const dxSel = Math.abs(e.clientX - sx), dySel = Math.abs(e.clientY - sy);
       if (dxSel < 8 && dySel < 8 && Date.now() - st < 320) {
         setTimeout(() => {
@@ -1480,16 +1535,17 @@ async function bumpSize(delta) {
       return;
     }
     const zoomed = document.body.classList.contains('pdf-zoom');
-    if (zoomed && e.currentTarget === tap) return;
+    if (zoomed && e.currentTarget === tap) { resetPageDrag(); return; }
     const dx = e.clientX - sx, dy = e.clientY - sy;
     const scrolled = settings.flow === 'scrolled' && settings.writing !== 'vertical-rl' && cur?.type !== 'pdf';
     const rtl = !!(engine?.isRtl?.() || settings.writing === 'vertical-rl');
     const nextOnLeft = rtl || !!settings.leftHand;
-    if (!zoomed && !scrolled && Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy) * 1.2 && Date.now() - st < 800) {
-      if (rtl) dx > 0 ? turn(1) : turn(-1);
-      else dx < 0 ? turn(1) : turn(-1);
+    if (!zoomed && !scrolled && Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy) * 1.15 && Date.now() - st < 900) {
+      const dir = rtl ? (dx > 0 ? 1 : -1) : (dx < 0 ? 1 : -1);
+      animatedTurn(dir);
       return;
     }
+    if (pageDragging) { resetPageDrag(); return; }
     if (Math.abs(dx) > 10 || Math.abs(dy) > 10) return;
     const barsOpen = !$('#bars').classList.contains('hidden');
     if (barsOpen) { setBars(false); return; }
@@ -1511,7 +1567,7 @@ async function bumpSize(delta) {
     el.addEventListener('pointerdown', down);
     el.addEventListener('pointermove', move);
     el.addEventListener('pointerup', up);
-    el.addEventListener('pointercancel', e => { pointers.delete(e.pointerId); pinchDist = 0; resetStageZoom(); clearTimer(); pid = null; });
+    el.addEventListener('pointercancel', e => { pointers.delete(e.pointerId); pinchDist = 0; resetStageZoom(); resetPageDrag(); clearTimer(); pid = null; });
   }
   // 桌面端 Ctrl+滚轮在阅读器内同样支持 Z 轴穿层：拉远鸟瞰全书目录，拉近潜回正文
   let rWheelLock = 0;
@@ -1702,7 +1758,7 @@ async function openPassageById(bookId, passageId) {
 }
 async function openPassage(bookId, item) {
   $('#lib-panel').classList.add('hidden');
-  $('#panel').classList.add('hidden');
+  closeReaderPanel();
   exitSelect();
   if (!engine || cur?.id !== bookId) await openBook(bookId);
   try { if (item.pos) await engine?.goTo(item.pos); } catch (err) { console.warn(err); }
@@ -1886,7 +1942,7 @@ function handleBack() {
   if (closeStackMenus(true)) return true;
   if (!$('#note-mask').classList.contains('hidden')) { $('#note-mask').classList.add('hidden'); noteSel = null; return true; }
   if (document.body.classList.contains('selecting')) { exitSelect(); return true; }
-  if (!$('#panel').classList.contains('hidden')) { $('#panel').classList.add('hidden'); return true; }
+  if (closeReaderPanel()) return true;
   if (!$('#settings').classList.contains('hidden')) { $('#settings').classList.add('hidden'); return true; }
   if (!$('#lib-panel').classList.contains('hidden')) { $('#lib-panel').classList.add('hidden'); return true; }
   if (currentPane() === 'shelf' && findOpen) { closeShelfFind(); return true; }

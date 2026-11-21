@@ -291,7 +291,7 @@ export class EpubEngine {
     if (!s) { s = doc.createElement('style'); s.id = 'rr-style'; doc.head.appendChild(s); }
     s.textContent = epubCss(this.cjk) + '::selection{background:rgba(74,107,93,.28)}';
     // 页边距
-    doc.documentElement.style.setProperty('--rr-margin', settings.margin + 'px');
+    doc.documentElement.style.setProperty('--rr-margin', Math.min(settings.margin || 10, 14) + 'px');
     this.bindSelect(contents);
     paintDomHighlights(doc.body, this.highlights);
   }
