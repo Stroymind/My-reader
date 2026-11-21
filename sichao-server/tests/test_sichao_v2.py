@@ -262,3 +262,26 @@ def test_byok_chat_endpoint_normalization_and_cloud_kb(tmp_path: Path) -> None:
     l1 = client.get("/api/kb/list", headers=h1).json()
     ids = {x["id"] for x in l1["items"]}
     assert ids == {"kb-1", "kb-3"}
+
+
+def test_connectors_verify_and_array_429_error_extraction(tmp_path: Path) -> None:
+    from sichao.gateway import extract_api_error_text
+
+    # Gemini OpenAI-compat array error shape + OpenRouter nested metadata shape
+    gem_err = [{"error": {"code": 429, "message": "You exceeded your current quota, please check your plan."}}]
+    assert "exceeded your current quota" in extract_api_error_text(gem_err)
+    or_err = {"error": {"message": "Provider returned error", "metadata": {"raw": "Rate limit exceeded"}}}
+    assert "Rate limit exceeded" in extract_api_error_text(or_err)
+
+    app = create_app(db_path=str(tmp_path / "conn.db"), enable_scheduler=False)
+    client = TestClient(app)
+    assert client.get("/api/health").json()["app_connectors"] is True
+
+    # Invalid webhook host refused (no fake connect!)
+    r_bad = client.post("/api/connectors/verify", json={"connector_id": "feishu", "token": "https://evil.example.com/hook"})
+    assert r_bad.status_code == 200 and r_bad.json()["ok"] is False
+
+    # Valid official Feishu webhook accepted & returns callable tool metadata
+    r_ok = client.post("/api/connectors/verify", json={"connector_id": "feishu", "token": "https://open.feishu.cn/open-apis/bot/v2/hook/demo-token"})
+    assert r_ok.status_code == 200 and r_ok.json()["ok"] is True
+    assert any(t["name"] == "feishu_send_message" for t in r_ok.json()["tools"])

@@ -111,25 +111,24 @@ try {
   await page.screenshot({ path: path.resolve(root, 'test-results/zone-bot-create.png') });
   await page.click('#zone-bots-mask [data-act="cancel"]');
   await page.waitForFunction(() => document.querySelector('#zone-bots-mask').classList.contains('hidden'));
+  // Tap bottom-left ⊞ -> opens full-screen Connect Apps (ZERO duplicate Create Bot / Bot 形象 tab!)
   await page.click('#btn-hub-plugins');
-  await page.waitForFunction(() => !document.querySelector('#zone-bots-mask').classList.contains('hidden'));
-  await page.click('#zone-bots-mask [data-tab="automations"]');
+  await page.waitForFunction(() => !document.querySelector('#zone-connect-view').classList.contains('hidden'));
+  assert.equal(await page.$('#zone-connect-view [data-tab="bots"]'), null, 'ZERO duplicate Bot Creator inside Connect Apps');
+  assert.ok((await page.$$('#zone-connect-view [data-c-app]')).length >= 12, 'Connect Apps lists 12+ real verifiable connectors');
   await sleep(220);
-  await page.screenshot({ path: path.resolve(root, 'test-results/zone-automations.png') });
-  await page.click('#zone-bots-mask [data-tab="plugins"]');
-  await sleep(220);
-  await page.screenshot({ path: path.resolve(root, 'test-results/zone-plugins-tab.png') });
-  // Verify ZERO duplicate per-Bot assignment matrix in global Plugin store
-  assert.equal((await page.$$('#zone-bots-mask [data-assign-bot]')).length, 0, 'ZERO duplicate per-Bot chip matrix in global plugin sheet');
-  // Verify 阅读器 plugin toggle REALLY hides/restores books & reader chrome
-  await page.click('#zone-bots-mask label.ios-switch:has([data-toggle="reading-cosmos"])');
+  await page.screenshot({ path: path.resolve(root, 'test-results/zone-connect-apps.png') });
+  // Switch to Android tab inside Connect Apps & verify 阅读器 toggle REALLY hides/restores reader
+  await page.click('#zone-connect-view [data-c-cat="android"]');
+  await sleep(140);
+  await page.click('#zone-connect-view label.ios-switch:has([data-toggle="reading-cosmos"])');
   await sleep(160);
   assert.equal(await page.evaluate(() => document.documentElement.classList.contains('plugin-reader-off')), true, 'toggling 阅读器 off really hides reader');
-  await page.click('#zone-bots-mask label.ios-switch:has([data-toggle="reading-cosmos"])');
+  await page.click('#zone-connect-view label.ios-switch:has([data-toggle="reading-cosmos"])');
   await sleep(160);
   assert.equal(await page.evaluate(() => document.documentElement.classList.contains('plugin-reader-off')), false, 'toggling 阅读器 on restores reader');
-  await page.click('#zone-bots-mask [data-act="close"]');
-  await page.waitForFunction(() => document.querySelector('#zone-bots-mask').classList.contains('hidden'));
+  await page.click('#zone-connect-view [data-c-act="close"]');
+  await page.waitForFunction(() => document.querySelector('#zone-connect-view').classList.contains('hidden'));
   // Verify tapping the top Hero Bot card opens full-screen Bot Chat (no top-right 新话题, clean ⋯ popover + Bot Profile)
   await page.click('#zone-hero-card');
   await page.waitForFunction(() => !document.querySelector('#zone-chat-modal').classList.contains('hidden'));

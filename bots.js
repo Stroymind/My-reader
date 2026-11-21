@@ -170,7 +170,7 @@ export function listPlugins() {
     if (Array.isArray(saved) && saved.length) {
       const merged = saved.map(p => {
         const def = DEFAULT_PLUGINS.find(d => d.id === p.id);
-        return def ? { ...def, ...p, short: p.short || def.short } : p;
+        return def ? { ...p, ...def, enabled: p.enabled !== undefined ? !!p.enabled : def.enabled } : p;
       });
       for (const def of DEFAULT_PLUGINS) {
         if (!merged.some(p => p.id === def.id)) merged.push({ ...def });
@@ -181,7 +181,7 @@ export function listPlugins() {
   return DEFAULT_PLUGINS.map(p => ({ ...p }));
 }
 
-function savePlugins(list) {
+export function savePlugins(list) {
   try { localStorage.setItem(PLUGINS_KEY, JSON.stringify(list)); } catch {}
 }
 
@@ -788,13 +788,11 @@ export function openBotStudio({ onSelect, onSelectGroup, onStatus, onLaunchPlugi
           <button type="button" class="bots-primary" data-act="add-auto">+ 新建定时任务 / 信息推送</button>
         ` : `
           <div class="bots-list">
-            ${plugins.map(pl => {
-              const mountedCount = list.filter(b => getBotPlugins(b.id).includes(pl.id)).length;
-              return `
+            ${plugins.map(pl => `
               <div class="plugin-card">
                 <div class="plugin-row" data-launch="${pl.launchable ? esc(pl.id) : ''}">
                   <div class="bot-meta">
-                    <strong>${esc(pl.name)}${pl.enabled && mountedCount ? ` · ${mountedCount} 个 Bot` : ''}</strong>
+                    <strong>${esc(pl.name)}</strong>
                     <span>${esc(pl.desc)}</span>
                   </div>
                   ${pl.id.startsWith('ext-') ? `<button type="button" class="plugin-bot-chip" style="color:var(--app-danger);margin-right:4px" data-remove-plug="${esc(pl.id)}">卸载</button>` : ''}
@@ -803,8 +801,7 @@ export function openBotStudio({ onSelect, onSelectGroup, onStatus, onLaunchPlugi
                     <span></span>
                   </label>
                 </div>
-              </div>`;
-            }).join('')}
+              </div>`).join('')}
           </div>
           <div class="theme-plug-bar">
             <span class="theme-plug-lbl">主题插件</span>

@@ -20,6 +20,7 @@ from typing import Any
 
 import httpx
 
+from .connectors import CONNECTOR_TOOLS_META, call_connector_tool
 from .gateway import ModelGateway
 
 USER_AGENT = "ZoneAgent/1.3 (+https://github.com/Stroymind/My-reader)"
@@ -458,6 +459,7 @@ async def run_byok_agent_loop(
     rules: str = "",
     memory: str = "",
     ext_plugins: list[dict[str, Any]] | None = None,
+    connectors: list[dict[str, Any]] | None = None,
     max_steps: int = 4,
 ) -> dict[str, Any]:
     usage_total = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
@@ -471,10 +473,21 @@ async def run_byok_agent_loop(
             "usage": usage_total,
         }
 
-    # 动态挂载当前 Bot 启用的外部远程 MCP 工具与 SKILL.md 规范
+    # 动态挂载当前 Bot 启用的外部远程 MCP 工具、已授权第三方应用连接器与 SKILL.md 规范
     dynamic_mcp: dict[str, tuple[str, str, str]] = {}  # tool_key -> (url, real_tool_name, token)
+    dynamic_conn: dict[str, dict[str, Any]] = {}  # tool_name -> connector dict
     extra_tool_lines: list[str] = []
     extra_skill_blocks: list[str] = []
+    for conn in (connectors or []):
+        if not isinstance(conn, dict):
+            continue
+        cid = str(conn.get("id") or "").strip().lower()
+        if not cid or not str(conn.get("token") or "").strip():
+            continue
+        for tm in CONNECTOR_TOOLS_META.get(cid, []):
+            t_name = tm["name"]
+            dynamic_conn[t_name] = conn
+            extra_tool_lines.append(f'- {{"tool":"{t_name}","arg":"..."}}  （已授权应用 {cid}：{tm["desc"]}）')
     for idx, pl in enumerate(ext_plugins or []):
         if not isinstance(pl, dict):
             continue
@@ -496,10 +509,10 @@ async def run_byok_agent_loop(
         elif proto == "skill_md" and pl.get("instructions"):
             extra_skill_blocks.append(f"[已挂载外部 Skill「{p_name}」]\n{str(pl['instructions'])[:2000]}")
 
-    allowed_tools = set(TOOL_REGISTRY.keys()) | set(dynamic_mcp.keys())
+    allowed_tools = set(TOOL_REGISTRY.keys()) | set(dynamic_mcp.keys()) | set(dynamic_conn.keys())
     tools_prompt = BASE_TOOLS_SPEC
     if extra_tool_lines:
-        tools_prompt += "\n\n当前 Bot 额外挂载的真实远程 MCP 工具：\n" + "\n".join(extra_tool_lines)
+        tools_prompt += "\n\n当前已授权连接的应用与远程 MCP 工具：\n" + "\n".join(extra_tool_lines)
 
     sys_parts = [p for p in [
         rules.strip(),
@@ -525,6 +538,8 @@ async def run_byok_agent_loop(
         try:
             if t_name in TOOL_REGISTRY:
                 obs = await TOOL_REGISTRY[t_name](str(t_arg))
+            elif t_name in dynamic_conn:
+                obs = await call_connector_tool(dynamic_conn[t_name], t_name, arg_str)
             elif t_name in dynamic_mcp:
                 m_url, real_name, m_tok = dynamic_mcp[t_name]
                 obs = await call_remote_mcp_tool(m_url, real_name, t_arg, token=m_tok)

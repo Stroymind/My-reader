@@ -6,6 +6,7 @@ import { fetchLiveSignals, getSichaoApi, initSichao, setSichaoApi } from './sich
 import { getPhoneUseStatus, openPhoneUseSettings, runPhoneUseTask } from './phone-use.js';
 import { closeMicroApp, consumeLaunchDeepLink, craftMicroApp, isMicroAppOpen, listMicroApps, openMicroApp, pinToDesktop } from './agent-surface.js';
 import { applyThemePlugin, closeBotStudio, deleteBotById, getActiveBot, getActiveThemePlugin, getBotPlugins, getPrimaryBot, isPluginEnabled, isPluginMountedOnBot, listAutomations, listBots, listGroups, listPlugins, openBotStudio, renderBotSvg, renderGroupAvatarHtml, setActiveBot, startBotLifeEngine, syncToAndroidWidget, toggleBotPlugin, triggerBotMood, updateBotNotify } from './bots.js';
+import { buildEnabledSkillsPrompt, closeConnectAppsView, listAllConnectedMcpPlugins, listConnectedApps, openConnectAppsView } from './connectors.js';
 import { buildMemoryContextForBot, closeImportMemorySheet, extractDocFileText, importMemoryText, listMemories, openImportMemorySheet } from './memory.js';
 import { BookletEngine, EpubEngine, PdfEngine, TxtEngine } from './engines.js';
 import { aiConfigured, complete as aiComplete, fetchLiveBalance, getAiConfig, getAiUsage, getModelPricing, nativePostJson, recordAiUsage, resetAiUsage, setAiBudget, setRechargeBalance } from './ai.js';
@@ -2084,14 +2085,14 @@ function openBotPluginsSheet(bot = getActiveBot()) {
           }).join('')}
         </div>
         <div style="display:flex;flex-direction:column;gap:8px">
-          <button type="button" class="bots-secondary" data-bp-act="manage">插件中心与远程 MCP ›</button>
+          <button type="button" class="bots-secondary" data-bp-act="manage">连接更多应用与技能 ›</button>
         </div>
       </div>`;
     mask.onclick = e => { if (e.target === mask) closeBotPluginsSheet(); };
     mask.querySelector('[data-bp-act="close"]').onclick = () => closeBotPluginsSheet();
     mask.querySelector('[data-bp-act="manage"]').onclick = () => {
       closeBotPluginsSheet();
-      openBotsFromHub({ initialTab: 'plugins' });
+      openConnectAppsFromHub();
     };
     mask.querySelectorAll('[data-bp-toggle]').forEach(chk => {
       chk.onchange = () => {
@@ -2339,6 +2340,7 @@ function handleBack() {
   if (command?.closeBar(true)) return true;
   if (closeChatMoreMenu()) return true;
   if (closeChatAttachSheet()) return true;
+  if (closeConnectAppsView()) return true;
   if (closeImportMemorySheet()) return true;
   if (closeBotPluginsSheet()) return true;
   if (closeBotProfilePage()) return true;
@@ -4115,6 +4117,7 @@ function renderChatBox(thread, pendingText = '') {
     }
   }
   modal.classList.remove('hidden');
+  updateSendBtnState();
   requestAnimationFrame(() => { listEl.scrollTop = listEl.scrollHeight; });
 }
 
@@ -4250,6 +4253,10 @@ async function runCloudByokAgent(bot, ctxMsgs, memoryCtx, extPlugs, rulesOverrid
   const api = getSichaoApi();
   if (!api) return null;
   const cfg = getAiConfig();
+  const mergedPlugs = [...(extPlugs || []), ...listAllConnectedMcpPlugins()];
+  const connectedApps = listConnectedApps().map(c => ({ id: c.id, token: c.token, extra: c.extra || {} }));
+  const skillBoost = buildEnabledSkillsPrompt();
+  const fullRules = [rulesOverride || bot.rules || '', skillBoost].filter(Boolean).join('\n\n');
   try {
     const r = await nativePostJson(
       `${api}/api/agent/run`,
@@ -4260,9 +4267,10 @@ async function runCloudByokAgent(bot, ctxMsgs, memoryCtx, extPlugs, rulesOverrid
       },
       {
         messages: ctxMsgs,
-        rules: rulesOverride || bot.rules || '',
+        rules: fullRules,
         memory: memoryCtx || '',
-        ext_plugins: extPlugs || [],
+        ext_plugins: mergedPlugs,
+        connectors: connectedApps,
         max_steps: 4
       },
       72000
@@ -4487,7 +4495,10 @@ async function chatWithActiveBot(text, attachments = []) {
       }
     }
     if (!ans) {
-      const skillBlocks = extPlugs.filter(p => p.protocol === 'skill_md' && p.instructions).map(p => `[已挂载 Skill「${p.name}」]\n${p.instructions.slice(0, 1800)}`).join('\n\n');
+      const skillBlocks = [
+        buildEnabledSkillsPrompt(),
+        ...extPlugs.filter(p => p.protocol === 'skill_md' && p.instructions).map(p => `[已挂载 Skill「${p.name}」]\n${p.instructions.slice(0, 1800)}`)
+      ].filter(Boolean).join('\n\n');
       const memBlock = memoryCtx ? `[用户长期知识库与记忆（请自然结合但无需逐条复述）]\n${memoryCtx}` : '';
       const sysContent = [combinedRules, memBlock, skillBlocks].filter(Boolean).join('\n\n');
       ans = await aiComplete([{ role: 'system', content: sysContent }, ...visionCtxMsgs]);
@@ -4904,8 +4915,8 @@ function openProfileSheet() {
           </button>
           <button type="button" class="prof-row" data-p-act="plugins">
             <div class="prof-row-main">
-              <strong>插件</strong>
-              <span>MCP · 电脑 · 控屏 · 阅读器</span>
+              <strong>连接应用</strong>
+              <span>GitHub · Notion · 飞书 · MCP · 阅读器</span>
             </div>
             <span class="prof-row-val">›</span>
           </button>
@@ -4969,7 +4980,7 @@ function openProfileSheet() {
       toast('已清零本地 API 用量与花费统计', 2000);
       draw();
     };
-    mask.querySelector('[data-p-act="plugins"]').onclick = () => { closeProfileSheet(); openBotsFromHub({ initialTab: 'plugins' }); };
+    mask.querySelector('[data-p-act="plugins"]').onclick = () => { closeProfileSheet(); openConnectAppsFromHub(); };
     mask.querySelector('[data-p-act="automations"]').onclick = () => { closeProfileSheet(); openBotsFromHub({ initialTab: 'automations' }); };
     mask.querySelector('[data-p-act="import-mem"]').onclick = () => { closeProfileSheet(); openZoneMemorySheet('global'); };
     mask.querySelector('[data-p-act="appearance"]').onclick = () => { cycleAppearance(); draw(); };
@@ -5069,10 +5080,16 @@ const openBotsFromHub = (opts = {}) => openBotStudio({
   onInspectPlugin: inspectExternalPluginRemote,
   ...opts
 });
+const openConnectAppsFromHub = () => openConnectAppsView({
+  cloudApi: getSichaoApi(),
+  onInspectPlugin: inspectExternalPluginRemote,
+  onChanged: () => renderAgentHub(),
+  onToast: (msg, ms) => toast(msg, ms)
+});
 $('#zone-hero-card')?.addEventListener('click', () => openBotConversation(getPrimaryBot()));
 $('#btn-hub-profile')?.addEventListener('click', () => openProfileSheet());
 $('#btn-hub-newbot')?.addEventListener('click', () => openBotsFromHub({ startNew: true }));
-$('#btn-hub-plugins')?.addEventListener('click', () => openBotsFromHub({ initialTab: 'plugins' }));
+$('#btn-hub-plugins')?.addEventListener('click', () => openConnectAppsFromHub());
 $('#zone-bot-search')?.addEventListener('input', () => renderBotRoster());
 $('#btn-chat-back')?.addEventListener('click', () => closeBotChat());
 $('#btn-chat-botmeta')?.addEventListener('click', () => {
@@ -5158,7 +5175,9 @@ $('#chat-pick-file')?.addEventListener('change', async e => {
   renderPendingAttachments();
 });
 $('#zone-chat-mic')?.addEventListener('click', () => command.openBar({ listen: true }));
-$('#zone-chat-input')?.addEventListener('input', () => updateSendBtnState());
+for (const ev of ['input', 'compositionupdate', 'compositionend', 'keyup', 'change']) {
+  $('#zone-chat-input')?.addEventListener(ev, () => updateSendBtnState());
+}
 $('#zone-chat-input')?.addEventListener('focus', () => $('#zone-chat-modal')?.classList.add('typing'));
 $('#zone-chat-input')?.addEventListener('blur', () => $('#zone-chat-modal')?.classList.remove('typing'));
 $('#zone-chat-form')?.addEventListener('submit', async e => {

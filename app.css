@@ -1210,17 +1210,51 @@ body.theme-night .textLayer span.rr-mark.an{background:rgba(10,132,255,.35)}
 .bot-chat-view.typing .bot-eyes{animation:botEyesRead 2.6s ease-in-out infinite}
 .bot-chat-view.thinking .bot-glyph{animation:botSquish 1.15s ease-in-out infinite}
 .bot-chat-view.thinking .bot-eyes{animation:botEyesThink 1.35s ease-in-out infinite}
-.agent-capsule{display:flex;align-items:center;gap:8px;height:52px;padding:0 7px 0 9px;border-radius:999px;background:var(--app-elev);box-shadow:0 0 0 .5px var(--app-line),0 8px 28px rgba(0,0,0,.055);transition:box-shadow .24s ease}
-.agent-capsule:focus-within{box-shadow:0 0 0 1.5px color-mix(in srgb,var(--app-accent) 45%,transparent),0 10px 30px rgba(0,122,255,.09)}
+.agent-capsule{display:flex;align-items:center;gap:8px;height:52px;padding:0 7px 0 9px;border-radius:999px;background:var(--app-elev);box-shadow:0 0 0 .5px var(--app-line),0 4px 16px rgba(0,0,0,.05);transition:box-shadow .22s ease}
+.agent-capsule:focus-within{box-shadow:0 0 0 1px color-mix(in srgb,var(--app-fg) 14%,transparent),0 6px 20px rgba(0,0,0,.075)}
 .agent-capsule input{flex:1;min-width:0;height:100%;border:0;background:transparent;padding:0;font-size:15.5px;color:var(--app-fg);outline:none}
 .agent-capsule input::placeholder{color:var(--app-muted)}
 .agent-mic{flex:none;width:36px;height:36px;padding:0;border-radius:50%;display:grid;place-items:center;background:var(--app-fill);color:var(--app-muted);transition:transform .16s var(--spring),background-color .16s}
 .agent-mic:active{transform:scale(.92)}
 .agent-mic svg{width:17px;height:17px;stroke-width:1.95}
-.chat-send-btn{flex:none;width:36px;height:36px;padding:0;border-radius:50%;display:grid;place-items:center;background:var(--bot-accent,var(--app-accent));color:#fff;opacity:.38;box-shadow:0 3px 10px color-mix(in srgb,var(--bot-accent,var(--app-accent)) 28%,transparent);transition:transform .16s var(--spring),opacity .18s}
-.chat-send-btn.ready{opacity:1}
+.chat-send-btn{flex:none;width:36px;height:36px;padding:0;border-radius:50%;display:grid;place-items:center;background:color-mix(in srgb,var(--bot-accent,#8E8E93) 26%,var(--app-bg));color:#fff;box-shadow:none;transition:transform .16s var(--spring),background-color .18s,box-shadow .18s}
+.chat-send-btn.ready{background:color-mix(in srgb,var(--bot-accent,#111111) 76%,#000);color:#fff;box-shadow:0 4px 14px color-mix(in srgb,var(--bot-accent,#111111) 34%,transparent)}
 .chat-send-btn:active{transform:scale(.9)}
 .chat-send-btn svg{width:18px;height:18px;stroke-width:2.35}
+/* 全屏「连接应用 (Connect Apps)」中心（对标参考图：零重复建 Bot，纯应用授权 + Android 能力 + 技能 + 底部搜索） */
+.conn-full-view{position:fixed;inset:0;z-index:166;display:flex;flex-direction:column;background:var(--app-bg);animation:readerIn .24s var(--spring)}
+.conn-head{flex:none;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:calc(env(safe-area-inset-top) + 12px) 16px 10px}
+.conn-head-l{display:flex;align-items:center;gap:12px;min-width:0}
+.conn-head h3{margin:0;font-size:19px;font-weight:660;letter-spacing:-.015em;color:var(--app-fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.conn-count-pill{flex:none;height:36px;padding:0 14px;border-radius:999px;background:var(--app-elev);box-shadow:0 0 0 .5px var(--app-line),0 3px 10px rgba(0,0,0,.04);font-size:13.5px;font-weight:600;color:var(--app-fg)}
+.conn-count-pill.on{background:var(--app-fg);color:var(--app-bg)}
+.conn-cats{flex:none;display:flex;align-items:center;gap:8px;overflow-x:auto;padding:4px 16px 12px;scrollbar-width:none}
+.conn-cats::-webkit-scrollbar{display:none}
+.conn-cat-pill{flex:none;height:34px;padding:0 14px;border-radius:999px;background:var(--app-fill);font-size:13.5px;font-weight:560;color:var(--app-fg);white-space:nowrap;transition:background-color .16s,color .16s}
+.conn-cat-pill.on{background:var(--app-fg);color:var(--app-bg);font-weight:620}
+.conn-scroll{flex:1;min-height:0;overflow-y:auto;padding:4px 16px 18px}
+.conn-sec-title{font-size:14.5px;font-weight:650;color:var(--app-fg);margin:10px 2px 10px}
+.conn-list{display:flex;flex-direction:column;gap:4px;margin-bottom:14px}
+.conn-row{display:flex;align-items:center;gap:12px;padding:10px 4px;border-radius:16px;cursor:pointer;transition:background-color .14s}
+.conn-row:active{background:var(--app-fill)}
+.conn-ico{width:42px;height:42px;border-radius:12px;flex:none;display:grid;place-items:center;color:#fff;font-size:15px;font-weight:750;letter-spacing:-.02em;box-shadow:0 2px 8px rgba(0,0,0,.08)}
+.conn-ico.soft{background:var(--app-fill);color:var(--app-fg);box-shadow:0 0 0 .5px var(--app-line)}
+.conn-ico.soft svg{width:20px;height:20px;stroke-width:1.8}
+.conn-ico.lg{width:64px;height:64px;border-radius:18px;font-size:24px;margin:0 auto 10px}
+.conn-meta{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.conn-meta strong{font-size:15.5px;font-weight:600;color:var(--app-fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.conn-meta span{font-size:12.5px;color:var(--app-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.conn-btn{flex:none;height:33px;padding:0 14px;border-radius:999px;background:var(--app-fill);font-size:13.5px;font-weight:600;color:var(--app-fg);white-space:nowrap}
+.conn-btn.on{background:color-mix(in srgb,#34c759 16%,var(--app-bg));color:#1f9d45}
+.conn-btn.danger{color:#FF3B30}
+.conn-search-dock{flex:none;padding:10px 16px calc(env(safe-area-inset-bottom) + 14px);background:var(--glass-strong);backdrop-filter:saturate(180%) blur(24px);-webkit-backdrop-filter:saturate(180%) blur(24px);border-top:.5px solid var(--app-line)}
+.conn-auth-body{flex:1;overflow-y:auto;padding:12px 18px calc(env(safe-area-inset-bottom) + 24px);max-width:480px;width:100%;margin:0 auto}
+.conn-auth-hero{text-align:center;margin-bottom:18px}
+.conn-auth-hero h4{margin:0 0 6px;font-size:20px;font-weight:700;color:var(--app-fg)}
+.conn-auth-hero p,.conn-auth-note{margin:0 0 12px;font-size:13.5px;line-height:1.55;color:var(--app-muted)}
+.conn-verified-tag{display:inline-flex;align-items:center;height:26px;padding:0 11px;border-radius:999px;background:color-mix(in srgb,#34c759 15%,var(--app-bg));color:#1f9d45;font-size:12px;font-weight:620}
+.conn-guide-link{display:inline-block;font-size:13px;font-weight:560;color:var(--app-accent);text-decoration:none;padding:2px 2px 4px}
+.conn-err{margin:0;font-size:13px;line-height:1.45;color:#FF3B30}
 .agent-skills{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
 .agent-skill{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;padding:12px 4px;border-radius:18px;background:var(--app-elev);box-shadow:0 0 0 .5px var(--app-line),0 3px 12px rgba(0,0,0,.03);color:var(--app-fg)}
 .agent-skill svg{width:20px;height:20px;stroke-width:1.75;color:var(--app-accent)}

@@ -1,6 +1,7 @@
 """统一 Model Gateway：不绑定单一模型厂商，离线/无密钥时确定性降级，纯 BYOK 透传用户自有 API Key。"""
 from __future__ import annotations
 
+import asyncio
 import ipaddress
 import os
 import re
@@ -8,6 +9,29 @@ from typing import Any
 from urllib.parse import urlparse
 
 import httpx
+
+_QUOTA_ERR_RE = re.compile(r"(insufficient|exceeded.*quota|balance|billing|credit|欠费|余额不足|quota_exceeded)", re.IGNORECASE)
+
+
+def extract_api_error_text(data: Any, fallback: str = "") -> str:
+    if isinstance(data, list) and data:
+        return extract_api_error_text(data[0], fallback)
+    if isinstance(data, dict):
+        err_obj = data.get("error")
+        if isinstance(err_obj, dict):
+            meta_raw = (err_obj.get("metadata") or {}).get("raw") if isinstance(err_obj.get("metadata"), dict) else ""
+            msg = str(err_obj.get("message") or "").strip()
+            if meta_raw and meta_raw not in msg:
+                return f"{msg} ({str(meta_raw)[:140]})".strip()
+            if msg:
+                return msg
+        elif isinstance(err_obj, str) and err_obj.strip():
+            return err_obj.strip()
+        for k in ("message", "detail", "msg", "error_msg"):
+            v = str(data.get(k) or "").strip()
+            if v:
+                return v
+    return str(fallback or "").strip()[:200]
 
 _NEEDS_V1_RE = re.compile(
     r"^https?://(api\.openai\.com|api\.siliconflow\.cn|api\.moonshot\.cn|api\.x\.ai|openrouter\.ai/api|api\.groq\.com/openai|dashscope\.aliyuncs\.com/compatible-mode)$",
@@ -150,25 +174,30 @@ class ModelGateway:
                         "error": "" if text else "模型没有返回文字",
                     }
 
-                res = await client.post(
-                    endpoint,
-                    headers={
-                        "Authorization": f"Bearer {self.api_key}",
-                        "Content-Type": "application/json",
-                    },
-                    json={"model": self.model, "temperature": temperature, "messages": messages},
-                )
-                try:
-                    data = res.json()
-                except Exception:
-                    data = {}
-                if not res.is_success:
-                    err_obj = data.get("error")
-                    err_msg = (
-                        err_obj.get("message")
-                        if isinstance(err_obj, dict)
-                        else (str(err_obj) if err_obj else (data.get("message") or res.text[:200]))
+                res = None
+                data: Any = {}
+                for attempt in range(2):
+                    res = await client.post(
+                        endpoint,
+                        headers={
+                            "Authorization": f"Bearer {self.api_key}",
+                            "Content-Type": "application/json",
+                        },
+                        json={"model": self.model, "temperature": temperature, "messages": messages},
                     )
+                    try:
+                        data = res.json()
+                    except Exception:
+                        data = {}
+                    if res.status_code == 429 and attempt == 0:
+                        err_preview = extract_api_error_text(data, res.text[:200])
+                        if not _QUOTA_ERR_RE.search(err_preview):
+                            await asyncio.sleep(1.5)
+                            continue
+                    break
+                assert res is not None
+                if not res.is_success:
+                    err_msg = extract_api_error_text(data, res.text[:200])
                     return {
                         "ok": False,
                         "status": res.status_code,

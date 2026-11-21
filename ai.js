@@ -294,13 +294,38 @@ export function clearAiKey() {
   localStorage.setItem(KEY, JSON.stringify(cur));
 }
 
+const QUOTA_ERR_RE = /(insufficient|exceeded.*quota|balance|billing|credit|欠费|余额不足|quota_exceeded)/i;
+
+export function extractApiErrorText(data) {
+  if (Array.isArray(data) && data.length) return extractApiErrorText(data[0]);
+  if (data && typeof data === 'object') {
+    if (data.error && typeof data.error === 'object') {
+      const msg = String(data.error.message || '').trim();
+      const rawMeta = typeof data.error.metadata?.raw === 'string' ? data.error.metadata.raw.trim() : '';
+      if (rawMeta && !msg.includes(rawMeta)) return `${msg ? `${msg}：` : ''}${rawMeta.slice(0, 140)}`;
+      if (msg) return msg;
+    } else if (typeof data.error === 'string' && data.error.trim()) {
+      return data.error.trim();
+    }
+    for (const k of ['message', 'detail', 'msg', 'error_msg', '_raw']) {
+      if (typeof data[k] === 'string' && data[k].trim()) return data[k].trim().slice(0, 180);
+    }
+  }
+  return '';
+}
+
 function formatHttpApiError(status, data, model) {
-  const rawMsg = data?.error?.message || (typeof data?.error === 'string' ? data.error : '') || data?.message || '';
-  if (status === 401) return `密钥无效或已过期（401）${rawMsg ? `：${rawMsg.slice(0, 80)}` : ''}`;
-  if (status === 402) return `账号余额不足（402）${rawMsg ? `：${rawMsg.slice(0, 80)}` : ''}`;
-  if (status === 403) return `无权限访问该接口或模型（403）${rawMsg ? `：${rawMsg.slice(0, 80)}` : ''}`;
-  if (status === 404) return `接口地址或模型「${model}」不存在（404）`;
-  if (status === 429) return `请求受限或额度已满（429）${rawMsg ? `：${rawMsg.slice(0, 80)}` : ''}`;
+  const rawMsg = extractApiErrorText(data);
+  if (status === 401) return `密钥无效或已过期（401）${rawMsg ? `：${rawMsg.slice(0, 120)}` : ''}`;
+  if (status === 402) return `账号余额不足（402）${rawMsg ? `：${rawMsg.slice(0, 120)}` : ''}`;
+  if (status === 403) return `无权限访问该接口或模型（403）${rawMsg ? `：${rawMsg.slice(0, 120)}` : ''}`;
+  if (status === 404) return `接口地址或模型「${model}」不存在（404）${rawMsg ? `：${rawMsg.slice(0, 90)}` : ''}`;
+  if (status === 429) {
+    if (QUOTA_ERR_RE.test(rawMsg)) {
+      return `当前 API 密钥额度已用尽（429）：${rawMsg.slice(0, 130)}。请到对应平台充值，或换用 DeepSeek / 智谱 GLM-4-Flash / 硅基流动。`;
+    }
+    return `服务商限流或免费额度已满（429）${rawMsg ? `：${rawMsg.slice(0, 130)}` : '（请检查该 API Key 是否有余额或免费速率已达上限）'}`;
+  }
   return rawMsg || `请求失败（HTTP ${status || '未知'}）`;
 }
 
@@ -362,7 +387,12 @@ export async function complete(messages, override) {
     const body = proto === 'anthropic'
       ? toAnthropicBody(messages, model, 0.3)
       : { model, temperature: 0.3, messages };
-    const res = await nativePostJson(endpoint, headers, body, 45000);
+    let res = await nativePostJson(endpoint, headers, body, 45000);
+    // 瞬时 429 速率限制自动退避重试 1 次（若是明确余额/配额耗尽则不浪费时间直接提示）
+    if (res.status === 429 && !QUOTA_ERR_RE.test(extractApiErrorText(res.data))) {
+      await new Promise(r => setTimeout(r, 1500));
+      res = await nativePostJson(endpoint, headers, body, 45000);
+    }
     if (!res.ok) {
       const apiErr = new Error(formatHttpApiError(res.status, res.data, model));
       apiErr.isHttpApiError = true;

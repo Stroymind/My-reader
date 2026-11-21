@@ -15,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from .agent import TOOL_REGISTRY, inspect_external_plugin, run_byok_agent_loop
+from .connectors import verify_connector
 from .db import Database
 from .discovery import build_coverage_map, cluster_unassigned_documents, content_hash, seed_default_sources
 from .gateway import ModelGateway
@@ -66,7 +67,14 @@ class AgentRunReq(BaseModel):
     rules: str = ""
     memory: str = ""
     ext_plugins: list[dict[str, Any]] = Field(default_factory=list)
+    connectors: list[dict[str, Any]] = Field(default_factory=list)
     max_steps: int = Field(default=4, ge=1, le=5)
+
+
+class ConnectorVerifyReq(BaseModel):
+    connector_id: str = Field(..., min_length=2, max_length=60)
+    token: str = ""
+    extra: dict[str, Any] = Field(default_factory=dict)
 
 
 class McpInspectReq(BaseModel):
@@ -230,7 +238,7 @@ def create_app(db_path: str | None = None, enable_scheduler: bool = True) -> Fas
     def health() -> dict[str, Any]:
         return {
             "status": "ok",
-            "version": "2.3.0",
+            "version": "2.4.0",
             "byok_mode": True,
             "platform_token_used": False,
             "agent_tools": sorted(TOOL_REGISTRY.keys()),
@@ -238,8 +246,14 @@ def create_app(db_path: str | None = None, enable_scheduler: bool = True) -> Fas
             "byok_balance_check": True,
             "byok_chat_proxy": True,
             "cloud_kb": True,
+            "app_connectors": True,
             "runtime_paused": runtime.paused,
         }
+
+    @app.post("/api/connectors/verify")
+    async def connectors_verify(req: ConnectorVerifyReq) -> dict[str, Any]:
+        """真实校验第三方应用授权令牌/Webhook（纯无状态，绝不落盘保存用户凭据）。"""
+        return await verify_connector(req.connector_id, token=req.token, extra=req.extra)
 
     @app.post("/api/byok/chat")
     async def byok_chat(req: ByokChatReq, request: Request) -> dict[str, Any]:
@@ -271,6 +285,7 @@ def create_app(db_path: str | None = None, enable_scheduler: bool = True) -> Fas
             rules=req.rules,
             memory=req.memory,
             ext_plugins=req.ext_plugins,
+            connectors=req.connectors,
             max_steps=req.max_steps,
         )
 
