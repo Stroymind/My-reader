@@ -305,17 +305,17 @@ public class ZonePhoneUseService extends AccessibilityService {
                 float density = getResources().getDisplayMetrics().density;
                 TextView tv = new TextView(this);
                 tv.setText(label);
-                tv.setTextColor(Color.parseColor("#F5F5F4"));
+                tv.setTextColor(Color.parseColor("#1D1D1F"));
                 tv.setTextSize(12.5f);
                 int padH = Math.round(14 * density);
                 int padV = Math.round(8 * density);
                 tv.setPadding(padH, padV, padH, padV);
                 GradientDrawable bg = new GradientDrawable();
-                bg.setColor(Color.parseColor("#E6141413"));
+                bg.setColor(Color.parseColor("#EBFFFFFF"));
                 bg.setCornerRadius(999 * density);
-                bg.setStroke(Math.round(1 * density), Color.parseColor("#33FFFFFF"));
+                bg.setStroke(Math.round(1 * density), Color.parseColor("#243C3C43"));
                 tv.setBackground(bg);
-                tv.setElevation(8 * density);
+                tv.setElevation(10 * density);
 
                 int type = Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1
                     ? WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY

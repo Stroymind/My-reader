@@ -4,6 +4,7 @@ import { importArticleUrl, importBlob, importFiles, parseManifest, applyManifest
 import { findAndFetchBook, getOpdsUrl, setOpdsUrl } from './book-finder.js';
 import { initSichao, setSichaoApi } from './sichao.js';
 import { getPhoneUseStatus, openPhoneUseSettings, runPhoneUseTask } from './phone-use.js';
+import { closeMicroApp, consumeLaunchDeepLink, craftMicroApp, isMicroAppOpen, openMicroApp, pinToDesktop } from './agent-surface.js';
 import { BookletEngine, EpubEngine, PdfEngine, TxtEngine } from './engines.js';
 import { aiConfigured, complete as aiComplete } from './ai.js';
 import { settings, saveSettings, applyBodyTheme, applyAppearance, appearancePref, cycleAppearance, applyCustomFontBlob, FONTS, THEMES } from './settings.js';
@@ -2607,6 +2608,39 @@ command = createCommandController({
         await openLibraryExcerpts();
         return { label: '已打开摘录' };
       }
+      case 'pinShortcut': {
+        const target = String(a.target || '').trim();
+        let spec = null;
+        if (/思潮/.test(target)) {
+          spec = { id: 'zone-sichao', label: '今日思潮', uri: 'zone://open/sichao', glyph: '思' };
+        } else if (/星海/.test(target)) {
+          spec = { id: 'zone-graph', label: 'Zone 星海', uri: 'zone://open/graph', glyph: '星' };
+        } else if (/知识|笔记/.test(target)) {
+          spec = { id: 'zone-knowledge', label: 'Zone 知识', uri: 'zone://open/knowledge', glyph: '知' };
+        } else if (reading && cur?.id) {
+          spec = { id: `book-${cur.id}`, label: cur.title || '阅读', uri: `zone://open/book/${cur.id}`, glyph: (cur.title || '读').slice(0, 1) };
+        } else if (target) {
+          const books = await db.all('books');
+          const hit = books.find(b => (b.title || '').includes(target));
+          if (hit) spec = { id: `book-${hit.id}`, label: hit.title, uri: `zone://open/book/${hit.id}`, glyph: hit.title.slice(0, 1) };
+        }
+        if (!spec) {
+          const pane = currentPane();
+          if (pane === 'graph') spec = { id: 'zone-graph', label: 'Zone 星海', uri: 'zone://open/graph', glyph: '星' };
+          else if (pane === 'knowledge') spec = { id: 'zone-knowledge', label: 'Zone 知识', uri: 'zone://open/knowledge', glyph: '知' };
+          else spec = { id: 'zone-sichao', label: '今日思潮', uri: 'zone://open/sichao', glyph: '思' };
+        }
+        const res = await pinToDesktop(spec);
+        toast(res.message, 3200);
+        return { label: res.message };
+      }
+      case 'craftApp': {
+        const res = await craftMicroApp(a.prompt || '', {
+          onStatus: msg => toast(msg, 3200),
+          onNeedAi: () => openAiSettingsDialog()
+        });
+        return { label: res.message };
+      }
       case 'phoneUseSetup': {
         const st = await getPhoneUseStatus();
         if (!st.available) return { label: '手机控屏需在 Android 版 Zone 中开启' };
@@ -2732,4 +2766,19 @@ db.get('meta', 'custom-font').then(rec => { if (rec?.blob) applyCustomFontBlob(r
   } catch {}
 })();
 
-window.__app = { db, openBook, closeBook, importFiles, importBlob, importArticleUrl, handleBack, get engine() { return engine; }, renderLibrary, stacks: { list: listStacks }, runCommand: text => command.run(text), openCommand: opts => command.openBar(opts), openPeek: openBookPeek, closePeek: closeBookPeek, openAuthGate, getAuthUser, getOpdsUrl, setOpdsUrl };
+async function openDeepLink(uri) {
+  const s = String(uri || '').trim();
+  if (!s.startsWith('zone://')) return false;
+  enterSpatialPortal('', 'guest', 'local');
+  const mBook = s.match(/^zone:\/\/open\/book\/(.+)$/);
+  if (mBook) { await openBook(decodeURIComponent(mBook[1])); return true; }
+  const mApp = s.match(/^zone:\/\/open\/microapp\/(.+)$/);
+  if (mApp) { return openMicroApp(decodeURIComponent(mApp[1])); }
+  if (s === 'zone://open/sichao') { openSichaoSheet(); return true; }
+  if (s === 'zone://open/graph') { if (reading) await closeBook(); showPane('graph', { whisper: false }); return true; }
+  if (s === 'zone://open/knowledge') { if (reading) await closeBook(); showPane('knowledge', { whisper: false }); return true; }
+  return false;
+}
+consumeLaunchDeepLink(openDeepLink);
+
+window.__app = { db, openBook, closeBook, importFiles, importBlob, importArticleUrl, handleBack, openDeepLink, openMicroApp, closeMicroApp, isMicroAppOpen, pinToDesktop, get engine() { return engine; }, renderLibrary, stacks: { list: listStacks }, runCommand: text => command.run(text), openCommand: opts => command.openBar(opts), openPeek: openBookPeek, closePeek: closeBookPeek, openAuthGate, getAuthUser, getOpdsUrl, setOpdsUrl };

@@ -765,6 +765,15 @@ body.theme-night .textLayer span.rr-mark.an{background:rgba(10,132,255,.35)}
 .sc-verify button.on{background:var(--app-fg);color:var(--app-bg)}
 .sc-empty{padding:36px 12px;text-align:center;font-size:14px;line-height:1.7;color:var(--app-muted)}
 
+/* Zone 即时微应用全屏画布（纯苹果 HIG 浅色毛玻璃） */
+.microapp-stage{position:fixed;inset:0;z-index:160;display:flex;flex-direction:column;background:var(--app-bg);animation:readerIn .32s var(--spring)}
+.microapp-float{position:absolute;top:calc(env(safe-area-inset-top) + 10px);left:14px;right:14px;z-index:2;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:7px 10px 7px 14px;border-radius:999px;background:var(--glass-strong);backdrop-filter:saturate(180%) blur(22px);-webkit-backdrop-filter:saturate(180%) blur(22px);box-shadow:0 1px 0 var(--app-line),0 8px 28px rgba(0,0,0,.08)}
+.microapp-title{font-size:13.5px;font-weight:620;color:var(--app-fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.microapp-actions{display:flex;align-items:center;gap:6px;flex:none}
+.microapp-pill{height:28px;padding:0 12px;border-radius:999px;background:var(--app-fill);color:var(--app-fg);font-size:12.5px;font-weight:590;white-space:nowrap}
+.microapp-pill.accent{background:var(--app-accent);color:#fff}
+.microapp-frame{flex:1;width:100%;height:100%;border:0;background:var(--app-bg)}
+
 @media (prefers-reduced-motion:reduce){
   *,*::before,*::after{animation:none!important;transition:none!important}
 }
