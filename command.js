@@ -173,7 +173,23 @@ function parseSingleClause(rawClause, ctx = {}) {
     return ops;
   }
 
-  // 5. 导入书籍 / 文件
+  // 5. 导入书籍 / 文件 / 网页文章 / AI 找书 / 配置书源
+  const urlOnly = text.match(/^(?:(?:导入|抓取|收藏|阅读)(?:网页|文章|链接)?\s*)?(https?:\/\/\S+)$/i);
+  if (urlOnly) {
+    ops.push({ op: 'importUrl', url: urlOnly[1].trim() });
+    return ops;
+  }
+  const opdsSet = text.match(/^(?:配置|设置|绑定)(?:书源|OPDS|个人书库)\s*(https?:\/\/\S+)$/i);
+  if (opdsSet) {
+    ops.push({ op: 'setOpds', url: opdsSet[1].trim() });
+    return ops;
+  }
+  const findBookM = text.match(/^(?:搜书|找书|帮我找|帮我搜|搜一下|找一本|下载一本?|导入一本?)\s*[《「]?([^，。！？,!?》」]{1,36})[》」]?$/)
+    || text.match(/^(?:找|搜)\s*[《「]([^，。！？,!?》」]{1,36})[》」]$/);
+  if (findBookM && findBookM[1].trim() && !/^(?:本地|文件|书|书籍|资料|电子书)$/.test(findBookM[1].trim())) {
+    ops.push({ op: 'findBook', query: findBookM[1].trim() });
+    return ops;
+  }
   if (/(?:导入|传一本?|添加).{0,4}(?:书|书籍|文件|资料|电子书|本地)|^导入$/.test(text)) {
     ops.push({ op: 'importBooks' });
     return ops;

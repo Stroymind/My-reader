@@ -1,9 +1,10 @@
-// 导入：EPUB / PDF / TXT / HTML / ZIP（可含 manifest JSON，用于迁移阅读进度）
+// 导入：EPUB / PDF / TXT / HTML / MOBI / AZW3 / DOCX / Markdown / 网页文章 URL / ZIP
 import { db } from './db.js';
 import { decodeText, htmlToPlain } from './engines.js';
 import { repairEpub } from './epub-repair.js';
+import { extractEpubFallback, fetchArticleUrl, parseDocx, parseMarkdown, parseMobi } from './formats.js';
 
-const BOOK_EXT = /\.(epub|pdf|txt|text|html|htm|xhtml)$/i;
+const BOOK_EXT = /\.(epub|pdf|txt|text|html|htm|xhtml|mobi|azw|azw3|prc|docx|md|markdown)$/i;
 
 export function extOf(name) { const m = /\.([a-z0-9]+)$/i.exec(name || ''); return m ? m[1].toLowerCase() : ''; }
 export function baseName(p) { return (p || '').split('/').pop(); }
@@ -12,9 +13,16 @@ async function sniffType(blob, name) {
   const e = extOf(name);
   if (e === 'text') return 'txt';
   if (e === 'htm' || e === 'xhtml') return 'html';
+  if (e === 'mobi' || e === 'azw' || e === 'azw3' || e === 'prc') return 'mobi';
+  if (e === 'md' || e === 'markdown') return 'md';
+  if (e === 'docx') return 'docx';
   if (e === 'epub' || e === 'pdf' || e === 'txt' || e === 'html') return e;
   const head = new Uint8Array(await blob.slice(0, 80).arrayBuffer());
   if (head[0] === 0x25 && head[1] === 0x50 && head[2] === 0x44 && head[3] === 0x46) return 'pdf';
+  if (head.length >= 68) {
+    const ident = String.fromCharCode(...head.subarray(60, 68));
+    if (ident === 'BOOKMOBI' || ident === 'TEXtREAd') return 'mobi';
+  }
   if (head[0] === 0x50 && head[1] === 0x4b) return e === 'zip' ? 'zip' : 'epub?';
   const ascii = new TextDecoder('utf-8', { fatal: false }).decode(head).replace(/^\uFEFF/, '').trim().toLowerCase();
   if (ascii.startsWith('<!doctype html') || ascii.startsWith('<html') || ascii.startsWith('<head') || ascii.startsWith('<body')) return 'html';
@@ -78,10 +86,10 @@ async function pdfMeta(blob, pdfjsLib) {
   } finally { doc.destroy(); }
 }
 
-function cleanTitle(name) { return baseName(name).replace(/\.(epub|pdf|txt|text|html|htm|xhtml)$/i, '').replace(/\s*\([0-9a-z]{26}\)\s*$/, '').trim(); }
+function cleanTitle(name) { return baseName(name).replace(/\.(epub|pdf|txt|text|html|htm|xhtml|mobi|azw|azw3|prc|docx|md|markdown)$/i, '').replace(/\s*\([0-9a-z]{26}\)\s*$/, '').trim(); }
 
-// 导入单个文件。返回 {status:'added'|'dup'|'fail', title}
-export async function importBlob(blob, name, ctx) {
+// 导入单个文件。返回 {status:'added'|'dup'|'fail', title, id?}
+export async function importBlob(blob, name, ctx = {}) {
   let type = await sniffType(blob, name);
   if (type === 'epub?') type = 'epub';
   if (!type || type === 'zip') return { status: 'skip', title: name };
@@ -90,13 +98,41 @@ export async function importBlob(blob, name, ctx) {
   const m = ctx.manifest?.byFile?.get(baseName(name));
   if (existing) {
     if (m) await applyEntry(existing, m);
-    return { status: 'dup', title: existing.title };
+    return { status: 'dup', title: existing.title, id: existing.id };
   }
   let meta = {};
+  let storeBlob = blob;
+  let storeType = type;
   try {
-    if (type === 'epub') meta = await epubMeta(blob);
-    else if (type === 'pdf') meta = await pdfMeta(blob, ctx.pdfjsLib);
-    else if (type === 'html') {
+    if (type === 'epub') {
+      try {
+        meta = await epubMeta(blob);
+      } catch (e) {
+        if (e.code === 'DRM') throw e;
+        // 疑难非加密 EPUB 兜底：直接按阅读顺序抽取全部正文，确保绝不打不开
+        const fb = await extractEpubFallback(blob);
+        meta = { title: fb.title, author: fb.author };
+        storeBlob = new Blob([fb.text], { type: 'text/plain;charset=utf-8' });
+        storeType = 'txt';
+      }
+    } else if (type === 'pdf') {
+      meta = await pdfMeta(blob, ctx.pdfjsLib);
+    } else if (type === 'mobi') {
+      const parsed = await parseMobi(blob);
+      meta = { title: parsed.title, author: parsed.author };
+      storeBlob = new Blob([parsed.text], { type: 'text/plain;charset=utf-8' });
+      storeType = 'txt';
+    } else if (type === 'docx') {
+      const parsed = await parseDocx(blob);
+      meta = { title: parsed.title, author: parsed.author };
+      storeBlob = new Blob([parsed.text], { type: 'text/plain;charset=utf-8' });
+      storeType = 'txt';
+    } else if (type === 'md') {
+      const parsed = await parseMarkdown(blob);
+      meta = { title: parsed.title, author: parsed.author };
+      storeBlob = new Blob([parsed.text], { type: 'text/plain;charset=utf-8' });
+      storeType = 'txt';
+    } else if (type === 'html') {
       const parsed = htmlToPlain(decodeText(await blob.arrayBuffer()));
       if (!parsed.text.trim()) return { status: 'fail', title: cleanTitle(name), reason: 'HTML 里没有可读的正文' };
       meta = { title: parsed.title, author: parsed.author };
@@ -105,16 +141,32 @@ export async function importBlob(blob, name, ctx) {
     if (type !== 'txt') return { status: 'fail', title: cleanTitle(name), reason: '无法解析：' + (e.message || e) };
   }
   const rec = {
-    id, type, fileName: baseName(name), size: blob.size,
+    id, type: storeType, origType: type, fileName: baseName(name), size: blob.size,
     title: (m?.title || meta.title || cleanTitle(name)).trim(),
     author: (m?.author || meta.author || '').trim(),
     cover: meta.cover || null, pages: meta.pages,
     addedAt: Date.now(), lastOpened: 0, progress: 0, pos: null, bookmarks: [], highlights: []
   };
   if (m) fillPending(rec, m);
-  await db.put('files', { id, blob: blob.type ? blob : new Blob([blob], { type: mime(type) }) });
+  await db.put('files', { id, blob: storeBlob.type ? storeBlob : new Blob([storeBlob], { type: mime(storeType) }) });
   await db.put('books', rec);
-  return { status: 'added', title: rec.title };
+  return { status: 'added', title: rec.title, id };
+}
+
+export async function importArticleUrl(url) {
+  const art = await fetchArticleUrl(url);
+  const blob = new Blob([art.text], { type: 'text/plain;charset=utf-8' });
+  const id = await fingerprint(blob);
+  const existing = await db.get('books', id);
+  if (existing) return { status: 'dup', title: existing.title, id: existing.id };
+  const rec = {
+    id, type: 'txt', origType: 'url', fileName: art.title + '.txt', size: blob.size,
+    title: art.title, author: art.author || '', cover: null,
+    addedAt: Date.now(), lastOpened: 0, progress: 0, pos: null, bookmarks: [], highlights: []
+  };
+  await db.put('files', { id, blob });
+  await db.put('books', rec);
+  return { status: 'added', title: rec.title, id };
 }
 
 function mime(t) { return t === 'epub' ? 'application/epub+zip' : t === 'pdf' ? 'application/pdf' : t === 'html' ? 'text/html' : 'text/plain'; }

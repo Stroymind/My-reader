@@ -27,15 +27,15 @@ try {
   await page.waitForFunction(() => window.__app);
   assert.equal(await page.title(), 'Zone');
   assert.equal(await page.$eval('h1', el => el.textContent), 'Zone');
-  // First-launch serene Login / Identity Gate
-  assert.equal(await page.$eval('#auth-gate', el => el.classList.contains('hidden')), false, 'auth gate greets first-time user');
+  // First-launch Zero-Button Spatial Portal (zero inputs, zero buttons)
+  assert.equal(await page.$eval('#auth-gate', el => el.classList.contains('hidden')), false, 'spatial portal greets first-time user');
+  assert.equal(await page.evaluate(() => document.querySelectorAll('#auth-gate input, #auth-gate button').length), 0, 'spatial portal has zero inputs and zero buttons');
   await sleep(260);
   await page.screenshot({ path: path.resolve(root, 'test-results/zone-auth-gate.png') });
-  await page.type('#auth-account', 'stroymind@zone.app');
-  await page.click('#auth-submit');
+  await page.click('#auth-portal');
   await page.waitForFunction(() => document.querySelector('#auth-gate').classList.contains('hidden'));
-  assert.equal(await page.evaluate(() => window.__app.getAuthUser()?.name), 'stroymind');
-  report.checks.push('Mobile startup, serene Login/Identity Gate sign-in, and Zone heading/title');
+  assert.equal(await page.evaluate(() => window.__app.getAuthUser()?.mode), 'guest');
+  report.checks.push('Mobile startup, zero-button Spatial Z Portal entry, and Zone heading/title');
 
   const chrome = await page.evaluate(() => ({
     gone: ['.appbar', '#btn-search-toggle', '#btn-menu', '.tabbar', '.pane-head', '.pane-intro', '.flow', '.pillars', '.tagline', '#desk-block', '#desk-list', '.sidebar', '.side-mark', '.book-grid', '.cosmos-hud', '#cosmos-stats', '#graph-search-toggle', '#graph-in', '#graph-out'].filter(s => document.querySelector(s)),
@@ -963,6 +963,55 @@ try {
   const afterNotes = await page.evaluate(async () => (await (await import('./knowledge.js')).listNotes()).length);
   assert.equal(afterNotes, beforeNotes + 1);
   report.checks.push('Chained 6-step voice command, fuzzy ASR book match (黄仁勋的再记->黄仁勋传), ordinal books, dark multi-paragraph highlight, 3-pill select bar, E-Ink, Left-Hand, Scrolled flow, and Traditional Vertical-RL typography all verified');
+
+  // ---- Full-format offline parsers (MOBI binary, DOCX zip, Markdown) + AI Book Finder / OPDS / URL command parser ----
+  const formatCheck = await page.evaluate(async () => {
+    const { parseNaturalCommands } = await import('./command.js');
+    // 1) Synthetic valid uncompressed BOOKMOBI binary
+    const bodyText = new TextEncoder().encode('<html><body><h1>第一章</h1><p>这是本地离线解析的 MOBI 电子书正文。</p></body></html>');
+    const r0 = new Uint8Array(16);
+    const r0v = new DataView(r0.buffer);
+    r0v.setUint16(0, 1, false); // compression = 1 (none)
+    r0v.setUint16(8, 1, false); // textRecordCount = 1
+    r0v.setUint16(12, 0, false); // encryption = 0
+    const headerLen = 78 + 2 * 8;
+    const mobiBuf = new Uint8Array(headerLen + r0.length + bodyText.length);
+    const mv = new DataView(mobiBuf.buffer);
+    const titleBytes = new TextEncoder().encode('MobiDemoBook');
+    mobiBuf.set(titleBytes, 0);
+    mobiBuf.set(new TextEncoder().encode('BOOKMOBI'), 60);
+    mv.setUint16(76, 2, false);
+    mv.setUint32(78, headerLen, false);
+    mv.setUint32(86, headerLen + r0.length, false);
+    mobiBuf.set(r0, headerLen);
+    mobiBuf.set(bodyText, headerLen + r0.length);
+    const mobiRes = await window.__app.importBlob(new Blob([mobiBuf]), 'demo.mobi');
+
+    // 2) Synthetic valid DOCX zip
+    const dzip = new window.JSZip();
+    dzip.file('docProps/core.xml', '<?xml version="1.0"?><cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Docx样书</dc:title><dc:creator>测试作者</dc:creator></cp:coreProperties>');
+    dzip.file('word/document.xml', '<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>这是本地解析的 DOCX 正文。</w:t></w:r></w:p></w:body></w:document>');
+    const docxRes = await window.__app.importBlob(await dzip.generateAsync({ type: 'blob' }), 'sample.docx');
+
+    // 3) Markdown file
+    const mdRes = await window.__app.importBlob(new Blob(['# 思考笔记\n\n这是 **Markdown** 导入的正文。']), 'notes.md');
+
+    return {
+      mobi: mobiRes.status,
+      docx: docxRes.status === 'added' && docxRes.title === 'Docx样书',
+      md: mdRes.status === 'added' && mdRes.title === '思考笔记',
+      cmdFind: parseNaturalCommands('帮我找《平凡的世界》')[0],
+      cmdOpds: parseNaturalCommands('配置书源 https://standardebooks.org/feeds/opds/all')[0],
+      cmdUrl: parseNaturalCommands('https://example.com/essay')[0]
+    };
+  });
+  assert.equal(formatCheck.mobi, 'added', 'MOBI binary parses and imports offline');
+  assert.equal(formatCheck.docx, true, 'DOCX zip parses and imports offline');
+  assert.equal(formatCheck.md, true, 'Markdown parses and imports offline');
+  assert.deepEqual(formatCheck.cmdFind, { op: 'findBook', query: '平凡的世界' });
+  assert.deepEqual(formatCheck.cmdOpds, { op: 'setOpds', url: 'https://standardebooks.org/feeds/opds/all' });
+  assert.deepEqual(formatCheck.cmdUrl, { op: 'importUrl', url: 'https://example.com/essay' });
+  report.checks.push('All-format offline importers (MOBI/AZW3, DOCX, Markdown) + AI book-finder / OPDS / Web URL voice commands verified');
 
   for (const width of [390, 1100]) {
     await page.setViewport({ width, height: 844 });

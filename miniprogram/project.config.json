@@ -1,0 +1,15 @@
+{
+  "description": "Zone 微信小程序：零按钮微信静默登录 + 沉浸阅读与星海知识空间",
+  "miniprogramRoot": "./",
+  "cloudfunctionRoot": "cloudfunctions/",
+  "setting": {
+    "es6": true,
+    "enhance": true,
+    "postcss": true,
+    "minified": true,
+    "urlCheck": true
+  },
+  "compileType": "miniprogram",
+  "appid": "wx0000000000000000",
+  "projectname": "Zone-MiniProgram"
+}

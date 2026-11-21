@@ -1,6 +1,7 @@
 import * as pdfjsLib from './vendor/pdf.min.mjs';
 import { db } from './db.js';
-import { importFiles, parseManifest, applyManifestToLibrary } from './importer.js';
+import { importArticleUrl, importBlob, importFiles, parseManifest, applyManifestToLibrary } from './importer.js';
+import { findAndFetchBook, getOpdsUrl, setOpdsUrl } from './book-finder.js';
 import { EpubEngine, PdfEngine, TxtEngine } from './engines.js';
 import { settings, saveSettings, applyBodyTheme, applyAppearance, appearancePref, cycleAppearance, FONTS, THEMES } from './settings.js';
 import { isMostlyCjk, translateVisible } from './bilingual.js';
@@ -2105,6 +2106,38 @@ command = createCommandController({
         $('#settings').classList.remove('hidden');
         return { label: '已展开排版面板' };
       }
+      case 'importUrl': {
+        if (reading) await closeBook();
+        showPane('shelf');
+        toast('正在抓取文章正文…', 2400);
+        try {
+          const r = await importArticleUrl(a.url);
+          await renderLibrary();
+          return { label: r.status === 'dup' ? `《${r.title}》已在流中` : `已导入文章《${r.title}》` };
+        } catch (err) {
+          return { label: err?.message || '网页导入失败' };
+        }
+      }
+      case 'setOpds': {
+        setOpdsUrl(a.url);
+        return { label: '已绑定个人 OPDS 书源，现在可直接说「帮我找《书名》」' };
+      }
+      case 'findBook': {
+        if (reading) await closeBook();
+        showPane('shelf');
+        toast(`正在检索「${a.query}」…`, 2600);
+        try {
+          const found = await findAndFetchBook(a.query);
+          if (!found.found) {
+            return { label: `公版书库未收录《${found.query}》，说「配置书源 网址」可接入个人书库` };
+          }
+          const r = await importBlob(found.blob, found.fileName, { pdfjsLib });
+          await renderLibrary();
+          return { label: `已从${found.source}导入《${r.title || found.title}》` };
+        } catch (err) {
+          return { label: err?.message || '找书失败，请检查网络或书源地址' };
+        }
+      }
       case 'closeBook': {
         if (!reading) return null;
         await closeBook();
@@ -2305,7 +2338,7 @@ $('#intent-mic')?.addEventListener('click', () => command.openBar({ listen: true
 })();
 $('#btn-reader-voice')?.addEventListener('click', () => { setBars(false); command.openBar({ listen: speechSupported() }); });
 
-/* ---------------- 极简登录 / 身份空间 ---------------- */
+/* ---------------- 零按钮 Z 轴空间入口（支持微信小程序静默微信登录） ---------------- */
 const AUTH_KEY = 'zone-auth';
 function getAuthUser() {
   try { return JSON.parse(localStorage.getItem(AUTH_KEY) || 'null'); } catch { return null; }
@@ -2313,50 +2346,40 @@ function getAuthUser() {
 function syncAuthLabel() {
   const u = getAuthUser();
   const lbl = $('#intent-auth-label');
-  if (lbl) lbl.textContent = u ? (u.mode === 'guest' ? '本地空间 · 登录' : `${u.name} · 切换`) : '登录 / 账号';
+  if (lbl) lbl.textContent = u ? (u.provider === 'wechat' ? '微信空间' : u.mode === 'guest' ? '本机空间' : u.name) : '本机空间';
 }
 function openAuthGate() {
   const gate = $('#auth-gate');
   if (!gate) return;
-  const u = getAuthUser();
-  const inp = $('#auth-account');
-  if (inp) inp.value = u && u.mode !== 'guest' ? (u.account || u.name || '') : '';
-  gate.classList.remove('hidden');
+  gate.classList.remove('entering', 'hidden');
 }
-function completeAuth(account, mode = 'account', provider = '') {
+function enterSpatialPortal(account = '', mode = 'guest', provider = 'local') {
+  const gate = $('#auth-gate');
   const clean = String(account || '').trim();
   const user = mode === 'guest'
-    ? { name: '本地空间', account: '', mode: 'guest', provider: 'local', at: Date.now() }
+    ? { name: '本机空间', account: '', mode: 'guest', provider: provider || 'local', at: Date.now() }
     : { name: clean.includes('@') ? clean.split('@')[0] : clean, account: clean, mode: 'account', provider: provider || 'account', at: Date.now() };
   try { localStorage.setItem(AUTH_KEY, JSON.stringify(user)); } catch {}
-  $('#auth-gate')?.classList.add('hidden');
   syncAuthLabel();
-  toast(mode === 'guest' ? '已进入本地空间' : `欢迎回来，${user.name}`);
-}
-function triggerOAuth(provider) {
-  const cfg = window.ZONE_AUTH_CONFIG || {};
-  const label = provider === 'wechat' ? '微信' : 'QQ';
-  if (cfg.endpoint && ((provider === 'wechat' && cfg.wechatAppId) || (provider === 'qq' && cfg.qqAppId))) {
-    location.href = `${cfg.endpoint.replace(/\/+$/, '')}/oauth/${provider}`;
-    return;
+  if (gate && !gate.classList.contains('hidden')) {
+    gate.classList.add('entering');
+    setTimeout(() => { gate.classList.add('hidden'); gate.classList.remove('entering'); }, 260);
   }
-  completeAuth(`${label}用户`, 'account', provider);
-  toast(`已为你快速进入；配置${label}开放平台 AppID 后即可拉起正式${label}授权`, 3600);
 }
-$('#auth-wechat')?.addEventListener('click', () => triggerOAuth('wechat'));
-$('#auth-qq')?.addEventListener('click', () => triggerOAuth('qq'));
-$('#auth-privacy-toggle')?.addEventListener('click', () => {
-  $('#auth-privacy-box')?.classList.toggle('hidden');
+// 若从微信小程序内嵌打开并携带 wx_uid，实现真正的「零点击静默微信登录」
+(() => {
+  try {
+    const sp = new URLSearchParams(location.search);
+    const wxUid = sp.get('wx_uid');
+    if (wxUid) enterSpatialPortal('微信读者', 'account', 'wechat');
+  } catch {}
+})();
+$('#auth-gate')?.addEventListener('click', () => enterSpatialPortal('', 'guest', 'local'));
+$('#auth-portal')?.addEventListener('keydown', e => {
+  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); enterSpatialPortal('', 'guest', 'local'); }
 });
-$('#auth-form')?.addEventListener('submit', e => {
-  e.preventDefault();
-  const val = ($('#auth-account')?.value || '').trim();
-  if (!val) { toast('请输入手机号、邮箱或昵称，或直接点微信 / QQ / 本地进入'); $('#auth-account')?.focus(); return; }
-  completeAuth(val, 'account');
-});
-$('#auth-guest')?.addEventListener('click', () => completeAuth('', 'guest'));
 $('#btn-auth-account')?.addEventListener('click', () => openAuthGate());
 syncAuthLabel();
 if (!getAuthUser()) openAuthGate();
 
-window.__app = { db, openBook, closeBook, importFiles, handleBack, get engine() { return engine; }, renderLibrary, stacks: { list: listStacks }, runCommand: text => command.run(text), openCommand: opts => command.openBar(opts), openPeek: openBookPeek, closePeek: closeBookPeek, openAuthGate, getAuthUser };
+window.__app = { db, openBook, closeBook, importFiles, importBlob, importArticleUrl, handleBack, get engine() { return engine; }, renderLibrary, stacks: { list: listStacks }, runCommand: text => command.run(text), openCommand: opts => command.openBar(opts), openPeek: openBookPeek, closePeek: closeBookPeek, openAuthGate, getAuthUser, getOpdsUrl, setOpdsUrl };
