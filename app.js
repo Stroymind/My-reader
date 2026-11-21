@@ -116,12 +116,33 @@ async function mirrorKnowledge(book) {
   try { await syncBook(book); await refreshWorkspace(); }
   catch (err) { console.warn(err); }
 }
+let confirmResolve = null;
+function confirmSheet(title, sub = '', okLabel = '确认移除') {
+  const mask = $('#confirm-mask');
+  if (!mask) return Promise.resolve(true);
+  if (confirmResolve) { confirmResolve(false); confirmResolve = null; }
+  $('#confirm-title').textContent = title;
+  const subEl = $('#confirm-sub');
+  if (subEl) { subEl.textContent = sub; subEl.classList.toggle('hidden', !sub); }
+  $('#confirm-ok').textContent = okLabel;
+  mask.classList.remove('hidden');
+  return new Promise(resolve => {
+    confirmResolve = val => {
+      confirmResolve = null;
+      mask.classList.add('hidden');
+      resolve(val);
+    };
+  });
+}
+$('#confirm-cancel')?.addEventListener('click', () => confirmResolve?.(false));
+$('#confirm-ok')?.addEventListener('click', () => confirmResolve?.(true));
+$('#confirm-mask')?.addEventListener('click', e => { if (e.target === e.currentTarget) confirmResolve?.(false); });
+
 async function deleteBooks(recs) {
   if (!recs.length) return false;
-  const msg = recs.length === 1
-    ? `删除「${recs[0].title}」？\n进度、书签、摘录和相关笔记会一起移除。`
-    : `删除这 ${recs.length} 项？\n进度、书签、摘录和相关笔记会一起移除。`;
-  if (!confirm(msg)) return false;
+  const title = recs.length === 1 ? `移除《${recs[0].title}》？` : `移除这 ${recs.length} 项？`;
+  const sub = '进度、书签、摘录和相关笔记会一起移除。';
+  if (!(await confirmSheet(title, sub, '确认移除'))) return false;
   for (const b of recs) {
     try {
       await deleteBookBundle(b.id);
@@ -1878,7 +1899,7 @@ function handleBack() {
 /* 启动 */
 applyBodyTheme();
 initWorkspace({
-  toast, copyText, cycleAppearance,
+  toast, copyText, cycleAppearance, confirm: confirmSheet,
   openPassage: (bookId, passageId) => openPassageById(bookId, passageId),
   onHighlightsChanged(bookId) {
     if (cur?.id !== bookId) return;

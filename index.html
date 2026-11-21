@@ -307,6 +307,17 @@
   </div>
   <p class="auth-pledge">本机加密存储 · 隐私归你所有</p>
 </div>
+<div id="confirm-mask" class="confirm-mask hidden" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+  <div class="confirm-sheet">
+    <div class="intent-grip" aria-hidden="true"></div>
+    <h3 id="confirm-title" class="confirm-title"></h3>
+    <p id="confirm-sub" class="confirm-sub hidden"></p>
+    <div class="confirm-actions">
+      <button type="button" id="confirm-cancel" class="confirm-cancel">先留着</button>
+      <button type="button" id="confirm-ok" class="confirm-ok">确认移除</button>
+    </div>
+  </div>
+</div>
 <div id="toast" class="toast hidden" role="status"></div>
 <script type="module" src="app.js"></script>
 </body>

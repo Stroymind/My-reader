@@ -422,6 +422,8 @@ try {
   await tap('.stack-items .book[data-id="z-c"]');
   assert.equal(await page.$eval('#manage-count', el => el.textContent), '已选 1');
   await tap('#btn-delete-picked');
+  await page.waitForFunction(() => !document.querySelector('#confirm-mask').classList.contains('hidden'));
+  await page.click('#confirm-ok');
   await page.waitForFunction(async () => (await window.__app.db.all('books')).length === 4);
   await page.waitForFunction(() => document.querySelector('.stack-count')?.textContent === '2' && !document.querySelector('#library').classList.contains('picking'));
   saved = await stackState();

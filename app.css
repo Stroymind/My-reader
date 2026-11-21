@@ -689,6 +689,18 @@ body.theme-night .textLayer span.rr-mark.an{background:rgba(10,132,255,.35)}
 .auth-whisper{margin:12px 0 0;font-size:13.5px;letter-spacing:.14em;color:var(--app-muted);opacity:.78}
 .auth-pledge{position:fixed;left:0;right:0;bottom:calc(env(safe-area-inset-bottom) + 26px);margin:0;text-align:center;font-size:11.5px;letter-spacing:.06em;color:color-mix(in srgb,var(--app-muted) 62%,transparent);pointer-events:none}
 
+/* 统一单色磨砂底部确认浮层（彻底告别安卓原生白框绿字 confirm 弹窗） */
+.confirm-mask{position:fixed;inset:0;z-index:96;display:flex;align-items:flex-end;justify-content:center;padding:12px 14px calc(env(safe-area-inset-bottom) + 14px);background:rgba(0,0,0,.28);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);animation:fadeIn .18s ease-out}
+.confirm-mask.hidden{display:none}
+.confirm-sheet{width:min(360px,100%);padding:10px 18px 18px;border-radius:26px;background:var(--glass-strong);backdrop-filter:saturate(180%) blur(32px);-webkit-backdrop-filter:saturate(180%) blur(32px);color:var(--app-fg);box-shadow:0 0 0 .5px var(--app-line),0 24px 64px rgba(0,0,0,.24);text-align:center;animation:sheetUp .32s var(--spring)}
+.confirm-title{margin:8px 0 0;font-size:17px;font-weight:660;line-height:1.45;letter-spacing:-.01em;overflow-wrap:anywhere}
+.confirm-sub{margin:6px 0 0;font-size:13px;line-height:1.55;color:var(--app-muted)}
+.confirm-actions{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:18px}
+.confirm-actions button{height:44px;border-radius:999px;font-size:14.5px;font-weight:600;transition:transform .16s,opacity .16s}
+.confirm-actions button:active{transform:scale(.96);opacity:.85}
+.confirm-cancel{background:var(--app-fill);color:var(--app-fg)}
+.confirm-ok{background:var(--app-fg);color:var(--app-bg)}
+
 @media (prefers-reduced-motion:reduce){
   *,*::before,*::after{animation:none!important;transition:none!important}
 }

@@ -197,7 +197,7 @@ function showNoteTrashZone(show, hot = false) {
   if (!z) return;
   z.classList.toggle('hidden', !show);
   z.classList.toggle('hot', !!(show && hot));
-  if (lbl) lbl.textContent = hot ? '松手删除' : '拖到这里删除';
+  if (lbl) lbl.textContent = hot ? '松手移除' : '拖到这里移除';
 }
 function inNoteTrashZone(x, y) {
   const z = $('#drag-trash-zone');
@@ -322,12 +322,13 @@ function bindNoteCardGestures(card, note, swipeBg) {
           renderGraphCard();
         });
       } else if (dir === 'left') {
-        if (confirm(`删除「${note.title || '未命名'}」？`)) {
+        const ok = api.confirm ? await api.confirm(`移除「${note.title || '未命名'}」？`, '相关划线与连接也会一起移除。') : true;
+        if (ok) {
           const bookId = note.bookId;
           await deleteNote(note.id);
           if (bookId) api.onHighlightsChanged(bookId);
           await refreshWorkspace();
-          api.toast('已删除');
+          api.toast('已移除');
         }
       }
     } else if (dragging) {
@@ -336,12 +337,13 @@ function bindNoteCardGestures(card, note, swipeBg) {
       endDrag();
       held = true;
       if (droppedTrash) {
-        if (confirm(`删除「${note.title || '未命名'}」？`)) {
+        const ok = api.confirm ? await api.confirm(`移除「${note.title || '未命名'}」？`, '相关划线与连接也会一起移除。') : true;
+        if (ok) {
           const bookId = note.bookId;
           await deleteNote(note.id);
           if (bookId) api.onHighlightsChanged(bookId);
           await refreshWorkspace();
-          api.toast('已删除');
+          api.toast('已移除');
         }
       } else if (drop?.dataset?.noteId && drop.dataset.noteId !== note.id) {
         const targetId = drop.dataset.noteId;
