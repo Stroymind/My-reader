@@ -239,8 +239,10 @@ function parseSingleClause(rawClause, ctx = {}) {
     ops.push({ op: 'fontSize', delta: /(?:很多|小小|两号|多一点)/.test(text) ? -4 : -2 });
   }
 
-  // 8. 字体切换
-  if (/(?:楷体|文楷|楷书|手写体)/.test(text)) ops.push({ op: 'font', value: 'kai' });
+  // 8. 字体切换 / 导入本地字体
+  if (/(?:导入|安装|添加|下载).{0,3}字体/.test(text)) { ops.push({ op: 'importBooks' }); return ops; }
+  if (/(?:自定义字体|我的字体|导入的字体)/.test(text)) ops.push({ op: 'font', value: 'custom' });
+  else if (/(?:楷体|文楷|楷书|手写体)/.test(text)) ops.push({ op: 'font', value: 'kai' });
   else if (/(?:宋体|衬线|明体)/.test(text)) ops.push({ op: 'font', value: 'serif' });
   else if (/(?:黑体|无衬线)/.test(text)) ops.push({ op: 'font', value: 'sans' });
   else if (/(?:原书字体|原字体)/.test(text)) ops.push({ op: 'font', value: 'original' });
@@ -297,7 +299,7 @@ function parseSingleClause(rawClause, ctx = {}) {
     ops.push({ op: 'readTheme', value: 'sepia' });
   } else if (/(?:纸张|纸色|自然纸)/.test(text)) {
     ops.push({ op: 'readTheme', value: 'paper' });
-  } else if (/(?:纯白|白底|白色背景)/.test(text)) {
+  } else if (/(?:纯白|白底|白色背景|白色模式)/.test(text)) {
     ops.push({ op: 'readTheme', value: 'white' });
   }
 

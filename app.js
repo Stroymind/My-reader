@@ -3,7 +3,7 @@ import { db } from './db.js';
 import { importArticleUrl, importBlob, importFiles, parseManifest, applyManifestToLibrary } from './importer.js';
 import { findAndFetchBook, getOpdsUrl, setOpdsUrl } from './book-finder.js';
 import { EpubEngine, PdfEngine, TxtEngine } from './engines.js';
-import { settings, saveSettings, applyBodyTheme, applyAppearance, appearancePref, cycleAppearance, FONTS, THEMES } from './settings.js';
+import { settings, saveSettings, applyBodyTheme, applyAppearance, appearancePref, cycleAppearance, applyCustomFontBlob, FONTS, THEMES } from './settings.js';
 import { isMostlyCjk, translateVisible } from './bilingual.js';
 import { backfillFromBooks, createNote, deleteBookBundle, parseTags, syncBook } from './knowledge.js';
 import { addToStack, createStack, defaultStackName, dissolveStack, getStack, listStacks, reconcileStacks, removeFromStacks, renameStack, setStackCollapsed } from './stacks.js';
@@ -1192,14 +1192,28 @@ $('#file-input').onchange = async e => {
   const files = Array.from(e.target.files || []); e.target.value = '';
   if (!files.length) return;
   try { await navigator.storage?.persist?.(); } catch {}
+  // 自动识别本地字体文件（.ttf / .otf / .woff / .woff2），直接安装并应用为阅读字体
+  const fontFiles = files.filter(f => /\.(ttf|otf|woff2?)$/i.test(f.name || ''));
+  const bookFiles = files.filter(f => !/\.(ttf|otf|woff2?)$/i.test(f.name || ''));
+  if (fontFiles.length) {
+    const ff = fontFiles[fontFiles.length - 1];
+    const cleanName = ff.name.replace(/\.(ttf|otf|woff2?)$/i, '');
+    await db.put('meta', { key: 'custom-font', name: cleanName, blob: ff });
+    await applyCustomFontBlob(ff, cleanName);
+    settings.font = 'custom';
+    saveSettings();
+    if (engine) await engine.applySettings();
+    toast(`已导入并应用字体「${cleanName}」`, 3200);
+    if (!bookFiles.length) return;
+  }
   clearTimeout(importHideTimer);
   const st = $('#import-status'); st.classList.remove('hidden');
-  const onlyManifest = files.every(f => /\.json$/i.test(f.name));
+  const onlyManifest = bookFiles.every(f => /\.json$/i.test(f.name));
   if (onlyManifest) {
-    let n = 0; for (const f of files) { try { const m = parseManifest(JSON.parse(await f.text())); if (m) n += await applyManifestToLibrary(m); } catch {} }
+    let n = 0; for (const f of bookFiles) { try { const m = parseManifest(JSON.parse(await f.text())); if (m) n += await applyManifestToLibrary(m); } catch {} }
     st.textContent = `已为 ${n} 本书恢复阅读进度。`; renderLibrary(); scheduleImportHide(3600); return;
   }
-  const res = await importFiles(files, { pdfjsLib, onStatus: t => (st.textContent = t) });
+  const res = await importFiles(bookFiles, { pdfjsLib, onStatus: t => (st.textContent = t) });
   let msg = `导入完成：新增 ${res.added} 本`;
   if (res.dup) msg += `，已存在 ${res.dup} 本`;
   if (res.progressApplied) msg += `，恢复进度 ${res.progressApplied} 本`;
@@ -2527,5 +2541,7 @@ $('#auth-portal')?.addEventListener('keydown', e => {
 $('#btn-auth-account')?.addEventListener('click', () => openAuthGate());
 syncAuthLabel();
 if (!getAuthUser()) openAuthGate();
+// 启动时静默恢复已导入的本地自定义字体
+db.get('meta', 'custom-font').then(rec => { if (rec?.blob) applyCustomFontBlob(rec.blob, rec.name); }).catch(() => {});
 
 window.__app = { db, openBook, closeBook, importFiles, importBlob, importArticleUrl, handleBack, get engine() { return engine; }, renderLibrary, stacks: { list: listStacks }, runCommand: text => command.run(text), openCommand: opts => command.openBar(opts), openPeek: openBookPeek, closePeek: closeBookPeek, openAuthGate, getAuthUser, getOpdsUrl, setOpdsUrl };

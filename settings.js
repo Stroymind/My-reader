@@ -2,8 +2,25 @@ export const FONTS = {
   serif: { label: '宋体', stack: '"RR Latin Serif","RR CJK Serif","Noto Serif CJK SC","Source Han Serif SC","Songti SC",serif' },
   kai: { label: '文楷', stack: '"RR Kai","RR Latin Serif","LXGW WenKai","Kaiti SC",serif' },
   sans: { label: '黑体', stack: 'system-ui,-apple-system,"Noto Sans CJK SC","PingFang SC","Microsoft YaHei",sans-serif' },
+  custom: { label: '自定义', stack: '"ZoneCustomFont","RR Latin Serif","RR CJK Serif",serif' },
   original: { label: '原书', stack: null }
 };
+let customFontUrl = '';
+let customFontName = '';
+export async function applyCustomFontBlob(blob, name = '') {
+  if (!blob) return false;
+  if (customFontUrl) { try { URL.revokeObjectURL(customFontUrl); } catch {} }
+  customFontUrl = URL.createObjectURL(blob);
+  customFontName = String(name || '自定义字体').replace(/\.(ttf|otf|woff2?|ttc)$/i, '').trim() || '自定义字体';
+  FONTS.custom.label = customFontName.slice(0, 8);
+  try {
+    const face = new FontFace('ZoneCustomFont', `url("${customFontUrl}")`);
+    await face.load();
+    document.fonts.add(face);
+  } catch {}
+  return true;
+}
+export function getCustomFontName() { return customFontName; }
 export const THEMES = {
   paper: { label: '纸张', bg: '#faf9f6', fg: '#2b2a28', muted: '#8d8a84' },
   white: { label: '白色', bg: '#ffffff', fg: '#1f1f1f', muted: '#8a8a8a' },
@@ -67,8 +84,9 @@ export function epubCss(cjk) {
     ? `p { text-align: justify; line-break: strict; overflow-wrap: break-word; margin: 0 0 0.45em !important; ${vrl ? 'text-indent: 2em;' : ''} }`
     : `p { text-align: justify; hyphens: auto; -webkit-hyphens: auto; hyphenate-limit-chars: 6 3 2; font-kerning: normal; font-variant-ligatures: common-ligatures contextual; margin: 0 0 0.62em !important; text-indent: 1.35em; }
 h1 + p, h2 + p, h3 + p, h4 + p, hr + p, blockquote + p, body > p:first-of-type { text-indent: 0; }`;
+  const customFace = customFontUrl ? `@font-face { font-family: "ZoneCustomFont"; src: url("${customFontUrl}"); font-display: swap; }\n` : '';
   return `@import url("${new URL('fonts/fonts.css', location.href)}");
-html { background: ${t.bg} !important; ${vrl ? 'writing-mode: vertical-rl !important; -webkit-writing-mode: vertical-rl !important; text-orientation: mixed !important;' : ''} }
+${customFace}html { background: ${t.bg} !important; ${vrl ? 'writing-mode: vertical-rl !important; -webkit-writing-mode: vertical-rl !important; text-orientation: mixed !important;' : ''} }
 body { color: ${t.fg} !important; background: transparent !important; padding-top: 0 !important; padding-bottom: 0 !important; margin-top: 0 !important; margin-bottom: 0 !important; -webkit-text-size-adjust: 100%; overflow-wrap: anywhere; text-rendering: optimizeLegibility; ${vrl ? 'writing-mode: vertical-rl !important; -webkit-writing-mode: vertical-rl !important; text-orientation: mixed !important; line-break: strict;' : ''} }
 body, p, div, section, article { max-width: 100% !important; box-sizing: border-box !important; }
 p, div { margin-left: 0 !important; margin-right: 0 !important; }
