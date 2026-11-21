@@ -134,6 +134,13 @@ function parseSingleClause(rawClause, ctx = {}) {
   if (/^(?:恢复默认界面|重置界面|清除自定义样式|还原界面)$/.test(text)) {
     return [{ op: 'resetUi' }];
   }
+  const sichaoApiSet = text.match(/^(?:连接|配置|绑定)思潮(?:云端|服务|地址)?\s*(https?:\/\/\S+)$/i);
+  if (sichaoApiSet) {
+    return [{ op: 'setSichaoApi', url: sichaoApiSet[1].trim() }];
+  }
+  if (/^(?:断开|关闭)思潮云端$/.test(text)) {
+    return [{ op: 'setSichaoApi', url: '' }];
+  }
   if (/(?:今日思潮|打开思潮|看思潮|进入思潮|思潮|情报判断|判断档案|每日情报)/.test(text)) {
     return [{ op: 'openSichao' }];
   }

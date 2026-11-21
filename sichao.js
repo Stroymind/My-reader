@@ -6,6 +6,19 @@ import { createNote } from './knowledge.js';
 
 const REC_KEY = 'zone-sichao-records';
 const EVENT_KEY = 'zone-sichao-events';
+const API_KEY = 'zone-sichao-api';
+
+export function getSichaoApi() {
+  try { return (localStorage.getItem(API_KEY) || '').replace(/\/+$/, ''); } catch { return ''; }
+}
+export function setSichaoApi(url) {
+  const clean = String(url || '').trim().replace(/\/+$/, '');
+  try {
+    if (clean) localStorage.setItem(API_KEY, clean);
+    else localStorage.removeItem(API_KEY);
+  } catch {}
+  return clean;
+}
 
 const VERDICTS = [
   { id: 'A', label: 'A. 噪声', hint: '短期炒作、重复营销或无实质变化' },
@@ -96,6 +109,28 @@ function saveEvents(list) {
 }
 
 export async function fetchLiveSignals() {
+  const api = getSichaoApi();
+  if (api) {
+    const r = await fetch(`${api}/api/events?limit=12`);
+    if (!r.ok) throw new Error('思潮云端服务暂不可达（' + r.status + '）');
+    const data = await r.json();
+    const list = (data?.events || []).map(ev => ({
+      id: ev.event_id,
+      domain: ev.domain || '全球前沿 · 云端 24/7',
+      title: ev.title,
+      summary: ev.summary || '',
+      facts: ev.facts || [],
+      change: ev.change || '',
+      unknowns: ev.unknowns || [],
+      pitfalls: ev.pitfalls || '',
+      evidence: ev.evidence || [],
+      aiVerdict: ev.ai_assessment?.verdict || 'B',
+      aiReason: ev.ai_assessment?.reason || '提交初判后由思潮 V2.0 云端引擎解锁 AI 伙伴视角。',
+      counterpoints: ev.ai_assessment?.counterpoints || '',
+      source: '思潮 V2.0 云端 24/7'
+    }));
+    if (list.length) { saveEvents(list); return list; }
+  }
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 14000);
   let ids = [];

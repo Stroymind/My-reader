@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: sichao-v2-server
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn sichao.app:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: SICHAO_DB_PATH
+        value: /tmp/sichao.db
+      - key: SICHAO_API_KEY
+        sync: false
+      - key: SICHAO_BASE_URL
+        value: https://api.openai.com/v1
+      - key: SICHAO_MODEL
+        value: gpt-4o-mini

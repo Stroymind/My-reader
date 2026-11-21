@@ -2,7 +2,7 @@ import * as pdfjsLib from './vendor/pdf.min.mjs';
 import { db } from './db.js';
 import { importArticleUrl, importBlob, importFiles, parseManifest, applyManifestToLibrary } from './importer.js';
 import { findAndFetchBook, getOpdsUrl, setOpdsUrl } from './book-finder.js';
-import { initSichao } from './sichao.js';
+import { initSichao, setSichaoApi } from './sichao.js';
 import { BookletEngine, EpubEngine, PdfEngine, TxtEngine } from './engines.js';
 import { aiConfigured, complete as aiComplete } from './ai.js';
 import { settings, saveSettings, applyBodyTheme, applyAppearance, appearancePref, cycleAppearance, applyCustomFontBlob, FONTS, THEMES } from './settings.js';
@@ -2303,6 +2303,10 @@ command = createCommandController({
         } catch (err) {
           return { label: err?.message || '找书失败，请检查网络或书源地址' };
         }
+      }
+      case 'setSichaoApi': {
+        setSichaoApi(a.url || '');
+        return { label: a.url ? '已连接思潮 24/7 云端情报底座' : '已切回本机离线思潮模式' };
       }
       case 'openSichao': {
         if (reading) await closeBook();
