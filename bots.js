@@ -5,8 +5,8 @@
 
 const BOTS_KEY = 'zone-bots-v3';
 const ACTIVE_KEY = 'zone-active-bot-id';
-const PLUGINS_KEY = 'zone-skill-plugins-v3';
-const AUTO_KEY = 'zone-automations-v1';
+const PLUGINS_KEY = 'zone-skill-plugins-v4';
+const AUTO_KEY = 'zone-automations-v2';
 const THEME_PLUG_KEY = 'zone-theme-plugin-v1';
 
 const DEFAULT_BOTS = [
@@ -23,7 +23,7 @@ const DEFAULT_BOTS = [
 const DEFAULT_AUTOMATIONS = [
   {
     id: 'auto-sichao',
-    name: '每日全球前沿情报（思潮）',
+    name: '新闻推送',
     schedule: '每天 08:30 · 云端自动运行',
     prompt: '抓取全球 AI 与科技一手动态，去重核验事实，生成独立判断信号卡片',
     builtinAction: 'sichao',
@@ -35,7 +35,7 @@ const DEFAULT_PLUGINS = [
   { id: 'phone-use', name: 'Phone-Use 手机操控', desc: 'Android 原生无障碍跨 App 执行与悬浮急停', enabled: true, launchable: true },
   { id: 'computer-use', name: 'Computer-Use 连接本地电脑', desc: '对接本地桌面桥接节点（OpenClaw / 桌面守护进程），手机遥控电脑', enabled: true, launchable: true },
   { id: 'mcp-bridge', name: '云端 Skills / MCP 互通', desc: '兼容 MCP / DeepSeek / Codex 等开放技能协议，随时接入', enabled: true, launchable: false },
-  { id: 'reading-cosmos', name: '阅读与星海记忆引擎', desc: '按需解析文档/链接/音视频并沉淀为长期知识星海', enabled: true, launchable: true }
+  { id: 'reading-cosmos', name: '阅读器', desc: '按需打开沉浸阅读、文档/音视频小册子与知识星海', enabled: true, launchable: true }
 ];
 
 const THEME_PLUGINS = [
@@ -326,7 +326,7 @@ export function openBotStudio({ onSelect, onStatus, onLaunchPlugin, onRunAutomat
     const subtitle = tab === 'bots'
       ? '形象与规则完全由你定义，实时同步到桌面小组件'
       : tab === 'automations'
-        ? '自定义周期采集、分析与推送（思潮只是其中一条任务）'
+        ? '自定义周期采集、分析与新闻推送'
         : '像开关一样插拔系统能力、外部 MCP/DeepSeek 插件与主题';
 
     mask.innerHTML = `
