@@ -219,19 +219,10 @@
 <div id="intent-mask" class="intent-mask hidden">
   <div id="intent-sheet" class="intent-sheet" role="dialog" aria-modal="true" aria-label="空间与操作">
     <div class="intent-grip" aria-hidden="true"></div>
-    <nav class="intent-spaces" role="tablist" aria-label="切换空间">
-      <button type="button" data-pane="shelf" role="tab" class="on" aria-selected="true">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 7.5h15M4.5 12h10.5M4.5 16.5h6.5"/></svg>
-        <span>流</span>
-      </button>
-      <button type="button" data-pane="knowledge" role="tab" aria-selected="false">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3.8h7.6l4.6 4.6V19.4a.8.8 0 0 1-.8.8H7a.8.8 0 0 1-.8-.8V4.6a.8.8 0 0 1 .8-.8z"/><path d="M14.4 3.8v4.8h4.8"/><path d="M9 13h6.5M9 16.4h4"/></svg>
-        <span>知识</span>
-      </button>
-      <button type="button" data-pane="graph" role="tab" aria-selected="false">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 3.5l1.5 4.6 4.6 1.5-4.6 1.5L11 15.7l-1.5-4.6-4.6-1.5 4.6-1.5z"/><path d="M18 15.2l.6 1.7 1.7.6-1.7.6-.6 1.7-.6-1.7-1.7-.6 1.7-.6z"/><path d="M5.5 18.6h.01"/></svg>
-        <span>星海</span>
-      </button>
+    <nav class="z-depth-track" role="tablist" aria-label="焦距穿层">
+      <button type="button" data-pane="shelf" role="tab" class="on" aria-selected="true"><i aria-hidden="true"></i><span>流</span></button>
+      <button type="button" data-pane="knowledge" role="tab" aria-selected="false"><i aria-hidden="true"></i><span>知识</span></button>
+      <button type="button" data-pane="graph" role="tab" aria-selected="false"><i aria-hidden="true"></i><span>星海</span></button>
     </nav>
     <div class="intent-cmd-row">
       <button id="intent-cmd-btn" class="intent-cmd-btn" type="button">

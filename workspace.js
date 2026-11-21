@@ -29,7 +29,9 @@ function kindLabel(note) {
   return KIND[note.kind] || '笔记';
 }
 
+const DEPTH = { shelf: 0, knowledge: 1, graph: 2 };
 let whisperTimer = null;
+let leaveTimer = null;
 export function showSpaceWhisper(name) {
   const el = $('#space-whisper');
   if (!el) return;
@@ -41,19 +43,50 @@ export function showSpaceWhisper(name) {
 
 export function showPane(name, opts = {}) {
   if (!['shelf', 'knowledge', 'graph'].includes(name)) name = 'shelf';
-  const prev = document.querySelector('.pane.on')?.id?.replace(/^pane-/, '');
-  document.querySelectorAll('.pane').forEach(pane => pane.classList.toggle('on', pane.id === 'pane-' + name));
+  const prevEl = document.querySelector('.pane.on');
+  const prev = prevEl?.id?.replace(/^pane-/, '');
+  const nextEl = $('#pane-' + name);
+  const changed = prev && prev !== name;
+  const deeper = changed && DEPTH[name] > DEPTH[prev];
+  const closer = changed && DEPTH[name] < DEPTH[prev];
+  const animate = changed && !opts?.instant && !document.documentElement.classList.contains('mode-eink')
+    && !matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  clearTimeout(leaveTimer);
+  document.querySelectorAll('.pane').forEach(p => {
+    p.classList.remove('z-enter-far', 'z-enter-near', 'z-leave-recede', 'z-leave-dive', 'z-peek-under');
+    p.style.transform = '';
+    p.style.opacity = '';
+    p.style.filter = '';
+    p.style.transition = '';
+    p.classList.toggle('on', p === nextEl);
+  });
+
+  if (animate && prevEl && nextEl) {
+    prevEl.classList.add(deeper ? 'z-leave-recede' : 'z-leave-dive');
+    nextEl.classList.add(deeper ? 'z-enter-far' : 'z-enter-near');
+    leaveTimer = setTimeout(() => {
+      prevEl.classList.remove('z-leave-recede', 'z-leave-dive');
+      nextEl.classList.remove('z-enter-far', 'z-enter-near');
+    }, 460);
+  }
+
   document.querySelectorAll('[data-pane]').forEach(btn => {
     const on = btn.dataset.pane === name;
     btn.classList.toggle('on', on);
     if (btn.getAttribute('role') === 'tab') btn.setAttribute('aria-selected', on ? 'true' : 'false');
   });
   document.querySelector('#library')?.classList.toggle('cosmos-on', name === 'graph');
-  if (opts?.whisper || (prev && prev !== name && opts?.whisper !== false && !opts?.silent)) {
-    if (opts?.whisper) showSpaceWhisper(name);
-  }
+  if (opts?.whisper) showSpaceWhisper(name);
   if (name === 'graph') requestAnimationFrame(() => renderGraph(false));
   else cosmos?.setActive(false);
+}
+
+export function diveFromCosmos(starId) {
+  showPane('knowledge', { whisper: true });
+  if (starId) {
+    requestAnimationFrame(() => openEditor(starId));
+  }
 }
 
 export function setKnowledgeFind(open) {
@@ -258,81 +291,16 @@ export async function openEditor(id, keep) {
   host.replaceChildren();
   const draft = state.editing;
 
-  const bar = h('div', 'editor-bar');
-  const back = h('button', 'texty', '返回');
-  back.type = 'button';
-  back.onclick = () => closeEditor();
-  draftStatusEl = h('span', 'editor-kicker', draft.id ? '已自动保存' : '');
-  const mic = h('button', 'icon editor-mic');
-  mic.id = 'editor-mic';
-  mic.type = 'button';
-  mic.setAttribute('aria-label', '语音记录到笔记');
-  mic.title = '直接说话记入笔记';
-  mic.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="4" width="6" height="10" rx="3"/><path d="M6.5 11.5a5.5 5.5 0 0 0 11 0M12 17v3.2M9 20.2h6"/></svg>';
-  bar.append(back, draftStatusEl, mic);
-
   const title = h('input', 'editor-title');
   title.value = draft.title || '';
   title.placeholder = '标题';
   title.oninput = () => { draft.title = title.value; scheduleAutoSave(); };
 
   const body = h('textarea', 'editor-body');
-  body.rows = 10;
-  body.placeholder = '写下想法，或点右上角直接口述，输入 [[标题]] 自动关联…';
+  body.rows = 12;
+  body.placeholder = '写下想法，或用键盘语音直接输入，[[标题]] 自动关联…';
   body.value = draft.body || '';
   body.oninput = () => { draft.body = body.value; scheduleAutoSave(); };
-
-  const appendSpoken = text => {
-    const s = String(text || '').trim();
-    if (!s) return;
-    draft.body = draft.body ? draft.body.trimEnd() + '\n' + s : s;
-    body.value = draft.body;
-    scheduleAutoSave();
-  };
-  mic.onclick = async () => {
-    if (mic.classList.contains('listening')) { stopEditorDictation(); return; }
-    const nv = window.Capacitor?.Plugins?.ZoneVoice;
-    if (nv) {
-      mic.classList.add('listening');
-      let handle = null;
-      const cleanup = () => { mic.classList.remove('listening'); try { handle?.remove?.(); } catch {} };
-      try {
-        handle = await nv.addListener('result', ev => {
-          if (!ev?.wake && ev?.text) appendSpoken(ev.text);
-          cleanup();
-        });
-        const res = await nv.startListening();
-        if (!res?.started) {
-          cleanup();
-          api.toast(res?.code === 'NO_PERMISSION' ? '请在系统设置开启麦克风权限' : '可直接用输入法语音或键盘输入');
-          body.focus();
-        }
-      } catch {
-        cleanup();
-        body.focus();
-      }
-      return;
-    }
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) { api.toast('可直接用键盘语音或打字，内容会自动保存'); body.focus(); return; }
-    try {
-      const rec = new SR();
-      rec.lang = 'zh-CN';
-      rec.continuous = false;
-      rec.interimResults = false;
-      rec.onstart = () => mic.classList.add('listening');
-      rec.onresult = e => {
-        const t = e.results?.[0]?.[0]?.transcript || '';
-        if (t) appendSpoken(t);
-      };
-      rec.onend = () => { editorRec = null; mic.classList.remove('listening'); };
-      rec.onerror = () => { editorRec = null; mic.classList.remove('listening'); };
-      editorRec = rec;
-      rec.start();
-    } catch {
-      mic.classList.remove('listening');
-    }
-  };
 
   const tagRow = h('div', 'tag-editor');
   const tagInput = h('input');
@@ -359,7 +327,7 @@ export async function openEditor(id, keep) {
   };
   paintTags();
 
-  host.append(bar, title);
+  host.append(title);
   if (draft.quote) {
     const quote = h('blockquote', 'editor-quote-card', draft.quote);
     host.appendChild(quote);
@@ -374,85 +342,26 @@ export async function openEditor(id, keep) {
   }
 
   const rel = relatedOf(draft.id);
-  const candidates = draft.id ? state.notes.filter(other => other.id !== draft.id && !rel.some(item => item.note.id === other.id)) : [];
-  if (draft.id && (rel.length || candidates.length)) {
+  if (draft.id && rel.length) {
     const relSec = h('section', 'rel-section');
-    if (rel.length) {
-      const relList = h('div', 'rel-list');
-      for (const item of rel) {
-        const card = h('div', 'rel-item kind-' + kindOf(item.note));
-        const open = h('button', 'rel-open');
-        open.type = 'button';
-        const top = h('span', 'rel-open-title', item.note.title || '未命名');
-        const sub = h('span', 'rel-open-sub', [kindLabel(item.note), item.note.bookTitle ? '《' + item.note.bookTitle + '》' : ''].filter(Boolean).join(' · '));
-        open.append(top, sub);
-        open.onclick = () => openEditor(item.note.id);
-        const cut = h('button', 'rel-cut', '×');
-        cut.type = 'button';
-        cut.title = '断开关联';
-        cut.setAttribute('aria-label', '断开关联');
-        cut.onclick = async () => { await unlinkPair(draft.id, item.note.id); await reopenKeeping(draft.id); };
-        card.append(open, cut);
-        relList.appendChild(card);
-      }
-      relSec.appendChild(relList);
+    const relList = h('div', 'rel-list');
+    for (const item of rel) {
+      const card = h('div', 'rel-item kind-' + kindOf(item.note));
+      const open = h('button', 'rel-open');
+      open.type = 'button';
+      const top = h('span', 'rel-open-title', item.note.title || '未命名');
+      const sub = h('span', 'rel-open-sub', [kindLabel(item.note), item.note.bookTitle ? '《' + item.note.bookTitle + '》' : ''].filter(Boolean).join(' · '));
+      open.append(top, sub);
+      open.onclick = () => openEditor(item.note.id);
+      const cut = h('button', 'rel-cut', '×');
+      cut.type = 'button';
+      cut.title = '断开关联';
+      cut.setAttribute('aria-label', '断开关联');
+      cut.onclick = async () => { await unlinkPair(draft.id, item.note.id); await reopenKeeping(draft.id); };
+      card.append(open, cut);
+      relList.appendChild(card);
     }
-
-    if (candidates.length) {
-      const trigger = h('button', 'rel-add-trigger', '+ 关联笔记');
-      trigger.type = 'button';
-      const picker = h('div', 'link-picker hidden');
-      const searchBox = h('div', 'link-search-wrap');
-      searchBox.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.4"/><path d="M20 20l-4.3-4.3"/></svg>';
-      const filterInput = h('input', 'link-search');
-      filterInput.type = 'search';
-      filterInput.placeholder = '输入关键词，轻点笔记即关联';
-      filterInput.setAttribute('aria-label', '搜索要关联的笔记');
-      searchBox.appendChild(filterInput);
-      const candList = h('div', 'link-cands');
-      const renderCands = () => {
-        const q = filterInput.value.trim();
-        let list = candidates;
-        if (q) {
-          list = candidates
-            .map(n => ({ n, sc: Math.max(fuzzyScore(n.title, q) * 1.2, fuzzyScore((n.quote || '') + ' ' + (n.body || '').slice(0, 120), q) * 0.8) }))
-            .filter(x => x.sc > 0)
-            .sort((a, b) => b.sc - a.sc)
-            .map(x => x.n);
-        }
-        candList.replaceChildren();
-        const shown = list.slice(0, 6);
-        if (!shown.length) {
-          candList.appendChild(h('p', 'link-empty', '没有匹配的笔记'));
-          return;
-        }
-        for (const other of shown) {
-          const btn = h('button', 'link-cand kind-' + kindOf(other));
-          btn.type = 'button';
-          const info = h('span', 'link-cand-info');
-          info.append(
-            h('span', 'link-cand-title', other.title || '未命名'),
-            h('span', 'link-cand-sub', [kindLabel(other), other.bookTitle ? '《' + other.bookTitle + '》' : ''].filter(Boolean).join(' · '))
-          );
-          btn.append(info);
-          btn.onclick = async () => {
-            await linkNotes(draft.id, other.id);
-            await reopenKeeping(draft.id);
-            api.toast('已建立关联');
-          };
-          candList.appendChild(btn);
-        }
-      };
-      filterInput.oninput = renderCands;
-      trigger.onclick = () => {
-        const show = picker.classList.contains('hidden');
-        picker.classList.toggle('hidden', !show);
-        trigger.textContent = show ? '收起' : '+ 关联笔记';
-        if (show) { renderCands(); filterInput.focus({ preventScroll: true }); }
-      };
-      picker.append(searchBox, candList);
-      relSec.append(trigger, picker);
-    }
+    relSec.appendChild(relList);
     host.appendChild(relSec);
   }
 
@@ -473,7 +382,7 @@ export async function openEditor(id, keep) {
   title.focus();
 }
 
-async function closeEditor() {
+export async function closeEditor() {
   stopEditorDictation();
   await flushDraft();
   state.editing = null;
@@ -536,7 +445,8 @@ function ensureCosmos() {
     stage, plane: $('#graph-plane'), world: $('#graph-world'), sky: $('#graph-sky'), map: $('#graph-map'),
     mood: graphMood,
     onSelect: id => selectGraphNode(id),
-    onBackground: () => { if (state.focusId) clearGraphFocus(); }
+    onBackground: () => { if (state.focusId) clearGraphFocus(); },
+    onDiveIn: starId => diveFromCosmos(starId)
   });
   return cosmos;
 }
@@ -905,6 +815,21 @@ export function initWorkspace(nextApi) {
     btn.addEventListener('click', () => showPane(btn.dataset.pane));
   });
   $('#btn-new-note')?.addEventListener('click', () => { showPane('knowledge'); openEditor(null); });
+  // 笔记页左缘右滑直接返回并自动保存（零顶部按钮）
+  (() => {
+    const ed = $('#note-editor');
+    if (!ed) return;
+    let sx = 0, sy = 0, edge = false;
+    ed.addEventListener('pointerdown', e => {
+      sx = e.clientX; sy = e.clientY; edge = sx <= 36;
+    }, { passive: true });
+    ed.addEventListener('pointerup', e => {
+      if (!edge) return;
+      edge = false;
+      const dx = e.clientX - sx, dy = Math.abs(e.clientY - sy);
+      if (dx > 54 && dx > dy * 1.4) closeEditor();
+    }, { passive: true });
+  })();
   $('#btn-new-decision')?.addEventListener('click', () => createDecisionNote());
   $('#btn-export-notes')?.addEventListener('click', () => exportOutline());
   $('#note-search')?.addEventListener('input', e => { state.filter.q = e.target.value; renderNotes(); });

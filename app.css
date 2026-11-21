@@ -46,7 +46,7 @@ button svg,.icon svg{width:22px;height:22px}
 
 /* 外壳：零顶栏、零底栏框，100% 内容铺满屏幕；底部仅留一根呼吸细线。 */
 .shell{flex:1;min-height:0;display:flex}
-.maincol{flex:1;min-width:0;display:flex;flex-direction:column;min-height:0}
+.maincol{position:relative;flex:1;min-width:0;display:flex;flex-direction:column;min-height:0;overflow:hidden}
 .measure{width:100%;max-width:760px;margin:0 auto;min-width:0}
 .pill{display:inline-flex;align-items:center;justify-content:center;gap:5px;height:36px;padding:0 16px;border-radius:999px;font-size:14.5px;font-weight:600;white-space:nowrap}
 .pill svg{width:17px;height:17px;stroke-width:2.1}
@@ -54,8 +54,18 @@ button svg,.icon svg{width:22px;height:22px}
 .ghost,.btn.ghost{background:var(--app-fill);border-radius:999px;padding:7px 12px;font-size:14px;font-weight:590}
 .btn{display:inline-flex;align-items:center;justify-content:center;padding:8px 14px;border-radius:999px;cursor:pointer;font-size:15px;font-weight:590}
 .btn.primary{background:var(--app-accent);color:#fff}
-.pane{display:none;flex:1;min-height:0;overflow:auto;padding:calc(env(safe-area-inset-top) + 18px) 20px calc(env(safe-area-inset-bottom) + 64px);position:relative}
-.pane.on{display:flex;flex-direction:column;animation:rise .4s var(--spring)}
+.pane{display:none;flex:1;min-height:0;overflow:auto;padding:calc(env(safe-area-inset-top) + 18px) 20px calc(env(safe-area-inset-bottom) + 64px);position:relative;transform-origin:50% 48%;will-change:transform,opacity}
+.pane.on{display:flex;flex-direction:column}
+.pane.z-peek-under{display:flex;flex-direction:column;position:absolute;inset:0;z-index:1;pointer-events:none}
+.pane.z-leave-recede,.pane.z-leave-dive{display:flex;flex-direction:column;position:absolute;inset:0;z-index:2;pointer-events:none}
+.pane.z-enter-far{z-index:3;animation:zEnterFar .44s var(--spring) both}
+.pane.z-enter-near{z-index:3;animation:zEnterNear .44s var(--spring) both}
+.pane.z-leave-recede{animation:zLeaveRecede .38s var(--spring) both}
+.pane.z-leave-dive{animation:zLeaveDive .38s var(--spring) both}
+@keyframes zEnterFar{from{opacity:0;transform:scale(1.12)}to{opacity:1;transform:none}}
+@keyframes zEnterNear{from{opacity:0;transform:scale(.88)}to{opacity:1;transform:none}}
+@keyframes zLeaveRecede{from{opacity:1;transform:none}to{opacity:0;transform:scale(.86)}}
+@keyframes zLeaveDive{from{opacity:1;transform:none}to{opacity:0;transform:scale(1.14)}}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 
 /* 搜索与筛选：平时完全隐身，下拉或意图层唤起 */
@@ -240,10 +250,18 @@ html.appearance-dark .stack-fan .avatar.sm{box-shadow:0 2px 8px rgba(0,0,0,.5),i
 @keyframes sheetUp{from{opacity:0;transform:translateY(28px) scale(.96)}}
 @keyframes menuIn{from{opacity:0;transform:scale(.86) translateY(-6px)}}
 .intent-grip{width:36px;height:4px;margin:0 auto 10px;border-radius:999px;background:color-mix(in srgb,var(--app-fg) 18%,transparent)}
-.intent-spaces{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;padding:4px;margin-bottom:10px;border-radius:16px;background:var(--app-fill)}
-.intent-spaces button{display:flex;align-items:center;justify-content:center;gap:6px;height:38px;padding:0 10px;border-radius:12px;color:var(--app-muted);font-size:14px;font-weight:600;white-space:nowrap}
-.intent-spaces button svg{flex:none;width:18px;height:18px}
-.intent-spaces button.on{color:var(--app-fg);background:var(--app-elev);box-shadow:0 1px 3px rgba(0,0,0,.1),0 0 0 .5px rgba(0,0,0,.04)}
+/* 无框 Z 轴焦距标尺（彻底告别三段式按钮盒子） */
+.z-depth-track{position:relative;display:grid;grid-template-columns:repeat(3,1fr);align-items:center;margin:2px 6px 12px;padding:4px 0}
+.z-depth-track::before{content:"";position:absolute;left:16%;right:16%;top:13px;height:1px;background:var(--app-line);pointer-events:none}
+.z-depth-track button{position:relative;z-index:1;display:flex;flex-direction:column;align-items:center;gap:5px;padding:4px 0;background:transparent;color:var(--app-muted);font-size:12.5px;font-weight:540}
+.z-depth-track button i{display:block;width:7px;height:7px;border-radius:50%;background:color-mix(in srgb,var(--app-muted) 42%,transparent);transition:transform .32s var(--spring),background-color .22s,box-shadow .25s}
+.z-depth-track button.on{color:var(--app-fg);font-weight:660}
+.z-depth-track button.on i{transform:scale(1.45);background:var(--app-fg);box-shadow:0 0 0 4px color-mix(in srgb,var(--app-fg) 12%,transparent)}
+#library.cosmos-on ~ #intent-mask .z-depth-track::before{background:rgba(244,234,210,.16)}
+#library.cosmos-on ~ #intent-mask .z-depth-track button{color:rgba(222,216,198,.58)}
+#library.cosmos-on ~ #intent-mask .z-depth-track button i{background:rgba(244,234,210,.28)}
+#library.cosmos-on ~ #intent-mask .z-depth-track button.on{color:#fff8ea}
+#library.cosmos-on ~ #intent-mask .z-depth-track button.on i{background:#fae29c;box-shadow:0 0 12px rgba(250,226,156,.5)}
 .intent-cmd-row{display:flex;align-items:center;gap:6px;margin-bottom:10px}
 .intent-cmd-btn{flex:1;min-width:0;display:flex;align-items:center;gap:9px;height:40px;padding:0 13px;border-radius:14px;background:var(--app-fill);color:var(--app-muted);font-size:13.5px;text-align:left}
 .intent-cmd-btn svg{flex:none;width:16px;height:16px;opacity:.76}

@@ -942,6 +942,94 @@ let command = null;
   lib.addEventListener('pointercancel', () => { pid = null; }, { passive: true });
 })();
 
+// Z 轴镜头穿层（Semantic Zoom）：在流 / 知识双指捏合拉远进入更深层（流 -> 知识 -> 星海），双指张开潜入更近层；星海放大到极限自动潜入对应星体笔记
+(function bindSemanticZoom() {
+  const lib = $('#library');
+  if (!lib) return;
+  const pts = new Map();
+  let d0 = 0, activePane = null, previewEl = null, previewName = null, lastScale = 1;
+  const blocked = () => pickMode || !lib.classList.contains('active')
+    || ['#ai-mask', '#note-mask', '#settings-mask', '#stack-mask', '#intent-mask', '#command-mask', '#peek-mask', '#lib-panel', '#note-editor']
+      .some(sel => { const el = document.querySelector(sel); return el && !el.classList.contains('hidden'); });
+  const span = () => {
+    const a = [...pts.values()];
+    return a.length >= 2 ? Math.hypot(a[0].x - a[1].x, a[0].y - a[1].y) : 0;
+  };
+  const clearPreview = () => {
+    if (activePane) {
+      activePane.style.transition = '';
+      activePane.style.transform = '';
+      activePane.style.opacity = '';
+    }
+    if (previewEl) {
+      previewEl.classList.remove('z-peek-under');
+      previewEl.style.transform = '';
+      previewEl.style.opacity = '';
+    }
+    activePane = null; previewEl = null; previewName = null; d0 = 0; lastScale = 1;
+  };
+  lib.addEventListener('pointerdown', e => {
+    if (blocked() || currentPane() === 'graph') return;
+    pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pts.size === 2) {
+      d0 = span() || 1;
+      activePane = $('#pane-' + currentPane());
+      lastScale = 1;
+    }
+  }, { passive: true });
+  lib.addEventListener('pointermove', e => {
+    if (!pts.has(e.pointerId)) return;
+    pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pts.size < 2 || !d0 || !activePane) return;
+    const cur = currentPane();
+    if (cur === 'graph') { clearPreview(); return; }
+    const ratio = (span() || d0) / d0;
+    lastScale = ratio;
+    const idx = SPACES.indexOf(cur);
+    const want = ratio < 0.96 ? SPACES[idx + 1] : (ratio > 1.04 ? SPACES[idx - 1] : null);
+    if (want !== previewName) {
+      if (previewEl) { previewEl.classList.remove('z-peek-under'); previewEl.style.transform = ''; previewEl.style.opacity = ''; }
+      previewName = want || null;
+      previewEl = previewName ? $('#pane-' + previewName) : null;
+      if (previewEl) previewEl.classList.add('z-peek-under');
+    }
+    const clamped = Math.max(0.76, Math.min(1.28, ratio));
+    const prog = ratio < 1 ? Math.min(1, (1 - ratio) / 0.24) : Math.min(1, (ratio - 1) / 0.26);
+    activePane.style.transition = 'none';
+    activePane.style.transform = `scale(${clamped.toFixed(3)})`;
+    activePane.style.opacity = String(Math.max(0.18, 1 - prog * 0.78));
+    if (previewEl) {
+      const pScale = ratio < 1 ? (1.14 - prog * 0.14) : (0.86 + prog * 0.14);
+      previewEl.style.transform = `scale(${pScale.toFixed(3)})`;
+      previewEl.style.opacity = String(Math.min(1, 0.15 + prog * 0.85));
+    }
+  }, { passive: true });
+  const end = e => {
+    if (!pts.has(e.pointerId)) return;
+    pts.delete(e.pointerId);
+    if (pts.size >= 2 || !d0) return;
+    const target = (lastScale <= 0.82 || lastScale >= 1.22) ? previewName : null;
+    clearPreview();
+    if (target) showPane(target, { whisper: true });
+  };
+  lib.addEventListener('pointerup', end, { passive: true });
+  lib.addEventListener('pointercancel', end, { passive: true });
+
+  // 桌面触控板捏合 / Ctrl+滚轮穿层
+  let wheelLock = 0;
+  lib.addEventListener('wheel', e => {
+    if (!e.ctrlKey || blocked()) return;
+    const cur = currentPane();
+    if (cur === 'graph') return;
+    e.preventDefault();
+    const now = Date.now();
+    if (now - wheelLock < 420) return;
+    const idx = SPACES.indexOf(cur);
+    if (e.deltaY > 12 && idx < SPACES.length - 1) { wheelLock = now; showPane(SPACES[idx + 1], { whisper: true }); }
+    else if (e.deltaY < -12 && idx > 0) { wheelLock = now; showPane(SPACES[idx - 1], { whisper: true }); }
+  }, { passive: false });
+})();
+
 // 菜单上下键 + 快捷键（Ctrl+K / Alt+左右 / 1-3 / /）
 document.addEventListener('keydown', e => {
   if ((e.altKey && e.code === 'Space') || ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'j')) {

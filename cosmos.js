@@ -594,8 +594,10 @@ function skyField(seed = 20261120) {
 
 /* ---------- 渲染器 ---------- */
 export class Cosmos {
-  constructor({ stage, plane, world, sky, map, mood = 'auto', onSelect, onBackground, onView }) {
-    Object.assign(this, { stage, plane, world, sky, map, onSelect, onBackground, onView });
+  constructor({ stage, plane, world, sky, map, mood = 'auto', onSelect, onBackground, onView, onDiveIn }) {
+    Object.assign(this, { stage, plane, world, sky, map, onSelect, onBackground, onView, onDiveIn });
+    this._overZoom = 1;
+    this._overZoomAt = 0;
     this.mood = mood || 'auto';
     this.theme = themeForHour(currentHour(this.mood));
     this.lastClock = Date.now();
@@ -1085,7 +1087,16 @@ export class Cosmos {
         const d = Math.hypot(a.x - b.x, a.y - b.y) || 1;
         const c = center();
         const mx = (a.x + b.x) / 2 - c.x, my = (a.y + b.y) / 2 - c.y;
-        const k = clamp(g.k0 * d / g.d0, K_MIN, K_MAX);
+        const rawK = g.k0 * d / g.d0;
+        if (rawK > K_MAX * 1.26 && !g.dived && this.onDiveIn) {
+          g.dived = true;
+          this.pointers.clear();
+          this.gesture = null;
+          st.classList.remove('panning');
+          this.onDiveIn(this.nearestStarTo((a.x + b.x) / 2, (a.y + b.y) / 2));
+          return;
+        }
+        const k = clamp(rawK, K_MIN, K_MAX);
         const wx = (g.mx - g.cam.x) / g.k0, wy = (g.my - g.cam.y) / g.k0;
         this.cam.k = k; this.cam.x = mx - wx * k; this.cam.y = my - wy * k;
         g.moved = true;
@@ -1116,6 +1127,19 @@ export class Cosmos {
       e.preventDefault();
       const c = center();
       const f = Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0016));
+      if (this.cam.k >= K_MAX * 0.96 && f > 1 && this.onDiveIn) {
+        const now = performance.now();
+        if (now - this._overZoomAt > 600) this._overZoom = 1;
+        this._overZoomAt = now;
+        this._overZoom *= f;
+        if (this._overZoom >= 1.24) {
+          this._overZoom = 1;
+          this.onDiveIn(this.nearestStarTo(e.clientX, e.clientY));
+          return;
+        }
+      } else if (f < 1) {
+        this._overZoom = 1;
+      }
       if (this.tilt) this.zoomBy(f); else this.zoomBy(f, e.clientX - c.x, e.clientY - c.y);
     }, { passive: false });
     st.addEventListener('keydown', e => {
@@ -1139,6 +1163,16 @@ export class Cosmos {
     } else {
       this.gesture = { kind: 'pan', x0: x, y0: y, cam: { ...this.cam }, t0: performance.now(), moved: resumed };
     }
+  }
+  nearestStarTo(clientX, clientY, maxDist = 110) {
+    let bestId = null, bestD = maxDist;
+    for (const [id, btn] of this.buttons) {
+      const dot = btn.querySelector('.gdot') || btn;
+      const r = dot.getBoundingClientRect();
+      const d = Math.hypot(r.left + r.width / 2 - clientX, r.top + r.height / 2 - clientY);
+      if (d < bestD) { bestD = d; bestId = id; }
+    }
+    return bestId || this.focus || null;
   }
   pan(dx, dy) { this.tween = null; this.cam.x += dx; this.cam.y += dy; this.userMoved = true; this.changed(); }
 

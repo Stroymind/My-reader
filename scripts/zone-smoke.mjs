@@ -737,41 +737,53 @@ try {
   report.checks.push('Desktop 1100 px panorama: edge-to-edge cosmos, every star in view after 适应, no overflow');
   await page.setViewport({ width: 390, height: 844, isMobile: true, hasTouch: true });
 
-  // ---- Ultra-clean buttonless Note Editor + on-demand glass Link Picker (zero ugly <select>, zero form button pile) ----
+  // ---- Ultra-clean buttonless Note Editor (zero top bar, zero Save/mic/link-picker/AI buttons) ----
   await page.evaluate(async id => {
     const w = await import('./workspace.js');
     await w.refreshWorkspace();
     w.showPane('knowledge');
     await w.openEditor(id);
   }, cosmosIds.lone);
-  await page.waitForFunction(() => !document.querySelector('#note-editor').classList.contains('hidden') && !!document.querySelector('#note-editor .rel-add-trigger'));
+  await page.waitForFunction(() => !document.querySelector('#note-editor').classList.contains('hidden') && !!document.querySelector('#note-editor .editor-title'));
   const editorUi = await page.evaluate(() => ({
     nativeSelects: document.querySelectorAll('#note-editor select').length,
-    pickerHiddenAtRest: document.querySelector('#note-editor .link-picker').classList.contains('hidden'),
-    noSaveButton: ![...document.querySelectorAll('#note-editor button')].some(b => b.textContent.trim() === '保存'),
-    hasMic: !!document.querySelector('#editor-mic'),
+    zeroTopBar: !document.querySelector('#note-editor .editor-bar') && !document.querySelector('#editor-mic'),
+    zeroLinkTrigger: !document.querySelector('#note-editor .rel-add-trigger') && !document.querySelector('#note-editor .link-picker'),
     noClutterButtons: !document.querySelector('#note-editor .concept-pill') && !document.querySelector('#note-editor .editor-tools')
   }));
   assert.equal(editorUi.nativeSelects, 0, 'note editor must not use ugly raw <select>');
-  assert.equal(editorUi.pickerHiddenAtRest, true, 'link picker stays cleanly hidden until tapped');
-  assert.equal(editorUi.noSaveButton, true, 'note editor auto-saves without a Save button');
-  assert.equal(editorUi.hasMic, true, 'note editor offers voice dictation');
+  assert.equal(editorUi.zeroTopBar, true, 'note editor has zero top header bar buttons');
+  assert.equal(editorUi.zeroLinkTrigger, true, 'note editor has zero manual + 关联笔记 clutter button');
   assert.equal(editorUi.noClutterButtons, true, 'zero old-era button piles in note editor');
   await sleep(420);
   await page.screenshot({ path: path.resolve(root, 'test-results/zone-note-editor-clean.png') });
-  await page.click('#note-editor .rel-add-trigger');
-  await page.waitForFunction(() => !document.querySelector('#note-editor .link-picker').classList.contains('hidden') && document.querySelectorAll('#note-editor .link-cand').length > 0);
-  await page.$eval('#note-editor .link-picker', el => el.scrollIntoView({ block: 'center' }));
-  await sleep(200);
-  await page.screenshot({ path: path.resolve(root, 'test-results/zone-note-editor.png') });
-  await page.click('#note-editor .link-cand');
-  await page.waitForFunction(() => document.querySelectorAll('#note-editor .rel-item').length >= 1);
-  await page.$eval('#note-editor .rel-cut', el => el.scrollIntoView({ block: 'center' }));
-  await page.click('#note-editor .rel-cut');
-  await page.waitForFunction(() => document.querySelectorAll('#note-editor .rel-item').length === 0);
-  await page.click('#note-editor .editor-bar .texty');
+  await page.evaluate(async () => { const w = await import('./workspace.js'); await w.closeEditor(); });
   await page.waitForFunction(() => document.querySelector('#note-editor').classList.contains('hidden'));
-  report.checks.push('Pure buttonless Note Editor canvas (zero AI/concept/tool button clutter, zero raw <select>; on-demand glass link picker connects in 1 tap)');
+  report.checks.push('Pure buttonless Note Editor canvas (zero top bar, zero Save/mic/+关联笔记/AI/concept buttons, zero raw <select>; auto-save + [[title]] & voice linking)');
+
+  // ---- Z-Axis Semantic Zoom (流 <-> 知识 <-> 星海 + Cosmos dive-in into star note) ----
+  assert.equal(await page.evaluate(() => !document.querySelector('.intent-spaces') && !!document.querySelector('.z-depth-track')), true, 'old 3-tab box replaced by frameless Z-depth hairline track');
+  await page.evaluate(async () => { const w = await import('./workspace.js'); w.showPane('shelf'); });
+  await sleep(200);
+  await page.evaluate(() => {
+    document.querySelector('#library').dispatchEvent(new WheelEvent('wheel', { deltaY: 120, ctrlKey: true, bubbles: true, cancelable: true }));
+  });
+  await page.waitForFunction(() => document.querySelector('#pane-knowledge').classList.contains('on'));
+  await sleep(460);
+  await page.evaluate(() => {
+    document.querySelector('#library').dispatchEvent(new WheelEvent('wheel', { deltaY: 120, ctrlKey: true, bubbles: true, cancelable: true }));
+  });
+  await page.waitForFunction(() => document.querySelector('#pane-graph').classList.contains('on'));
+  await sleep(460);
+  await page.evaluate(async id => {
+    const w = await import('./workspace.js');
+    w.diveFromCosmos(id);
+  }, cosmosIds.b);
+  await page.waitForFunction(() => document.querySelector('#pane-knowledge').classList.contains('on') && !document.querySelector('#note-editor').classList.contains('hidden'));
+  assert.equal(await page.$eval('#note-editor .editor-title', el => el.value), '元认知');
+  await page.evaluate(async () => { const w = await import('./workspace.js'); await w.closeEditor(); });
+  await page.waitForFunction(() => document.querySelector('#note-editor').classList.contains('hidden'));
+  report.checks.push('Z-Axis Semantic Zoom transitions continuously across 流 -> 知识 -> 星海 and dives from a cosmos star directly into its note');
 
   // ---- Natural-language & voice direct-control + Hold+Push-Left Peek + Drag-to-Stack + Multi-Paragraph Dark Highlight + Chained Commands + E-Ink / Left-Hand / Scroll / Vertical-RL ----
   assert.equal(await page.$eval('#command-mask', el => el.classList.contains('hidden')), true);
@@ -813,6 +825,7 @@ try {
     await window.__app.renderLibrary();
   });
   await page.waitForSelector('.book[data-id="z-v"]');
+  await sleep(480);
 
   // 1) Hold (>=180ms) + Push-Left Book Peek Card
   const peekPt = await page.$eval('.book[data-id="z-v"]', el => { const r = el.getBoundingClientRect(); return { x: r.left + r.width * 0.72, y: r.top + r.height / 2 }; });
@@ -847,7 +860,7 @@ try {
   await sleep(340);
   await page.mouse.move(dragPts.bx, dragPts.by, { steps: 8 });
   await page.mouse.up();
-  await page.waitForFunction(() => window.__app.stacks.list().length === 1);
+  await page.waitForFunction(() => window.__app.stacks.list().length === 1 && !!document.querySelector('#toast .toast-undo'));
   // Undo stack merge cleanly
   await page.click('#toast .toast-undo');
   await page.waitForFunction(() => window.__app.stacks.list().length === 0);
