@@ -1457,37 +1457,15 @@ async function bumpSize(delta) {
       const d = pinchSpan();
       const ratio = d / pinchDist;
       pinchScale = ratio;
-      // 放大字号
+      // 双指张开/捏合专一用于调字号，与目录手势彻底分离、零冲突
       if (ratio > 1.18) {
-        resetStageZoom();
         pinchDist = d;
         suppressUp = true;
         bumpSize(2);
-        return;
-      }
-      // 缩小手势：若当前字号大于默认(19)，先顺滑缩回字号；若已在默认或更小(<=19)，继续捏合则 Z 轴拉远进入全书鸟瞰目录！
-      if (ratio < 0.84 && (settings.size || 19) > 19 && !zoomingOut) {
+      } else if (ratio < 0.84) {
         pinchDist = d;
         suppressUp = true;
         bumpSize(-2);
-        return;
-      }
-      if (ratio < 0.94 && (settings.size || 19) <= 19 && !document.body.classList.contains('pdf-zoom')) {
-        zoomingOut = true;
-        suppressUp = true;
-        const clamped = Math.max(0.74, Math.min(1, ratio));
-        const prog = Math.min(1, (1 - ratio) / 0.24);
-        if (stage) {
-          stage.style.transition = 'none';
-          stage.style.transform = `scale(${clamped.toFixed(3)})`;
-          stage.style.opacity = String(Math.max(0.35, 1 - prog * 0.62));
-          stage.style.borderRadius = Math.round(prog * 24) + 'px';
-        }
-        if (ratio <= 0.78) {
-          pinchDist = 0;
-          resetStageZoom();
-          openReaderPanel('toc');
-        }
       }
       return;
     }
@@ -1543,6 +1521,12 @@ async function bumpSize(delta) {
     if (!zoomed && !scrolled && Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy) * 1.15 && Date.now() - st < 900) {
       const dir = rtl ? (dx > 0 ? 1 : -1) : (dx < 0 ? 1 : -1);
       animatedTurn(dir);
+      return;
+    }
+    // 顶部向下轻拉 -> 直接 Z 轴鸟瞰展开全书目录（与双指调字号、左右翻页 100% 物理分离）
+    if (!zoomed && !scrolled && sy < 140 && dy > 48 && dy > Math.abs(dx) * 1.35 && Date.now() - st < 850) {
+      resetPageDrag();
+      openReaderPanel('toc');
       return;
     }
     if (pageDragging) { resetPageDrag(); return; }
