@@ -31,21 +31,6 @@
     <div class="maincol">
       <h1 class="sr">Zone</h1>
 
-      <div id="bot-reader-bar" class="bot-reader-bar hidden" aria-label="Bot 内置阅读器顶栏">
-        <button id="btn-reader-return-bot" class="bot-reader-back" type="button">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>
-          <span id="reader-return-name">返回对话</span>
-        </button>
-        <div class="bot-reader-seg" role="tablist" aria-label="阅读空间">
-          <button type="button" class="on" data-br-pane="shelf">流</button>
-          <button type="button" data-br-pane="knowledge">知识</button>
-          <button type="button" data-br-pane="graph">星海</button>
-        </div>
-        <div class="bot-reader-acts">
-          <button id="btn-br-pick" class="bot-reader-pill" type="button">整理</button>
-          <button id="btn-br-import" class="bot-reader-pill accent" type="button">导入</button>
-        </div>
-      </div>
       <div id="pane-shelf" class="pane on" role="tabpanel" aria-label="流">
         <div class="measure">
           <div id="find-bar" class="find-bar" hidden>
@@ -283,6 +268,7 @@
       <button id="btn-auth-account" class="menu-item intent-sub" role="menuitem" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8.5" r="3.6"/><path d="M5.5 19.5a6.5 6.5 0 0 1 13 0"/></svg><span class="menu-label" id="intent-auth-label">登录 / 账号</span></button>
       <button id="btn-ai-settings" class="menu-item intent-sub" role="menuitem" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 4l1.4 4.2 4.2 1.4-4.2 1.4L10 15.2 8.6 11 4.4 9.6 8.6 8.2z"/><path d="M17.4 13.6l.7 1.9 1.9.7-1.9.7-.7 1.9-.7-1.9-1.9-.7 1.9-.7z"/></svg><span class="menu-label">AI 设置</span></button>
     </div>
+    <button id="btn-intent-return-bot" class="intent-return-bot" type="button">返回对话</button>
   </div>
 </div>
 <input id="file-input" type="file" multiple hidden>

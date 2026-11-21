@@ -359,6 +359,9 @@ function bindShelfBook(el, b, stack, swipeBg) {
     ghost?.remove();
     ghost = null;
     clearHover();
+    const pane = $('#pane-shelf');
+    if (pane) pane.style.overflow = '';
+    document.documentElement.style.touchAction = '';
     window.removeEventListener('touchmove', preventTouchScroll, { passive: false });
   };
   const startLiftDrag = (clientX, clientY, pointerId) => {
@@ -376,6 +379,9 @@ function bindShelfBook(el, b, stack, swipeBg) {
     document.body.appendChild(ghost);
     el.classList.add('dragging');
     showTrashZone(true, false);
+    const pane = $('#pane-shelf');
+    if (pane) pane.style.overflow = 'hidden';
+    document.documentElement.style.touchAction = 'none';
     try { navigator.vibrate?.(16); } catch {}
     try { el.setPointerCapture(pointerId); } catch {}
     window.addEventListener('touchmove', preventTouchScroll, { passive: false });
@@ -1046,7 +1052,8 @@ let command = null;
   const pts = new Map();
   let d0 = 0, activePane = null, previewEl = null, previewName = null, lastScale = 1;
   const blocked = () => pickMode || !lib.classList.contains('active')
-    || ['#ai-mask', '#note-mask', '#settings-mask', '#stack-mask', '#intent-mask', '#command-mask', '#peek-mask', '#lib-panel', '#note-editor']
+    || (!document.documentElement.classList.contains('in-bot-reader') && !document.documentElement.classList.contains('legacy-reader-home'))
+    || ['#ai-mask', '#note-mask', '#settings-mask', '#stack-mask', '#intent-mask', '#command-mask', '#peek-mask', '#lib-panel', '#note-editor', '#zone-chat-modal']
       .some(sel => { const el = document.querySelector(sel); return el && !el.classList.contains('hidden'); });
   const span = () => {
     const a = [...pts.values()];
@@ -1257,7 +1264,6 @@ async function openBook(id) {
     if (!readerReturnBotId) readerReturnBotId = getActiveBot()?.id || '';
     $('#zone-chat-modal').classList.add('hidden');
     document.documentElement.classList.add('in-bot-reader');
-    $('#bot-reader-bar')?.classList.remove('hidden');
   }
   if (engine && cur?.id === id) { showView('reader'); return; }
   const gen = ++viewGen;
@@ -1288,7 +1294,6 @@ async function openBook(id) {
     if (!readerReturnBotId) readerReturnBotId = getActiveBot()?.id || '';
     $('#zone-chat-modal').classList.add('hidden');
     document.documentElement.classList.add('in-bot-reader');
-    $('#bot-reader-bar')?.classList.remove('hidden');
   }
   showView('reader'); applyAppearance(); setBars(false); exitSelect(); $('#loading').classList.remove('hidden');
   $('#r-title').textContent = rec.title; $('#run-title').textContent = rec.title;
@@ -1973,20 +1978,10 @@ let rz; window.addEventListener('resize', () => { clearTimeout(rz); rz = setTime
 
 let readerReturnBotId = '';
 
-function syncBotReaderBarPane() {
-  const pane = currentPane();
-  document.querySelectorAll('#bot-reader-bar [data-br-pane]').forEach(btn => {
-    btn.classList.toggle('on', btn.dataset.brPane === pane);
-  });
-  const pickBtn = $('#btn-br-pick');
-  if (pickBtn) pickBtn.classList.toggle('hidden', pane !== 'shelf');
-}
-
 function exitBotReaderWorkspace({ returnToBot = true } = {}) {
   if (!document.documentElement.classList.contains('in-bot-reader')) return false;
   if (document.body.classList.contains('selecting')) exitPick();
   document.documentElement.classList.remove('in-bot-reader');
-  $('#bot-reader-bar')?.classList.add('hidden');
   showPane('shelf', { instant: true });
   applyAppearance();
   const backBotId = readerReturnBotId;
@@ -2014,34 +2009,20 @@ async function openBotReaderSheet(bot = getActiveBot(), { initialPane = 'shelf',
   }
   const targetBot = fromHome ? null : (bot || getActiveBot());
   readerReturnBotId = targetBot?.id || '';
-  const nameEl = $('#reader-return-name');
-  if (nameEl) nameEl.textContent = targetBot?.name || '返回';
+  const retBtn = $('#btn-intent-return-bot');
+  if (retBtn) retBtn.textContent = targetBot ? `返回 ${targetBot.name}` : '返回 Zone';
   $('#zone-chat-modal')?.classList.add('hidden');
   document.documentElement.classList.add('in-bot-reader');
-  $('#bot-reader-bar')?.classList.remove('hidden');
   showPane(initialPane || 'shelf', { instant: true });
-  syncBotReaderBarPane();
   applyAppearance();
   await renderLibrary();
   if (initialPane === 'graph' || initialPane === 'knowledge') await refreshWorkspace();
 }
 
-$('#btn-reader-return-bot')?.addEventListener('click', () => exitBotReaderWorkspace({ returnToBot: true }));
-$('#btn-br-import')?.addEventListener('click', () => $('#file-input')?.click());
-$('#btn-br-pick')?.addEventListener('click', () => {
-  if (currentPane() !== 'shelf') showPane('shelf', { instant: true });
-  if (document.body.classList.contains('selecting')) exitPick();
-  else startPick(null);
+$('#btn-intent-return-bot')?.addEventListener('click', () => {
+  closeIntent(false);
+  exitBotReaderWorkspace({ returnToBot: true });
 });
-document.querySelectorAll('#bot-reader-bar [data-br-pane]').forEach(btn => {
-  btn.addEventListener('click', () => {
-    showPane(btn.dataset.brPane, { whisper: false });
-    syncBotReaderBarPane();
-  });
-});
-document.addEventListener('click', () => {
-  if (document.documentElement.classList.contains('in-bot-reader')) requestAnimationFrame(syncBotReaderBarPane);
-}, true);
 
 function closeBotPluginsSheet() {
   const mask = document.getElementById('zone-bot-plugins-mask');

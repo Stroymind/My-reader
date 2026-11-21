@@ -121,11 +121,12 @@ try {
   await page.click('#zone-bot-plugins-mask [data-bp-act="close"]');
   await page.waitForFunction(() => document.querySelector('#zone-bot-plugins-mask').classList.contains('hidden'));
   assert.equal(await page.$eval('#btn-chat-reader', el => getComputedStyle(el).display !== 'none'), true, '阅读器 pill loaded into THIS Bot chat');
-  // Tap 阅读器 inside THIS Bot chat -> enters full in-Bot Reader workspace (with Card Stacks + 流/知识/星海 + ‹ Zone return pill)
+  // Tap 阅读器 inside THIS Bot chat -> enters pure frameless Card Stack workspace (ZERO top bar, ZERO bottom button bar; Android Back returns to Bot)
   await page.click('#btn-chat-reader');
-  await page.waitForFunction(() => document.documentElement.classList.contains('in-bot-reader') && !document.querySelector('#bot-reader-bar').classList.contains('hidden'));
+  await page.waitForFunction(() => document.documentElement.classList.contains('in-bot-reader'));
+  assert.equal(await page.$('#bot-reader-bar'), null, 'ZERO top bar in frameless Reader workspace');
   assert.equal(await page.$eval('#grid', el => getComputedStyle(el).display !== 'none'), true, 'real Card Stack #grid active inside in-Bot Reader workspace');
-  await page.click('#btn-reader-return-bot');
+  await page.evaluate(() => window.__app.handleBack());
   await page.waitForFunction(() => !document.documentElement.classList.contains('in-bot-reader') && !document.querySelector('#zone-chat-modal').classList.contains('hidden'));
   await page.type('#zone-chat-input', '你好，帮我规划今天');
   await page.keyboard.press('Enter');
