@@ -288,8 +288,50 @@ function findDropTarget(x, y, dragId) {
   return null;
 }
 
+function closeCardQuickMenu() {
+  const m = $('#card-quick-mask');
+  if (!m || m.classList.contains('hidden')) return false;
+  m.classList.add('hidden');
+  return true;
+}
+function openCardQuickMenu(rect, actions) {
+  const mask = $('#card-quick-mask');
+  const menu = $('#card-quick-menu');
+  if (!mask || !menu) return;
+  menu.replaceChildren();
+  for (const act of actions) {
+    const btn = node('button', act.danger ? 'danger' : '', act.label);
+    btn.type = 'button';
+    btn.setAttribute('role', 'menuitem');
+    btn.onclick = () => { closeCardQuickMenu(); act.onClick(); };
+    menu.appendChild(btn);
+  }
+  mask.classList.remove('hidden');
+  const mw = Math.min(280, menu.offsetWidth || 180);
+  const left = Math.max(14, Math.min(window.innerWidth - mw - 14, rect.left + rect.width / 2 - mw / 2));
+  const top = rect.top > 96 ? rect.top - 52 : Math.min(window.innerHeight - 80, rect.bottom + 10);
+  menu.style.left = Math.round(left) + 'px';
+  menu.style.top = Math.round(top) + 'px';
+}
+$('#card-quick-mask')?.addEventListener('click', e => { if (e.target === e.currentTarget) closeCardQuickMenu(); });
+
+function showTrashZone(show, hot = false) {
+  const z = $('#drag-trash-zone');
+  const lbl = $('#drag-trash-label');
+  if (!z) return;
+  z.classList.toggle('hidden', !show);
+  z.classList.toggle('hot', !!(show && hot));
+  if (lbl) lbl.textContent = hot ? '松手删除' : '拖到这里删除';
+}
+function inTrashZone(x, y) {
+  const z = $('#drag-trash-zone');
+  if (!z || z.classList.contains('hidden')) return false;
+  const r = z.getBoundingClientRect();
+  return x >= r.left - 24 && x <= r.right + 24 && y >= 0 && y <= r.bottom + 26;
+}
+
 function bindShelfBook(el, b, stack, swipeBg) {
-  let hold = null, sx = 0, sy = 0, pid = null, held = false, swiping = false, dragging = false, dx = 0;
+  let hold = null, sx = 0, sy = 0, pid = null, held = false, swiping = false, dragging = false, dx = 0, movedDuringDrag = false, overTrash = false;
   let ghost = null, ghostOffX = 0, ghostOffY = 0, hoverTarget = null;
   const preventTouchScroll = ev => { if (dragging || swiping) ev.preventDefault(); };
   const clearHold = () => { clearTimeout(hold); hold = null; };
@@ -310,6 +352,8 @@ function bindShelfBook(el, b, stack, swipeBg) {
   };
   const endDrag = () => {
     dragging = false;
+    overTrash = false;
+    showTrashZone(false, false);
     el.classList.remove('dragging');
     ghost?.remove();
     ghost = null;
@@ -319,6 +363,8 @@ function bindShelfBook(el, b, stack, swipeBg) {
   const startLiftDrag = (clientX, clientY, pointerId) => {
     dragging = true;
     held = true;
+    movedDuringDrag = false;
+    overTrash = false;
     const rect = el.getBoundingClientRect();
     ghostOffX = clientX - rect.left;
     ghostOffY = clientY - rect.top;
@@ -328,6 +374,7 @@ function bindShelfBook(el, b, stack, swipeBg) {
     ghost.style.transform = `translate3d(${rect.left}px, ${rect.top}px, 0) scale(1.03)`;
     document.body.appendChild(ghost);
     el.classList.add('dragging');
+    showTrashZone(true, false);
     try { navigator.vibrate?.(16); } catch {}
     try { el.setPointerCapture(pointerId); } catch {}
     window.addEventListener('touchmove', preventTouchScroll, { passive: false });
@@ -338,7 +385,7 @@ function bindShelfBook(el, b, stack, swipeBg) {
     held = false; swiping = false; dragging = false; dx = 0;
     clearHold();
     if (pickMode) return;
-    // 像手机桌面 APP 一样：长按约 320ms 立即浮起卡片，拖到另一张卡片或卡片堆上直接叠合
+    // 像手机桌面 APP 一样：长按约 320ms 立即浮起卡片；拖到其他卡片自动叠堆、拖到顶部直接删除、原地松手弹出轻量快捷胶囊
     hold = setTimeout(() => {
       hold = null;
       if (swiping || dragging || pid !== e.pointerId) return;
@@ -368,14 +415,24 @@ function bindShelfBook(el, b, stack, swipeBg) {
         swipeBg.classList.toggle('dir-left', dx < -14);
       }
     } else if (dragging && ghost) {
+      if (Math.hypot(mx, my) > 12) movedDuringDrag = true;
       ghost.style.transform = `translate3d(${e.clientX - ghostOffX}px, ${e.clientY - ghostOffY}px, 0) scale(1.03)`;
-      const hit = findDropTarget(e.clientX, e.clientY, b.id);
-      if (hit?.el !== hoverTarget?.el) {
+      const trash = inTrashZone(e.clientX, e.clientY);
+      if (trash !== overTrash) {
+        overTrash = trash;
+        showTrashZone(true, overTrash);
+      }
+      if (overTrash) {
         clearHover();
-        hoverTarget = hit;
-        if (hoverTarget?.el) {
-          hoverTarget.el.classList.add('drop-target');
-          hoverTarget.el.setAttribute('data-drop-hint', hoverTarget.kind === 'stack' ? '松手并入' : '松手叠合');
+      } else {
+        const hit = findDropTarget(e.clientX, e.clientY, b.id);
+        if (hit?.el !== hoverTarget?.el) {
+          clearHover();
+          hoverTarget = hit;
+          if (hoverTarget?.el) {
+            hoverTarget.el.classList.add('drop-target');
+            hoverTarget.el.setAttribute('data-drop-hint', hoverTarget.kind === 'stack' ? '松手并入' : '松手叠合');
+          }
         }
       }
     }
@@ -402,11 +459,16 @@ function bindShelfBook(el, b, stack, swipeBg) {
         }
       }
     } else if (dragging) {
-      const drop = e.type === 'pointerup' ? (hoverTarget || findDropTarget(e.clientX, e.clientY, b.id)) : null;
+      const droppedTrash = e.type === 'pointerup' && (overTrash || inTrashZone(e.clientX, e.clientY));
+      const drop = (e.type === 'pointerup' && !droppedTrash) ? (hoverTarget || findDropTarget(e.clientX, e.clientY, b.id)) : null;
+      const stayedStill = e.type === 'pointerup' && !movedDuringDrag && !droppedTrash && !drop;
+      const rect = el.getBoundingClientRect();
       endDrag();
       held = true;
       peekSwipedAt = Date.now();
-      if (drop) {
+      if (droppedTrash) {
+        await deleteBooks([b]);
+      } else if (drop) {
         if (drop.kind === 'stack') {
           const s = addToStack(drop.id, [b.id]);
           if (s) {
@@ -430,6 +492,21 @@ function bindShelfBook(el, b, stack, swipeBg) {
             }
           }
         }
+      } else if (stayedStill) {
+        const actions = [{ label: '透视', onClick: () => openBookPeek(b) }];
+        if (stack) {
+          actions.push({
+            label: '移出堆',
+            onClick: async () => {
+              removeFromStacks([b.id]);
+              const still = getStack(stack.id);
+              toast(still ? `已移出「${stack.name}」` : `「${stack.name}」只剩一项，已散开`);
+              await renderLibrary(still ? { anchor: 'stack:' + stack.id, focus: 'stack:' + stack.id } : { anchor: 'book:' + b.id, focus: 'book:' + b.id });
+            }
+          });
+        }
+        actions.push({ label: '删除', danger: true, onClick: () => deleteBooks([b]) });
+        openCardQuickMenu(rect, actions);
       }
     }
   };
@@ -2246,20 +2323,35 @@ function openAuthGate() {
   if (inp) inp.value = u && u.mode !== 'guest' ? (u.account || u.name || '') : '';
   gate.classList.remove('hidden');
 }
-function completeAuth(account, mode = 'account') {
+function completeAuth(account, mode = 'account', provider = '') {
   const clean = String(account || '').trim();
   const user = mode === 'guest'
-    ? { name: '本地空间', account: '', mode: 'guest', at: Date.now() }
-    : { name: clean.includes('@') ? clean.split('@')[0] : clean, account: clean, mode: 'account', at: Date.now() };
+    ? { name: '本地空间', account: '', mode: 'guest', provider: 'local', at: Date.now() }
+    : { name: clean.includes('@') ? clean.split('@')[0] : clean, account: clean, mode: 'account', provider: provider || 'account', at: Date.now() };
   try { localStorage.setItem(AUTH_KEY, JSON.stringify(user)); } catch {}
   $('#auth-gate')?.classList.add('hidden');
   syncAuthLabel();
   toast(mode === 'guest' ? '已进入本地空间' : `欢迎回来，${user.name}`);
 }
+function triggerOAuth(provider) {
+  const cfg = window.ZONE_AUTH_CONFIG || {};
+  const label = provider === 'wechat' ? '微信' : 'QQ';
+  if (cfg.endpoint && ((provider === 'wechat' && cfg.wechatAppId) || (provider === 'qq' && cfg.qqAppId))) {
+    location.href = `${cfg.endpoint.replace(/\/+$/, '')}/oauth/${provider}`;
+    return;
+  }
+  completeAuth(`${label}用户`, 'account', provider);
+  toast(`已为你快速进入；配置${label}开放平台 AppID 后即可拉起正式${label}授权`, 3600);
+}
+$('#auth-wechat')?.addEventListener('click', () => triggerOAuth('wechat'));
+$('#auth-qq')?.addEventListener('click', () => triggerOAuth('qq'));
+$('#auth-privacy-toggle')?.addEventListener('click', () => {
+  $('#auth-privacy-box')?.classList.toggle('hidden');
+});
 $('#auth-form')?.addEventListener('submit', e => {
   e.preventDefault();
   const val = ($('#auth-account')?.value || '').trim();
-  if (!val) { toast('请输入手机号、邮箱或昵称，或直接点下方进入'); $('#auth-account')?.focus(); return; }
+  if (!val) { toast('请输入手机号、邮箱或昵称，或直接点微信 / QQ / 本地进入'); $('#auth-account')?.focus(); return; }
   completeAuth(val, 'account');
 });
 $('#auth-guest')?.addEventListener('click', () => completeAuth('', 'guest'));

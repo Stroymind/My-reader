@@ -191,8 +191,23 @@ function findNoteDropTarget(x, y, dragId) {
   return null;
 }
 
+function showNoteTrashZone(show, hot = false) {
+  const z = $('#drag-trash-zone');
+  const lbl = $('#drag-trash-label');
+  if (!z) return;
+  z.classList.toggle('hidden', !show);
+  z.classList.toggle('hot', !!(show && hot));
+  if (lbl) lbl.textContent = hot ? '松手删除' : '拖到这里删除';
+}
+function inNoteTrashZone(x, y) {
+  const z = $('#drag-trash-zone');
+  if (!z || z.classList.contains('hidden')) return false;
+  const r = z.getBoundingClientRect();
+  return x >= r.left - 24 && x <= r.right + 24 && y >= 0 && y <= r.bottom + 26;
+}
+
 function bindNoteCardGestures(card, note, swipeBg) {
-  let hold = null, sx = 0, sy = 0, pid = null, held = false, swiping = false, dragging = false, dx = 0;
+  let hold = null, sx = 0, sy = 0, pid = null, held = false, swiping = false, dragging = false, dx = 0, overTrash = false;
   let ghost = null, ghostOffX = 0, ghostOffY = 0, hoverTarget = null;
   const preventTouchScroll = ev => { if (dragging || swiping) ev.preventDefault(); };
   const clearHold = () => { clearTimeout(hold); hold = null; };
@@ -213,6 +228,8 @@ function bindNoteCardGestures(card, note, swipeBg) {
   };
   const endDrag = () => {
     dragging = false;
+    overTrash = false;
+    showNoteTrashZone(false, false);
     card.classList.remove('dragging');
     ghost?.remove();
     ghost = null;
@@ -222,7 +239,7 @@ function bindNoteCardGestures(card, note, swipeBg) {
   card.addEventListener('pointerdown', e => {
     if (e.button != null && e.button !== 0) return;
     sx = e.clientX; sy = e.clientY; pid = e.pointerId;
-    held = false; swiping = false; dragging = false; dx = 0;
+    held = false; swiping = false; dragging = false; dx = 0; overTrash = false;
     clearHold();
     hold = setTimeout(() => {
       hold = null;
@@ -238,6 +255,7 @@ function bindNoteCardGestures(card, note, swipeBg) {
       ghost.style.transform = `translate3d(${rect.left}px, ${rect.top}px, 0) scale(1.03)`;
       document.body.appendChild(ghost);
       card.classList.add('dragging');
+      showNoteTrashZone(true, false);
       try { navigator.vibrate?.(16); } catch {}
       try { card.setPointerCapture(e.pointerId); } catch {}
       window.addEventListener('touchmove', preventTouchScroll, { passive: false });
@@ -267,13 +285,22 @@ function bindNoteCardGestures(card, note, swipeBg) {
       }
     } else if (dragging && ghost) {
       ghost.style.transform = `translate3d(${e.clientX - ghostOffX}px, ${e.clientY - ghostOffY}px, 0) scale(1.03)`;
-      const hit = findNoteDropTarget(e.clientX, e.clientY, note.id);
-      if (hit !== hoverTarget) {
+      const trash = inNoteTrashZone(e.clientX, e.clientY);
+      if (trash !== overTrash) {
+        overTrash = trash;
+        showNoteTrashZone(true, overTrash);
+      }
+      if (overTrash) {
         clearHover();
-        hoverTarget = hit;
-        if (hoverTarget) {
-          hoverTarget.classList.add('drop-target');
-          hoverTarget.setAttribute('data-drop-hint', '松手连接');
+      } else {
+        const hit = findNoteDropTarget(e.clientX, e.clientY, note.id);
+        if (hit !== hoverTarget) {
+          clearHover();
+          hoverTarget = hit;
+          if (hoverTarget) {
+            hoverTarget.classList.add('drop-target');
+            hoverTarget.setAttribute('data-drop-hint', '松手连接');
+          }
         }
       }
     }
@@ -304,10 +331,19 @@ function bindNoteCardGestures(card, note, swipeBg) {
         }
       }
     } else if (dragging) {
-      const drop = e.type === 'pointerup' ? (hoverTarget || findNoteDropTarget(e.clientX, e.clientY, note.id)) : null;
+      const droppedTrash = e.type === 'pointerup' && (overTrash || inNoteTrashZone(e.clientX, e.clientY));
+      const drop = (e.type === 'pointerup' && !droppedTrash) ? (hoverTarget || findNoteDropTarget(e.clientX, e.clientY, note.id)) : null;
       endDrag();
       held = true;
-      if (drop?.dataset?.noteId && drop.dataset.noteId !== note.id) {
+      if (droppedTrash) {
+        if (confirm(`删除「${note.title || '未命名'}」？`)) {
+          const bookId = note.bookId;
+          await deleteNote(note.id);
+          if (bookId) api.onHighlightsChanged(bookId);
+          await refreshWorkspace();
+          api.toast('已删除');
+        }
+      } else if (drop?.dataset?.noteId && drop.dataset.noteId !== note.id) {
         const targetId = drop.dataset.noteId;
         const targetNote = state.notes.find(n => n.id === targetId);
         await linkNotes(note.id, targetId);

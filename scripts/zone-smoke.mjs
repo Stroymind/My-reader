@@ -409,12 +409,14 @@ try {
   await page.$eval('#grid .book[data-id="z-e"]', el => el.scrollIntoView({ block: 'center' }));
   const er = await page.$eval('#grid .book[data-id="z-e"]', el => { const r = el.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
   await page.mouse.move(er.x, er.y); await page.mouse.down(); await sleep(380);
-  assert.equal(await page.evaluate(() => !!document.querySelector('.drag-ghost')), true, 'long-press lifts card immediately like home-screen app icon');
+  assert.equal(await page.evaluate(() => !!document.querySelector('.drag-ghost') && !document.querySelector('#drag-trash-zone').classList.contains('hidden')), true, 'long-press lifts card and shows top drop-to-delete zone');
   await page.mouse.up();
-  assert.equal(await page.evaluate(() => !document.querySelector('.drag-ghost') && !document.querySelector('#library').classList.contains('picking')), true);
+  assert.equal(await page.evaluate(() => !document.querySelector('.drag-ghost') && !document.querySelector('#card-quick-mask').classList.contains('hidden') && !document.querySelector('#library').classList.contains('picking')), true, 'releasing in place opens compact Haptic-Touch quick pill without checkbox mode');
+  await page.click('#card-quick-mask', { offset: { x: 4, y: 4 } });
+  await page.waitForFunction(() => document.querySelector('#card-quick-mask').classList.contains('hidden'));
   assert.equal(await page.evaluate(() => document.querySelector('#reader').classList.contains('active')), false);
   assert.equal(await bookCount(), 5);
-  report.checks.push('Long-press on a row immediately lifts it as a floating ghost (no forced checkbox pick mode, nothing deleted or opened)');
+  report.checks.push('Long-press lifts card with top drop-to-delete zone; releasing in place opens compact Haptic-Touch pill (透视/删除) with zero checkbox mode');
 
   await enterSelect();
   await tap('.stack-head');
