@@ -4,12 +4,15 @@ import android.Manifest;
 import android.app.Activity;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.media.MediaRecorder;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.speech.RecognitionListener;
 import android.speech.RecognizerIntent;
 import android.speech.SpeechRecognizer;
+import android.util.Base64;
 import androidx.activity.result.ActivityResult;
 import androidx.core.content.ContextCompat;
 import com.getcapacitor.JSObject;
@@ -21,6 +24,9 @@ import com.getcapacitor.annotation.ActivityCallback;
 import com.getcapacitor.annotation.CapacitorPlugin;
 import com.getcapacitor.annotation.Permission;
 import com.getcapacitor.annotation.PermissionCallback;
+import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileInputStream;
 import java.util.ArrayList;
 
 @CapacitorPlugin(
@@ -31,6 +37,9 @@ import java.util.ArrayList;
 )
 public class ZoneVoicePlugin extends Plugin {
     private SpeechRecognizer recognizer;
+    private MediaRecorder mediaRecorder;
+    private File recordFile;
+    private boolean pendingRecordAfterPerm = false;
     private final Handler main = new Handler(Looper.getMainLooper());
     private boolean wakeMode = false;
     private boolean activeListening = false;
@@ -133,6 +142,11 @@ public class ZoneVoicePlugin extends Plugin {
             ret.put("on", false);
             ret.put("code", "NO_PERMISSION");
             call.resolve(ret);
+            return;
+        }
+        if (pendingRecordAfterPerm) {
+            pendingRecordAfterPerm = false;
+            beginAudioRecording(call);
             return;
         }
         if (pendingWakeAfterPerm) {
@@ -304,6 +318,95 @@ public class ZoneVoicePlugin extends Plugin {
         notifyListeners("error", ev);
     }
 
+    @PluginMethod
+    public void startRecording(PluginCall call) {
+        if (!hasMicPermission() && getPermissionState("microphone") != PermissionState.GRANTED) {
+            pendingRecordAfterPerm = true;
+            pendingWakeAfterPerm = false;
+            requestPermissionForAlias("microphone", call, "micPermsCallback");
+            return;
+        }
+        beginAudioRecording(call);
+    }
+
+    private void beginAudioRecording(PluginCall call) {
+        main.post(() -> {
+            releaseRecorder();
+            try {
+                File out = new File(getContext().getCacheDir(), "zone_voice.m4a");
+                if (out.exists()) out.delete();
+                recordFile = out;
+                mediaRecorder = Build.VERSION.SDK_INT >= 31
+                    ? new MediaRecorder(getContext())
+                    : new MediaRecorder();
+                mediaRecorder.setAudioSource(MediaRecorder.AudioSource.MIC);
+                mediaRecorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4);
+                mediaRecorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC);
+                mediaRecorder.setAudioEncodingBitRate(32000);
+                mediaRecorder.setAudioSamplingRate(16000);
+                mediaRecorder.setAudioChannels(1);
+                mediaRecorder.setOutputFile(out.getAbsolutePath());
+                mediaRecorder.prepare();
+                mediaRecorder.start();
+                JSObject ret = new JSObject();
+                ret.put("started", true);
+                call.resolve(ret);
+            } catch (Exception e) {
+                releaseRecorder();
+                JSObject ret = new JSObject();
+                ret.put("started", false);
+                ret.put("code", "RECORDER_FAILED");
+                call.resolve(ret);
+            }
+        });
+    }
+
+    @PluginMethod
+    public void stopRecording(PluginCall call) {
+        main.post(() -> {
+            File f = recordFile;
+            boolean stopped = false;
+            if (mediaRecorder != null) {
+                try {
+                    mediaRecorder.stop();
+                    stopped = true;
+                } catch (Exception ignored) {}
+                releaseRecorder();
+            }
+            JSObject ret = new JSObject();
+            if (stopped && f != null && f.exists() && f.length() > 128) {
+                try (FileInputStream fis = new FileInputStream(f);
+                     ByteArrayOutputStream bos = new ByteArrayOutputStream()) {
+                    byte[] buf = new byte[4096];
+                    int n;
+                    while ((n = fis.read(buf)) != -1) bos.write(buf, 0, n);
+                    String b64 = Base64.encodeToString(bos.toByteArray(), Base64.NO_WRAP);
+                    ret.put("ok", true);
+                    ret.put("base64", b64);
+                    ret.put("mimeType", "audio/mp4");
+                } catch (Exception e) {
+                    ret.put("ok", false);
+                    ret.put("code", "READ_FAILED");
+                } finally {
+                    try { f.delete(); } catch (Exception ignored) {}
+                }
+            } else {
+                if (f != null) { try { f.delete(); } catch (Exception ignored) {} }
+                ret.put("ok", false);
+                ret.put("code", "EMPTY");
+            }
+            call.resolve(ret);
+        });
+    }
+
+    private void releaseRecorder() {
+        if (mediaRecorder != null) {
+            try { mediaRecorder.reset(); } catch (Exception ignored) {}
+            try { mediaRecorder.release(); } catch (Exception ignored) {}
+            mediaRecorder = null;
+        }
+    }
+
     private void destroyRecognizer() {
         if (recognizer != null) {
             try { recognizer.cancel(); } catch (Exception ignored) {}
@@ -317,6 +420,7 @@ public class ZoneVoicePlugin extends Plugin {
         main.removeCallbacks(restartWake);
         activeListening = false;
         destroyRecognizer();
+        releaseRecorder();
     }
 
     @Override
@@ -331,5 +435,6 @@ public class ZoneVoicePlugin extends Plugin {
         wakeMode = false;
         main.removeCallbacks(restartWake);
         destroyRecognizer();
+        releaseRecorder();
     }
 }

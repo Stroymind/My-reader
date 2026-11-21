@@ -1,7 +1,7 @@
 // Zone 自然语言与语音直控引擎：离线优先（零延迟复合意图解析）+ 可选 AI 回退 + Web Speech 语音 / 前台唤醒词 + 一键撤销
 // 严禁执行未白名单化的删除或外部发送操作；无密钥/离线时零网络请求。
 
-import { aiConfigured, complete } from './ai.js';
+import { aiConfigured, complete, transcribeAudio } from './ai.js';
 
 const WAKE_KEY = 'rr-voice-wake';
 const WAKE_RE = /^(?:hey\s+|hi\s+|你好\s*)?(?:zone|小域|小雨|小玉|小宇|小余|宗)[，,、。\s]*(.*)$/i;
@@ -489,8 +489,12 @@ export function createCommandController(host) {
       return;
     }
     if (code === 'NO_SPEECH_SERVICE' || code === 'service-not-allowed') {
-      host.toast('手机未装系统语音服务，点输入框可用输入法语音或打字', 3600);
-      document.getElementById('cmd-input')?.focus();
+      const inp = document.getElementById('cmd-input');
+      if (inp) {
+        inp.placeholder = '点键盘麦克风直接说话，或配 AI 密钥启用内置麦';
+        inp.focus();
+      }
+      host.toast('请点键盘语音键说话，或在 AI 设置填入密钥启用内置录音', 2800);
       return;
     }
     if (code === 'NETWORK' || code === 'network') {
@@ -616,9 +620,33 @@ export function createCommandController(host) {
     return true;
   }
 
-  function stopListening() {
+  let nativeRecActive = false;
+
+  async function stopListening() {
     const nv = nativeVoice();
     if (nv) {
+      if (nativeRecActive) {
+        nativeRecActive = false;
+        setBarListening(false);
+        try {
+          const rec = await nv.stopRecording();
+          if (rec?.ok && rec.base64) {
+            host.toast('正在转写语音…', 2400);
+            const said = await transcribeAudio(rec.base64, rec.mimeType || 'audio/mp4');
+            if (said) {
+              const inp = document.getElementById('cmd-input');
+              if (inp) inp.value = said;
+              const clean = said.replace(WAKE_RE, '$1').trim() || said;
+              run(clean);
+            } else {
+              host.toast('没听清，再说一次吧', 2200);
+            }
+          }
+        } catch (err) {
+          host.toast(err?.message || '语音转写失败，可用键盘语音输入', 2800);
+        }
+        return;
+      }
       try { nv.stopListening(); } catch {}
       setBarListening(false);
       return;
@@ -631,10 +659,19 @@ export function createCommandController(host) {
   async function startListening() {
     const nv = bindNativeVoice();
     if (nv) {
-      if (listening) { stopListening(); return false; }
+      if (listening || nativeRecActive) { await stopListening(); return false; }
       try {
         const res = await nv.startListening();
         if (res?.started) return true;
+        if (res?.code === 'NO_SPEECH_SERVICE' && aiConfigured() && typeof nv.startRecording === 'function') {
+          const rec = await nv.startRecording();
+          if (rec?.started) {
+            nativeRecActive = true;
+            setBarListening(true);
+            host.toast('正在录音，说完轻点麦克风', 2200);
+            return true;
+          }
+        }
         setBarListening(false);
         showVoiceError(res?.code || 'NO_SPEECH_SERVICE');
         return false;

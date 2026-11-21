@@ -27,7 +27,15 @@ try {
   await page.waitForFunction(() => window.__app);
   assert.equal(await page.title(), 'Zone');
   assert.equal(await page.$eval('h1', el => el.textContent), 'Zone');
-  report.checks.push('Mobile startup and Zone heading/title');
+  // First-launch serene Login / Identity Gate
+  assert.equal(await page.$eval('#auth-gate', el => el.classList.contains('hidden')), false, 'auth gate greets first-time user');
+  await sleep(260);
+  await page.screenshot({ path: path.resolve(root, 'test-results/zone-auth-gate.png') });
+  await page.type('#auth-account', 'stroymind@zone.app');
+  await page.click('#auth-submit');
+  await page.waitForFunction(() => document.querySelector('#auth-gate').classList.contains('hidden'));
+  assert.equal(await page.evaluate(() => window.__app.getAuthUser()?.name), 'stroymind');
+  report.checks.push('Mobile startup, serene Login/Identity Gate sign-in, and Zone heading/title');
 
   const chrome = await page.evaluate(() => ({
     gone: ['.appbar', '#btn-search-toggle', '#btn-menu', '.tabbar', '.pane-head', '.pane-intro', '.flow', '.pillars', '.tagline', '#desk-block', '#desk-list', '.sidebar', '.side-mark', '.book-grid', '.cosmos-hud', '#cosmos-stats', '#graph-search-toggle', '#graph-in', '#graph-out'].filter(s => document.querySelector(s)),
@@ -137,7 +145,7 @@ try {
     inView: (() => { const r = document.querySelector('#intent-sheet').getBoundingClientRect(); return r.left >= 0 && r.right <= innerWidth && r.bottom <= innerHeight + 1; })()
   }));
   assert.equal(intent.expanded, 'true');
-  assert.deepEqual(intent.items, ['btn-import', 'btn-intent-search', 'btn-ai-settings']);
+  assert.deepEqual(intent.items, ['btn-import', 'btn-intent-search', 'btn-auth-account', 'btn-ai-settings']);
   assert.equal(intent.fileInput, true); assert.equal(intent.focus, 'btn-import'); assert.equal(intent.inView, true);
   await page.screenshot({ path: path.resolve(root, 'test-results/zone-intent-sheet.png') });
   await page.keyboard.press('ArrowDown');
@@ -400,14 +408,13 @@ try {
 
   await page.$eval('#grid .book[data-id="z-e"]', el => el.scrollIntoView({ block: 'center' }));
   const er = await page.$eval('#grid .book[data-id="z-e"]', el => { const r = el.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
-  await page.mouse.move(er.x, er.y); await page.mouse.down(); await sleep(650); await page.mouse.up();
-  await page.waitForFunction(() => document.querySelector('#library').classList.contains('picking'));
-  assert.equal(await page.$eval('#grid .book[data-id="z-e"]', el => el.getAttribute('aria-pressed')), 'true');
+  await page.mouse.move(er.x, er.y); await page.mouse.down(); await sleep(380);
+  assert.equal(await page.evaluate(() => !!document.querySelector('.drag-ghost')), true, 'long-press lifts card immediately like home-screen app icon');
+  await page.mouse.up();
+  assert.equal(await page.evaluate(() => !document.querySelector('.drag-ghost') && !document.querySelector('#library').classList.contains('picking')), true);
   assert.equal(await page.evaluate(() => document.querySelector('#reader').classList.contains('active')), false);
   assert.equal(await bookCount(), 5);
-  await tap('#btn-done-picked');
-  await page.waitForFunction(() => !document.querySelector('#library').classList.contains('picking') && document.querySelector('#pick-bar').hidden);
-  report.checks.push('Long-press on a row enters selection mode with that row selected (nothing deleted or opened); 完成 exits');
+  report.checks.push('Long-press on a row immediately lifts it as a floating ghost (no forced checkbox pick mode, nothing deleted or opened)');
 
   await enterSelect();
   await tap('.stack-head');
@@ -590,7 +597,7 @@ try {
   await sleep(750);
   await openIntent();
   const graphTiles = await page.evaluate(() => [...document.querySelectorAll('#intent-sheet .menu-item')].filter(b => b.getClientRects().length).map(b => b.id));
-  assert.deepEqual(graphTiles, ['btn-new-note', 'btn-intent-search', 'btn-ai-settings']);
+  assert.deepEqual(graphTiles, ['btn-new-note', 'btn-intent-search', 'btn-auth-account', 'btn-ai-settings']);
   await page.keyboard.press('Escape');
   // Test Impressionist time-of-day mood cycle (auto -> dawn -> day -> dusk -> night -> auto) via voice/command + live motion
   const moodCheck = await page.evaluate(async () => {
@@ -827,12 +834,11 @@ try {
   await page.waitForSelector('.book[data-id="z-v"]');
   await sleep(480);
 
-  // 1) Hold (>=180ms) + Push-Left Book Peek Card
-  const peekPt = await page.$eval('.book[data-id="z-v"]', el => { const r = el.getBoundingClientRect(); return { x: r.left + r.width * 0.72, y: r.top + r.height / 2 }; });
+  // 1) Fluid Horizontal Right-Swipe on a book card -> instant Book Peek Card (no hold delay!)
+  const peekPt = await page.$eval('.book[data-id="z-v"]', el => { const r = el.getBoundingClientRect(); return { x: r.left + r.width * 0.28, y: r.top + r.height / 2 }; });
   await page.mouse.move(peekPt.x, peekPt.y);
   await page.mouse.down();
-  await sleep(230);
-  await page.mouse.move(peekPt.x - 68, peekPt.y, { steps: 6 });
+  await page.mouse.move(peekPt.x + 82, peekPt.y, { steps: 6 });
   await page.mouse.up();
   await page.waitForFunction(() => !document.querySelector('#peek-mask').classList.contains('hidden') && document.querySelector('#pane-shelf').classList.contains('on'));
   const peekCheck = await page.evaluate(() => ({
@@ -847,9 +853,9 @@ try {
   await page.screenshot({ path: path.resolve(root, 'test-results/zone-peek-card.png') });
   await page.click('#peek-close');
   await page.waitForFunction(() => document.querySelector('#peek-mask').classList.contains('hidden'));
-  report.checks.push('Hold + Push-Left on a stream row opens frosted Book Peek card showing current chapter & passage text without switching panes');
+  report.checks.push('Fluid right-swipe on a stream card opens frosted Book Peek card immediately without hold delay or switching panes');
 
-  // 2) Drag-to-Stack: hold >=300ms and drag one book onto another -> auto-merges into a stack!
+  // 2) Home-screen Drag-to-Stack: long-press (~320ms) lifts card -> drop onto another book -> auto-merges into a stack!
   const dragPts = await page.evaluate(() => {
     const a = document.querySelector('.book[data-id="z-v"]').getBoundingClientRect();
     const b = document.querySelector('.book[data-id="z-hw"]').getBoundingClientRect();
@@ -857,14 +863,14 @@ try {
   });
   await page.mouse.move(dragPts.ax, dragPts.ay);
   await page.mouse.down();
-  await sleep(340);
+  await sleep(360);
   await page.mouse.move(dragPts.bx, dragPts.by, { steps: 8 });
   await page.mouse.up();
   await page.waitForFunction(() => window.__app.stacks.list().length === 1 && !!document.querySelector('#toast .toast-undo'));
   // Undo stack merge cleanly
   await page.click('#toast .toast-undo');
   await page.waitForFunction(() => window.__app.stacks.list().length === 0);
-  report.checks.push('Hold + vertical drag of one book row onto another auto-merges them into a Card Stack with 1-tap undo');
+  report.checks.push('Home-screen long-press lift + drag onto another book auto-merges them into a Card Stack with 1-tap undo');
 
   // 3) Fuzzy ASR typo matching («打开黄仁勋的再记» -> 《黄仁勋传》) & Ordinal («打开倒数第二本书»)
   await page.evaluate(() => window.__app.runCommand('打开黄仁勋的再记'));
@@ -902,11 +908,15 @@ try {
   const readerChrome = await page.evaluate(() => ({
     selectBtns: [...document.querySelectorAll('#select-bar button')].map(b => b.textContent),
     barBtns: [...document.querySelectorAll('#bars .btn-row button span')].map(s => s.textContent),
-    readerCmdBar: !!document.querySelector('#reader-cmd-bar')
+    readerCmdBar: !!document.querySelector('#reader-cmd-bar'),
+    noBookmarkStar: !document.querySelector('#btn-bm'),
+    noPanelCloseX: !document.querySelector('#panel-close')
   }));
   assert.deepEqual(readerChrome.selectBtns, ['划线', '想法', '问 AI']);
   assert.deepEqual(readerChrome.barBtns, ['目录', '说一句']);
   assert.equal(readerChrome.readerCmdBar, true);
+  assert.equal(readerChrome.noBookmarkStar, true, 'star bookmark button removed from reader top bar');
+  assert.equal(readerChrome.noPanelCloseX, true, 'old X close button removed from spatial reader drawer');
   // Select across 2 paragraphs in dark mode and highlight
   await page.evaluate(() => {
     const ps = [...document.querySelectorAll('#viewer .txtcols p')].slice(0, 2);

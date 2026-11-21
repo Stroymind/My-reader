@@ -181,9 +181,161 @@ function emptyKnowledge() {
   return wrap;
 }
 
+function findNoteDropTarget(x, y, dragId) {
+  const els = document.elementsFromPoint ? document.elementsFromPoint(x, y) : [];
+  for (const node of els) {
+    if (node.closest?.('.drag-ghost')) continue;
+    const target = node.closest?.('.note-card[data-note-id]');
+    if (target && target.dataset.noteId !== dragId) return target;
+  }
+  return null;
+}
+
+function bindNoteCardGestures(card, note, swipeBg) {
+  let hold = null, sx = 0, sy = 0, pid = null, held = false, swiping = false, dragging = false, dx = 0;
+  let ghost = null, ghostOffX = 0, ghostOffY = 0, hoverTarget = null;
+  const preventTouchScroll = ev => { if (dragging || swiping) ev.preventDefault(); };
+  const clearHold = () => { clearTimeout(hold); hold = null; };
+  const clearHover = () => {
+    if (hoverTarget) {
+      hoverTarget.classList.remove('drop-target');
+      hoverTarget.removeAttribute('data-drop-hint');
+    }
+    hoverTarget = null;
+  };
+  const resetSwipe = () => {
+    swiping = false;
+    dx = 0;
+    card.classList.remove('swiping');
+    card.style.transform = '';
+    if (swipeBg) swipeBg.className = 'swipe-bg';
+    window.removeEventListener('touchmove', preventTouchScroll, { passive: false });
+  };
+  const endDrag = () => {
+    dragging = false;
+    card.classList.remove('dragging');
+    ghost?.remove();
+    ghost = null;
+    clearHover();
+    window.removeEventListener('touchmove', preventTouchScroll, { passive: false });
+  };
+  card.addEventListener('pointerdown', e => {
+    if (e.button != null && e.button !== 0) return;
+    sx = e.clientX; sy = e.clientY; pid = e.pointerId;
+    held = false; swiping = false; dragging = false; dx = 0;
+    clearHold();
+    hold = setTimeout(() => {
+      hold = null;
+      if (swiping || dragging || pid !== e.pointerId) return;
+      dragging = true;
+      held = true;
+      const rect = card.getBoundingClientRect();
+      ghostOffX = sx - rect.left;
+      ghostOffY = sy - rect.top;
+      ghost = card.cloneNode(true);
+      ghost.className = 'note-card drag-ghost';
+      ghost.style.width = rect.width + 'px';
+      ghost.style.transform = `translate3d(${rect.left}px, ${rect.top}px, 0) scale(1.03)`;
+      document.body.appendChild(ghost);
+      card.classList.add('dragging');
+      try { navigator.vibrate?.(16); } catch {}
+      try { card.setPointerCapture(e.pointerId); } catch {}
+      window.addEventListener('touchmove', preventTouchScroll, { passive: false });
+    }, 320);
+  });
+  card.addEventListener('pointermove', e => {
+    if (pid !== e.pointerId) return;
+    const mx = e.clientX - sx, my = e.clientY - sy;
+    if (!swiping && !dragging) {
+      if (Math.abs(mx) > 10 && Math.abs(mx) > Math.abs(my) * 1.25) {
+        clearHold();
+        swiping = true;
+        card.classList.add('swiping');
+        try { card.setPointerCapture(e.pointerId); } catch {}
+        window.addEventListener('touchmove', preventTouchScroll, { passive: false });
+      } else if (Math.abs(mx) > 10 || Math.abs(my) > 10) {
+        clearHold();
+      }
+    }
+    if (swiping) {
+      dx = Math.max(-108, Math.min(108, mx));
+      card.style.transform = `translate3d(${dx}px, 0, 0)`;
+      if (swipeBg) {
+        swipeBg.classList.toggle('show', Math.abs(dx) > 14);
+        swipeBg.classList.toggle('dir-right', dx > 14);
+        swipeBg.classList.toggle('dir-left', dx < -14);
+      }
+    } else if (dragging && ghost) {
+      ghost.style.transform = `translate3d(${e.clientX - ghostOffX}px, ${e.clientY - ghostOffY}px, 0) scale(1.03)`;
+      const hit = findNoteDropTarget(e.clientX, e.clientY, note.id);
+      if (hit !== hoverTarget) {
+        clearHover();
+        hoverTarget = hit;
+        if (hoverTarget) {
+          hoverTarget.classList.add('drop-target');
+          hoverTarget.setAttribute('data-drop-hint', '松手连接');
+        }
+      }
+    }
+  });
+  const finish = async e => {
+    if (pid !== e.pointerId) return;
+    pid = null;
+    clearHold();
+    if (swiping) {
+      const dir = e.type === 'pointerup' ? (dx >= 56 ? 'right' : dx <= -56 ? 'left' : null) : null;
+      resetSwipe();
+      held = true;
+      if (dir === 'right') {
+        state.focusId = note.id;
+        showPane('graph', { whisper: true });
+        requestAnimationFrame(() => {
+          renderGraph(false);
+          cosmos?.focus(note.id, true);
+          renderGraphCard();
+        });
+      } else if (dir === 'left') {
+        if (confirm(`删除「${note.title || '未命名'}」？`)) {
+          const bookId = note.bookId;
+          await deleteNote(note.id);
+          if (bookId) api.onHighlightsChanged(bookId);
+          await refreshWorkspace();
+          api.toast('已删除');
+        }
+      }
+    } else if (dragging) {
+      const drop = e.type === 'pointerup' ? (hoverTarget || findNoteDropTarget(e.clientX, e.clientY, note.id)) : null;
+      endDrag();
+      held = true;
+      if (drop?.dataset?.noteId && drop.dataset.noteId !== note.id) {
+        const targetId = drop.dataset.noteId;
+        const targetNote = state.notes.find(n => n.id === targetId);
+        await linkNotes(note.id, targetId);
+        await refreshWorkspace();
+        api.toast(`已与「${targetNote?.title || '目标笔记'}」建立星海连接`, 3400, async () => {
+          await unlinkPair(note.id, targetId);
+          await refreshWorkspace();
+        });
+      }
+    }
+  };
+  card.addEventListener('pointerup', finish);
+  card.addEventListener('pointercancel', finish);
+  card.addEventListener('contextmenu', e => e.preventDefault());
+  card.onclick = () => {
+    if (held) { held = false; return; }
+    openEditor(note.id);
+  };
+}
+
 function noteCard(note) {
+  const wrap = h('div', 'note-wrap');
+  const swipeBg = h('div', 'swipe-bg');
+  swipeBg.setAttribute('aria-hidden', 'true');
+  swipeBg.append(h('span', 'swipe-act left-side', '星海'), h('span', 'swipe-act right-side', '删除'));
   const card = h('button', 'note-card kind-' + kindOf(note));
   card.type = 'button';
+  card.dataset.noteId = note.id;
   const top = h('div', 'note-top');
   top.append(h('span', 'kind', kindLabel(note)));
   if (note.bookTitle) top.append(h('span', 'src', note.bookTitle));
@@ -195,8 +347,9 @@ function noteCard(note) {
     for (const tag of note.tags) row.append(h('span', '', '#' + tag));
     card.append(row);
   }
-  card.onclick = () => openEditor(note.id);
-  return card;
+  bindNoteCardGestures(card, note, swipeBg);
+  wrap.append(swipeBg, card);
+  return wrap;
 }
 
 function relatedOf(id) {

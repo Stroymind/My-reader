@@ -77,3 +77,42 @@ export function askText(question, quote, context = '') {
 export function testAi(override) {
   return complete([{ role: 'user', content: '只回复这四个字：已经连通' }], override);
 }
+
+export async function transcribeAudio(base64, mimeType = 'audio/mp4') {
+  const cfg = getAiConfig();
+  if (!cfg.apiKey) {
+    const err = new Error('尚未配置密钥');
+    err.code = 'NO_KEY';
+    throw err;
+  }
+  const base = String(cfg.baseUrl || '').replace(/\/+$/, '');
+  if (!/^https?:\/\//i.test(base)) throw new Error('接口地址需要以 http:// 或 https:// 开头');
+  const bin = atob(base64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  const blob = new Blob([bytes], { type: mimeType });
+  const fd = new FormData();
+  fd.append('file', blob, 'voice.m4a');
+  const lower = base.toLowerCase();
+  const sttModel = lower.includes('siliconflow') ? 'FunAudioLLM/SenseVoiceSmall'
+    : lower.includes('groq') ? 'whisper-large-v3-turbo'
+      : 'whisper-1';
+  fd.append('model', sttModel);
+  fd.append('language', 'zh');
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 25000);
+  let res, data = {};
+  try {
+    res = await fetch(base + '/audio/transcriptions', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + cfg.apiKey },
+      body: fd,
+      signal: ctrl.signal
+    });
+    data = await res.json().catch(() => ({}));
+  } finally {
+    clearTimeout(timer);
+  }
+  if (!res.ok) throw new Error(data?.error?.message || ('语音识别失败（' + res.status + '）'));
+  return String(data?.text || '').trim();
+}

@@ -288,16 +288,25 @@ function findDropTarget(x, y, dragId) {
   return null;
 }
 
-function bindShelfBook(el, b) {
-  let hold = null, sx = 0, sy = 0, t0 = 0, pid = null, held = false, peeking = false, dragging = false, dx = 0;
+function bindShelfBook(el, b, stack, swipeBg) {
+  let hold = null, sx = 0, sy = 0, pid = null, held = false, swiping = false, dragging = false, dx = 0;
   let ghost = null, ghostOffX = 0, ghostOffY = 0, hoverTarget = null;
+  const preventTouchScroll = ev => { if (dragging || swiping) ev.preventDefault(); };
   const clearHold = () => { clearTimeout(hold); hold = null; };
-  const clearHover = () => { hoverTarget?.el?.classList.remove('drop-target'); hoverTarget = null; };
-  const resetPeek = () => {
-    peeking = false;
+  const clearHover = () => {
+    if (hoverTarget?.el) {
+      hoverTarget.el.classList.remove('drop-target');
+      hoverTarget.el.removeAttribute('data-drop-hint');
+    }
+    hoverTarget = null;
+  };
+  const resetSwipe = () => {
+    swiping = false;
     dx = 0;
-    el.classList.remove('peeking');
+    el.classList.remove('swiping');
     el.style.transform = '';
+    if (swipeBg) swipeBg.className = 'swipe-bg';
+    window.removeEventListener('touchmove', preventTouchScroll, { passive: false });
   };
   const endDrag = () => {
     dragging = false;
@@ -305,59 +314,69 @@ function bindShelfBook(el, b) {
     ghost?.remove();
     ghost = null;
     clearHover();
+    window.removeEventListener('touchmove', preventTouchScroll, { passive: false });
+  };
+  const startLiftDrag = (clientX, clientY, pointerId) => {
+    dragging = true;
+    held = true;
+    const rect = el.getBoundingClientRect();
+    ghostOffX = clientX - rect.left;
+    ghostOffY = clientY - rect.top;
+    ghost = el.cloneNode(true);
+    ghost.className = 'book drag-ghost';
+    ghost.style.width = rect.width + 'px';
+    ghost.style.transform = `translate3d(${rect.left}px, ${rect.top}px, 0) scale(1.03)`;
+    document.body.appendChild(ghost);
+    el.classList.add('dragging');
+    try { navigator.vibrate?.(16); } catch {}
+    try { el.setPointerCapture(pointerId); } catch {}
+    window.addEventListener('touchmove', preventTouchScroll, { passive: false });
   };
   el.addEventListener('pointerdown', e => {
     if (e.button != null && e.button !== 0) return;
-    sx = e.clientX; sy = e.clientY; t0 = Date.now(); pid = e.pointerId;
-    held = false; peeking = false; dragging = false; dx = 0;
+    sx = e.clientX; sy = e.clientY; pid = e.pointerId;
+    held = false; swiping = false; dragging = false; dx = 0;
     clearHold();
     if (pickMode) return;
+    // 像手机桌面 APP 一样：长按约 320ms 立即浮起卡片，拖到另一张卡片或卡片堆上直接叠合
     hold = setTimeout(() => {
       hold = null;
-      if (peeking || dragging) return;
-      held = true;
-      startPick(b.id);
-    }, 560);
+      if (swiping || dragging || pid !== e.pointerId) return;
+      startLiftDrag(sx, sy, e.pointerId);
+    }, 320);
   });
   el.addEventListener('pointermove', e => {
     if (pid !== e.pointerId || pickMode) return;
     const mx = e.clientX - sx, my = e.clientY - sy;
-    const dt = Date.now() - t0;
-    if (!peeking && !dragging) {
-      const pushOk = settings.leftHand ? (mx > 14 || mx < -14) : (mx < -14);
-      if (dt >= 180 && pushOk && Math.abs(mx) > Math.abs(my) * 1.2) {
+    if (!swiping && !dragging) {
+      if (Math.abs(mx) > 10 && Math.abs(mx) > Math.abs(my) * 1.25) {
         clearHold();
-        peeking = true;
-        el.classList.add('peeking');
+        swiping = true;
+        el.classList.add('swiping');
         try { el.setPointerCapture(e.pointerId); } catch {}
-      } else if (dt >= 300 && Math.abs(my) > 16 && Math.abs(my) >= Math.abs(mx)) {
-        // 长按后上下拖拽：浮起卡片，叠放到另一本书或卡片堆上自动合并
-        clearHold();
-        dragging = true;
-        const rect = el.getBoundingClientRect();
-        ghostOffX = e.clientX - rect.left;
-        ghostOffY = e.clientY - rect.top;
-        ghost = el.cloneNode(true);
-        ghost.className = 'book drag-ghost';
-        ghost.style.width = rect.width + 'px';
-        ghost.style.transform = `translate3d(${rect.left}px, ${rect.top}px, 0) scale(1.02)`;
-        document.body.appendChild(ghost);
-        el.classList.add('dragging');
-        try { el.setPointerCapture(e.pointerId); } catch {}
-      } else if (Math.abs(mx) > 12 || Math.abs(my) > 12) {
+        window.addEventListener('touchmove', preventTouchScroll, { passive: false });
+      } else if (Math.abs(mx) > 10 || Math.abs(my) > 10) {
         clearHold();
       }
     }
-    if (peeking) {
-      dx = settings.leftHand ? Math.max(-88, Math.min(88, mx)) : Math.max(-88, Math.min(0, mx));
+    if (swiping) {
+      dx = Math.max(-108, Math.min(108, mx));
       el.style.transform = `translate3d(${dx}px, 0, 0)`;
+      if (swipeBg) {
+        swipeBg.classList.toggle('show', Math.abs(dx) > 14);
+        swipeBg.classList.toggle('dir-right', dx > 14);
+        swipeBg.classList.toggle('dir-left', dx < -14);
+      }
     } else if (dragging && ghost) {
-      ghost.style.transform = `translate3d(${e.clientX - ghostOffX}px, ${e.clientY - ghostOffY}px, 0) scale(1.02)`;
+      ghost.style.transform = `translate3d(${e.clientX - ghostOffX}px, ${e.clientY - ghostOffY}px, 0) scale(1.03)`;
       const hit = findDropTarget(e.clientX, e.clientY, b.id);
       if (hit?.el !== hoverTarget?.el) {
         clearHover();
         hoverTarget = hit;
-        hoverTarget?.el?.classList.add('drop-target');
+        if (hoverTarget?.el) {
+          hoverTarget.el.classList.add('drop-target');
+          hoverTarget.el.setAttribute('data-drop-hint', hoverTarget.kind === 'stack' ? '松手并入' : '松手叠合');
+        }
       }
     }
   });
@@ -365,12 +384,23 @@ function bindShelfBook(el, b) {
     if (pid !== e.pointerId) return;
     pid = null;
     clearHold();
-    if (peeking) {
-      const triggered = e.type === 'pointerup' && Math.abs(dx) >= 44;
-      resetPeek();
+    if (swiping) {
+      const dir = e.type === 'pointerup' ? (dx >= 56 ? 'right' : dx <= -56 ? 'left' : null) : null;
+      resetSwipe();
       held = true;
       peekSwipedAt = Date.now();
-      if (triggered) openBookPeek(b);
+      if (dir === 'right') {
+        openBookPeek(b);
+      } else if (dir === 'left') {
+        if (stack) {
+          removeFromStacks([b.id]);
+          const still = getStack(stack.id);
+          toast(still ? `已移出「${stack.name}」` : `「${stack.name}」只剩一项，已散开`);
+          await renderLibrary(still ? { anchor: 'stack:' + stack.id, focus: 'stack:' + stack.id } : { anchor: 'book:' + b.id, focus: 'book:' + b.id });
+        } else {
+          await deleteBooks([b]);
+        }
+      }
     } else if (dragging) {
       const drop = e.type === 'pointerup' ? (hoverTarget || findDropTarget(e.clientX, e.clientY, b.id)) : null;
       endDrag();
@@ -499,9 +529,12 @@ function bookRow(b, stack, i = 0) {
   if (b.progress > 0) side = node('span', 'pct', fmtPct(b.progress));
   else if (!b.lastOpened) { side = node('span', 'dot'); side.appendChild(node('span', 'sr', '未读')); }
   else side = node('span', 'pct', '');
+  const swipeBg = node('div', 'swipe-bg');
+  swipeBg.setAttribute('aria-hidden', 'true');
+  swipeBg.append(node('span', 'swipe-act left-side', '透视'), node('span', 'swipe-act right-side', stack ? '移出堆' : '删除'));
   el.append(tick, avatarNode(b), meta, side);
-  bindShelfBook(el, b);
-  wrap.appendChild(el);
+  bindShelfBook(el, b, stack, swipeBg);
+  wrap.append(swipeBg, el);
   if (stack && !pickMode) {
     const out = node('button', 'row-out');
     out.type = 'button';
@@ -909,12 +942,12 @@ let command = null;
   if (!lib) return;
   let sx = 0, sy = 0, st = 0, pid = null, atTop = false, edge = false;
   const blocked = () => pickMode || !lib.classList.contains('active')
-    || ['#ai-mask', '#note-mask', '#settings-mask', '#stack-mask', '#intent-mask', '#command-mask', '#peek-mask', '#lib-panel', '#note-editor']
+    || ['#auth-gate', '#ai-mask', '#note-mask', '#settings-mask', '#stack-mask', '#intent-mask', '#command-mask', '#peek-mask', '#lib-panel', '#note-editor']
       .some(sel => { const el = document.querySelector(sel); return el && !el.classList.contains('hidden'); });
   lib.addEventListener('pointerdown', e => {
     if (e.button != null && e.button !== 0) return;
     if (blocked()) return;
-    if (e.target.closest('input, textarea, select, #spatial-bar, .stack-menu, .graph-card, .hud-search')) return;
+    if (e.target.closest('input, textarea, select, #spatial-bar, .stack-menu, .graph-card, .hud-search, .book, .note-card')) return;
     const pane = currentPane();
     edge = e.clientX <= 28 || e.clientX >= window.innerWidth - 28;
     if (pane === 'graph' && !edge) return;
@@ -1479,7 +1512,38 @@ async function openReaderPanel(tab = 'toc') {
   openPanel('目录', nodes, 'toc');
   $('#panel-body').querySelector('.cur')?.scrollIntoView({ block: 'center' });
 }
-$('#panel-close').onclick = () => $('#panel').classList.add('hidden');
+$('#panel-close')?.addEventListener('click', () => $('#panel').classList.add('hidden'));
+$('#panel-backdrop')?.addEventListener('click', () => $('#panel').classList.add('hidden'));
+(function bindPanelSwipeClose() {
+  const head = document.querySelector('#panel .panel-head');
+  const grip = $('#panel-grip');
+  const sheet = document.querySelector('#panel .panel-sheet');
+  if (!sheet) return;
+  let sy = 0, pid = null, dy = 0;
+  const onDown = e => {
+    if (e.button != null && e.button !== 0) return;
+    sy = e.clientY; pid = e.pointerId; dy = 0;
+    sheet.style.transition = 'none';
+  };
+  const onMove = e => {
+    if (pid !== e.pointerId) return;
+    dy = Math.max(0, e.clientY - sy);
+    sheet.style.transform = `translate3d(0, ${dy}px, 0)`;
+  };
+  const onUp = e => {
+    if (pid !== e.pointerId) return;
+    pid = null;
+    sheet.style.transition = '';
+    sheet.style.transform = '';
+    if (e.type === 'pointerup' && dy > 76) $('#panel').classList.add('hidden');
+  };
+  for (const h of [head, grip].filter(Boolean)) {
+    h.addEventListener('pointerdown', onDown);
+    h.addEventListener('pointermove', onMove);
+    h.addEventListener('pointerup', onUp);
+    h.addEventListener('pointercancel', onUp);
+  }
+})();
 document.querySelectorAll('#panel-tabs [data-ptab]').forEach(btn => {
   btn.onclick = () => openReaderPanel(btn.dataset.ptab);
 });
@@ -2164,4 +2228,43 @@ $('#intent-mic')?.addEventListener('click', () => command.openBar({ listen: true
 })();
 $('#btn-reader-voice')?.addEventListener('click', () => { setBars(false); command.openBar({ listen: speechSupported() }); });
 
-window.__app = { db, openBook, closeBook, importFiles, handleBack, get engine() { return engine; }, renderLibrary, stacks: { list: listStacks }, runCommand: text => command.run(text), openCommand: opts => command.openBar(opts), openPeek: openBookPeek, closePeek: closeBookPeek };
+/* ---------------- 极简登录 / 身份空间 ---------------- */
+const AUTH_KEY = 'zone-auth';
+function getAuthUser() {
+  try { return JSON.parse(localStorage.getItem(AUTH_KEY) || 'null'); } catch { return null; }
+}
+function syncAuthLabel() {
+  const u = getAuthUser();
+  const lbl = $('#intent-auth-label');
+  if (lbl) lbl.textContent = u ? (u.mode === 'guest' ? '本地空间 · 登录' : `${u.name} · 切换`) : '登录 / 账号';
+}
+function openAuthGate() {
+  const gate = $('#auth-gate');
+  if (!gate) return;
+  const u = getAuthUser();
+  const inp = $('#auth-account');
+  if (inp) inp.value = u && u.mode !== 'guest' ? (u.account || u.name || '') : '';
+  gate.classList.remove('hidden');
+}
+function completeAuth(account, mode = 'account') {
+  const clean = String(account || '').trim();
+  const user = mode === 'guest'
+    ? { name: '本地空间', account: '', mode: 'guest', at: Date.now() }
+    : { name: clean.includes('@') ? clean.split('@')[0] : clean, account: clean, mode: 'account', at: Date.now() };
+  try { localStorage.setItem(AUTH_KEY, JSON.stringify(user)); } catch {}
+  $('#auth-gate')?.classList.add('hidden');
+  syncAuthLabel();
+  toast(mode === 'guest' ? '已进入本地空间' : `欢迎回来，${user.name}`);
+}
+$('#auth-form')?.addEventListener('submit', e => {
+  e.preventDefault();
+  const val = ($('#auth-account')?.value || '').trim();
+  if (!val) { toast('请输入手机号、邮箱或昵称，或直接点下方进入'); $('#auth-account')?.focus(); return; }
+  completeAuth(val, 'account');
+});
+$('#auth-guest')?.addEventListener('click', () => completeAuth('', 'guest'));
+$('#btn-auth-account')?.addEventListener('click', () => openAuthGate());
+syncAuthLabel();
+if (!getAuthUser()) openAuthGate();
+
+window.__app = { db, openBook, closeBook, importFiles, handleBack, get engine() { return engine; }, renderLibrary, stacks: { list: listStacks }, runCommand: text => command.run(text), openCommand: opts => command.openBar(opts), openPeek: openBookPeek, closePeek: closeBookPeek, openAuthGate, getAuthUser };
