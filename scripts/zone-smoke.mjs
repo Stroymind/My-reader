@@ -52,8 +52,24 @@ try {
   await page.click('#zone-bots-mask [data-tab="plugins"]');
   await sleep(220);
   await page.screenshot({ path: path.resolve(root, 'test-results/zone-plugins-tab.png') });
+  // Verify 阅读器 plugin toggle REALLY hides/restores books & reader chrome
+  await page.click('#zone-bots-mask label.ios-switch:has([data-toggle="reading-cosmos"])');
+  await sleep(160);
+  assert.equal(await page.evaluate(() => document.documentElement.classList.contains('plugin-reader-off')), true, 'toggling 阅读器 off really hides reader');
+  await page.click('#zone-bots-mask label.ios-switch:has([data-toggle="reading-cosmos"])');
+  await sleep(160);
+  assert.equal(await page.evaluate(() => document.documentElement.classList.contains('plugin-reader-off')), false, 'toggling 阅读器 on restores reader');
   await page.click('#zone-bots-mask [data-act="close"]');
   await page.waitForFunction(() => document.querySelector('#zone-bots-mask').classList.contains('hidden'));
+  // Verify Bot REALLY chats right from the home capsule
+  await page.type('#zone-hero-input', '你好，帮我规划今天');
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(() => !document.querySelector('#zone-chat-box').classList.contains('hidden') && document.querySelectorAll('#zone-chat-box .chat-row').length >= 2);
+  await sleep(260);
+  await page.screenshot({ path: path.resolve(root, 'test-results/zone-bot-chat.png') });
+  // Clean up test chat thread so subsequent stream checks start spotless
+  await page.click('#zone-chat-box .agent-chat-tools button:nth-child(2)');
+  await sleep(120);
   report.checks.push('Mobile startup, zero-button Spatial Z Portal entry, pure Apple Zone Agent Home, Bot Studio, Plugin Switches, and Zone heading/title');
 
   const chrome = await page.evaluate(() => ({

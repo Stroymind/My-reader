@@ -55,9 +55,12 @@ export async function complete(messages, override) {
     clearTimeout(timer);
   }
   if (!res.ok) throw new Error(data?.error?.message || ('请求失败（' + res.status + '）'));
-  const text = data?.choices?.[0]?.message?.content;
+  const msgObj = data?.choices?.[0]?.message || {};
+  const text = msgObj.content;
+  const reasoning = msgObj.reasoning_content;
   if (!text) throw new Error('模型没有返回文字');
-  return String(text).trim();
+  const out = String(text).trim();
+  return reasoning ? `<think>${String(reasoning).trim()}</think>\n${out}` : out;
 }
 
 export function explainText(quote, context = '') {

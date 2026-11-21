@@ -414,8 +414,8 @@ export function openBotStudio({ onSelect, onStatus, onLaunchPlugin, onRunAutomat
           if (e.target.closest('[data-edit]')) return;
           const b = setActiveBot(row.dataset.pick);
           onSelect?.(b);
-          onStatus?.(`已切换为「${b.name}」`);
-          draw();
+          onStatus?.(`已切换为「${b.name}」，直接输入即可对话`);
+          mask.classList.add('hidden');
         };
       });
       mask.querySelectorAll('[data-edit]').forEach(btn => {
@@ -433,7 +433,13 @@ export function openBotStudio({ onSelect, onStatus, onLaunchPlugin, onRunAutomat
           if (hit) {
             hit.enabled = chk.checked;
             saveAutomations(next);
-            onStatus?.(`定时任务「${hit.name}」已${hit.enabled ? '启用' : '暂停'}`);
+            onStatus?.(`定时任务「${hit.name}」已${hit.enabled ? '启用，正在拉取最新推送…' : '关闭'}`);
+            if (hit.enabled && onRunAutomation) {
+              mask.classList.add('hidden');
+              onRunAutomation(hit, { fromToggle: true });
+            } else if (!hit.enabled && onRunAutomation) {
+              onRunAutomation(hit, { disabled: true });
+            }
           }
         };
       });
@@ -464,7 +470,7 @@ export function openBotStudio({ onSelect, onStatus, onLaunchPlugin, onRunAutomat
             hit.enabled = chk.checked;
             savePlugins(next);
             onStatus?.(`${hit.name}已${hit.enabled ? '开启' : '关闭'}`);
-            if (hit.enabled && hit.launchable && onLaunchPlugin) {
+            if (hit.enabled && hit.launchable && id !== 'reading-cosmos' && onLaunchPlugin) {
               mask.classList.add('hidden');
               onLaunchPlugin(hit.id);
             }

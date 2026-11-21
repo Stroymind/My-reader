@@ -2,18 +2,18 @@ import * as pdfjsLib from './vendor/pdf.min.mjs';
 import { db } from './db.js';
 import { importArticleUrl, importBlob, importFiles, parseManifest, applyManifestToLibrary } from './importer.js';
 import { findAndFetchBook, getOpdsUrl, setOpdsUrl } from './book-finder.js';
-import { initSichao, setSichaoApi } from './sichao.js';
+import { fetchLiveSignals, initSichao, setSichaoApi } from './sichao.js';
 import { getPhoneUseStatus, openPhoneUseSettings, runPhoneUseTask } from './phone-use.js';
 import { closeMicroApp, consumeLaunchDeepLink, craftMicroApp, isMicroAppOpen, listMicroApps, openMicroApp, pinToDesktop } from './agent-surface.js';
-import { applyThemePlugin, closeBotStudio, getActiveBot, getActiveThemePlugin, listBots, openBotStudio, renderBotSvg, setActiveBot, syncToAndroidWidget } from './bots.js';
+import { applyThemePlugin, closeBotStudio, getActiveBot, getActiveThemePlugin, isPluginEnabled, listBots, openBotStudio, renderBotSvg, setActiveBot, syncToAndroidWidget } from './bots.js';
 import { BookletEngine, EpubEngine, PdfEngine, TxtEngine } from './engines.js';
-import { aiConfigured, complete as aiComplete } from './ai.js';
+import { aiConfigured, complete as aiComplete, getAiConfig } from './ai.js';
 import { settings, saveSettings, applyBodyTheme, applyAppearance, appearancePref, cycleAppearance, applyCustomFontBlob, FONTS, THEMES } from './settings.js';
 import { isMostlyCjk, translateVisible } from './bilingual.js';
 import { backfillFromBooks, createNote, deleteBookBundle, parseTags, syncBook } from './knowledge.js';
 import { addToStack, createStack, defaultStackName, dissolveStack, getStack, listStacks, reconcileStacks, removeFromStacks, renameStack, setStackCollapsed } from './stacks.js';
 import { createDecisionNote, dismissAssistant, exploreCosmos, exportOutline, fitGraph, focusGraphNeighborhood, focusStarByQuery, getGraphMood, getGraphTilt, initWorkspace, linkFocusedStarTo, openAiSettingsDialog, openAssistant, refreshWorkspace, searchGraph, setGraphMood, setGraphSearch, setGraphTilt, setKnowledgeFind, showPane, workspaceHandleBack, zoomGraph } from './workspace.js';
-import { createCommandController, fuzzyScore, speechSupported } from './command.js';
+import { createCommandController, fuzzyScore, parseNaturalCommands, speechSupported } from './command.js';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = './vendor/pdf.worker.min.mjs';
 const $ = s => document.querySelector(s);
@@ -759,7 +759,9 @@ function closeShelfFind() {
 async function renderLibrary(opts = {}) {
   if (!opts || opts instanceof Event) opts = {};
   const books = await db.all('books');
-  $('#zone-agent-hub')?.classList.toggle('compact', books.length > 0);
+  const readerOn = isPluginEnabled('reading-cosmos');
+  document.documentElement.classList.toggle('plugin-reader-off', !readerOn);
+  $('#zone-agent-hub')?.classList.toggle('compact', readerOn && books.length > 0);
   const live = new Set(books.map(b => b.id));
   for (const id of [...picked]) if (!live.has(id)) picked.delete(id);
   if (pickMode && !books.length) { pickMode = false; picked.clear(); }
@@ -2361,27 +2363,9 @@ command = createCommandController({
       case 'askAi': {
         const pageTxt = reading ? (engine?.pageText?.() || '').trim().slice(0, 1200) : '';
         const q = a.question || '总结这一段';
-        if (!reading && aiConfigured()) {
-          const bot = getActiveBot();
-          const thread = ensureActiveTaskThread(q, bot.id);
-          thread.messages.push({ role: 'user', content: q });
-          saveTaskThreads();
-          renderTaskThreadUI();
-          showAgentLiveCard({ title: `${bot.name} · ${thread.title}`, body: '思考中…', threadId: thread.id });
-          try {
-            const sys = bot.rules ? [{ role: 'system', content: bot.rules }] : [];
-            const ans = await aiComplete([...sys, ...thread.messages.slice(-12)]);
-            const reply = String(ans || '未收到回复');
-            thread.messages.push({ role: 'assistant', content: reply });
-            thread.updatedAt = Date.now();
-            saveTaskThreads();
-            renderTaskThreadUI();
-            showAgentLiveCard({ title: `${bot.name} · ${thread.title}`, body: reply, threadId: thread.id });
-            return { label: `${bot.name} 已回复` };
-          } catch (err) {
-            showAgentLiveCard({ title: `${bot.name} · 调用失败`, body: err?.message || '请检查你的 AI API Key 与网络', threadId: thread.id });
-            return { label: 'AI 调用失败' };
-          }
+        if (!reading) {
+          await chatWithActiveBot(q);
+          return { label: `${getActiveBot().name} 已回复` };
         }
         openAssistant({
           title: q.slice(0, 18),
@@ -2664,6 +2648,7 @@ command = createCommandController({
         return { label: clean ? `已绑定本地电脑桥接：${clean}` : '已断开本地电脑桥接' };
       }
       case 'computerUse': {
+        if (!isPluginEnabled('computer-use')) return { label: '「Computer-Use」插件已关闭，打开开关即可使用' };
         const bridge = (() => { try { return localStorage.getItem('zone-cu-bridge') || ''; } catch { return ''; } })();
         if (!bridge) {
           toast('请先说「连接电脑 http://你的电脑地址:端口」绑定本地桌面桥接节点', 3600);
@@ -2672,9 +2657,16 @@ command = createCommandController({
         const goal = String(a.goal || '').trim();
         showAgentLiveCard({ title: 'Computer-Use · 远程执行中', body: `正在向本地电脑 (${bridge}) 下发任务：${goal}` });
         try {
+          const aiCfg = getAiConfig();
+          const hdrs = { 'Content-Type': 'application/json' };
+          if (aiCfg?.apiKey) {
+            hdrs['X-User-Api-Key'] = aiCfg.apiKey;
+            hdrs['X-User-Base-Url'] = aiCfg.baseUrl || '';
+            hdrs['X-User-Model'] = aiCfg.model || '';
+          }
           const r = await fetch(`${bridge}/api/computer-use/run`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: hdrs,
             body: JSON.stringify({ goal, bot: getActiveBot().name, rules: getActiveBot().rules || '' })
           });
           const data = await r.json().catch(() => ({}));
@@ -2722,6 +2714,7 @@ command = createCommandController({
         return { label: go ? '已打开系统无障碍设置' : '已取消' };
       }
       case 'phoneUse': {
+        if (!isPluginEnabled('phone-use')) return { label: '「Phone-Use」插件已关闭，打开开关即可使用' };
         const goal = String(a.goal || '').trim();
         if (!goal) return { label: '请说出要帮你在手机上执行的任务' };
         toast(`控屏启动：${goal.slice(0, 18)}…`);
@@ -2896,6 +2889,123 @@ function ensureActiveTaskThread(seedTitle, botId) {
   return t;
 }
 
+function renderChatBox(thread, pendingText = '') {
+  const box = $('#zone-chat-box');
+  if (!box) return;
+  if (!thread) { box.classList.add('hidden'); return; }
+  const bot = listBots().find(b => b.id === thread.botId) || getActiveBot();
+  box.replaceChildren();
+
+  const head = document.createElement('div');
+  head.className = 'agent-chat-head';
+  const who = document.createElement('div');
+  who.className = 'agent-chat-who';
+  who.innerHTML = renderBotSvg(bot.shape, bot.accent);
+  const titleSpan = document.createElement('span');
+  titleSpan.textContent = `${bot.name} · ${thread.title}`;
+  who.appendChild(titleSpan);
+
+  const tools = document.createElement('div');
+  tools.className = 'agent-chat-tools';
+  const bNew = document.createElement('button');
+  bNew.type = 'button'; bNew.textContent = '新对话';
+  bNew.onclick = () => { activeThreadId = null; box.classList.add('hidden'); renderTaskThreadUI(); $('#zone-hero-input')?.focus(); };
+  const bArch = document.createElement('button');
+  bArch.type = 'button'; bArch.textContent = '归档';
+  bArch.onclick = () => {
+    taskThreads = taskThreads.filter(x => x.id !== thread.id);
+    if (activeThreadId === thread.id) activeThreadId = null;
+    saveTaskThreads(); box.classList.add('hidden'); renderTaskThreadUI();
+  };
+  const bHide = document.createElement('button');
+  bHide.type = 'button'; bHide.textContent = '收起';
+  bHide.onclick = () => box.classList.add('hidden');
+  tools.append(bNew, bArch, bHide);
+  head.append(who, tools);
+  box.appendChild(head);
+
+  const listEl = document.createElement('div');
+  listEl.className = 'agent-chat-list';
+  const allMsgs = pendingText ? [...thread.messages, { role: 'assistant', content: pendingText, pending: true }] : thread.messages;
+  for (const m of allMsgs) {
+    const row = document.createElement('div');
+    row.className = 'chat-row ' + (m.role === 'user' ? 'user' : 'bot');
+    if (m.role !== 'user') {
+      const av = document.createElement('div');
+      av.className = 'chat-mini-av';
+      av.innerHTML = renderBotSvg(bot.shape, bot.accent);
+      row.appendChild(av);
+    }
+    const bub = document.createElement('div');
+    bub.className = 'chat-bubble';
+    const raw = String(m.content || '');
+    const thinkM = raw.match(/^<think>([\s\S]*?)<\/think>\s*([\s\S]*)$/);
+    if (thinkM) {
+      const det = document.createElement('details');
+      det.className = 'chat-think';
+      const sum = document.createElement('summary');
+      sum.textContent = '思考过程 ▾';
+      const tp = document.createElement('p');
+      tp.textContent = thinkM[1].trim();
+      det.append(sum, tp);
+      bub.appendChild(det);
+      bub.appendChild(document.createTextNode(thinkM[2].trim()));
+    } else {
+      bub.textContent = raw;
+    }
+    if (m.needKey) {
+      const cta = document.createElement('button');
+      cta.type = 'button';
+      cta.className = 'chat-cta';
+      cta.textContent = '配置我的 API Key';
+      cta.onclick = () => openAiSettingsDialog();
+      bub.appendChild(document.createElement('br'));
+      bub.appendChild(cta);
+    }
+    row.appendChild(bub);
+    listEl.appendChild(row);
+  }
+  box.appendChild(listEl);
+  box.classList.remove('hidden');
+  requestAnimationFrame(() => { listEl.scrollTop = listEl.scrollHeight; });
+}
+
+async function chatWithActiveBot(text) {
+  const q = String(text || '').trim();
+  if (!q) return;
+  const bot = getActiveBot();
+  const thread = ensureActiveTaskThread(q, bot.id);
+  thread.botId = bot.id;
+  thread.messages.push({ role: 'user', content: q });
+  thread.updatedAt = Date.now();
+  saveTaskThreads();
+  renderTaskThreadUI();
+  if (!aiConfigured()) {
+    thread.messages.push({
+      role: 'assistant',
+      content: `你好，我是 ${bot.name}。填上你自己的 AI API Key（支持 OpenAI / DeepSeek / Claude / Gemini 兼容接口，纯 BYOK 零平台扣费）后，就能直接在这里和我连续对话啦。`,
+      needKey: true
+    });
+    saveTaskThreads();
+    renderChatBox(thread);
+    return;
+  }
+  renderChatBox(thread, '思考中…');
+  try {
+    const sys = bot.rules ? [{ role: 'system', content: bot.rules }] : [];
+    const ctxMsgs = thread.messages.filter(m => !m.needKey).slice(-14).map(m => ({ role: m.role, content: m.content }));
+    const ans = await aiComplete([...sys, ...ctxMsgs]);
+    thread.messages.push({ role: 'assistant', content: String(ans || '未收到回复') });
+    thread.updatedAt = Date.now();
+    saveTaskThreads();
+    renderChatBox(thread);
+  } catch (err) {
+    thread.messages.push({ role: 'assistant', content: `连接模型失败：${err?.message || '请检查 API 地址、模型名或密钥'}`, needKey: true });
+    saveTaskThreads();
+    renderChatBox(thread);
+  }
+}
+
 function renderTaskThreadUI() {
   const strip = $('#zone-task-strip');
   if (!strip) return;
@@ -2906,9 +3016,10 @@ function renderTaskThreadUI() {
   const btnNew = document.createElement('button');
   btnNew.type = 'button';
   btnNew.className = 'task-pill new';
-  btnNew.textContent = '+ 新任务';
+  btnNew.textContent = '+ 新对话';
   btnNew.onclick = () => {
     activeThreadId = null;
+    $('#zone-chat-box')?.classList.add('hidden');
     $('#zone-live-card')?.classList.add('hidden');
     $('#zone-hero-input')?.focus();
     renderTaskThreadUI();
@@ -2926,14 +3037,9 @@ function renderTaskThreadUI() {
     pill.append(dot, lbl);
     pill.onclick = () => {
       activeThreadId = th.id;
-      renderTaskThreadUI();
-      const last = th.messages[th.messages.length - 1];
-      const historyPreview = th.messages.slice(-4).map(m => `${m.role === 'user' ? '你：' : ''}${m.content}`).join('\n\n');
-      showAgentLiveCard({
-        title: `${th.title}（${Math.ceil(th.messages.length / 2)} 轮独立上下文）`,
-        body: historyPreview || last?.content || '可继续围绕此任务提问',
-        threadId: th.id
-      });
+      if (th.botId) setActiveBot(th.botId);
+      renderAgentHub();
+      renderChatBox(th);
     };
     strip.appendChild(pill);
   }
@@ -3005,7 +3111,20 @@ function showAgentLiveCard({ title, body, onOpen = null, pinSpec = null, threadI
   card.classList.remove('hidden');
 }
 
+function syncPluginStates() {
+  const readerOn = isPluginEnabled('reading-cosmos');
+  document.documentElement.classList.toggle('plugin-reader-off', !readerOn);
+  if (!readerOn) {
+    $('#zone-agent-hub')?.classList.remove('compact');
+    if ($('#reader')?.classList.contains('active')) closeBook();
+    if (currentPane() !== 'shelf') showPane('shelf', { instant: true });
+  } else {
+    renderLibrary();
+  }
+}
+
 function renderAgentHub() {
+  syncPluginStates();
   const bot = getActiveBot();
   const bots = listBots();
   const glyphEl = $('#zone-hero-glyph');
@@ -3053,11 +3172,38 @@ function launchPluginById(id) {
   }
   if (id === 'reading-cosmos') { showPane('graph', { whisper: true }); return; }
 }
-function runAutomationItem(auto) {
-  if (auto?.builtinAction === 'sichao') { openSichaoSheet(); return; }
+async function runAutomationItem(auto, opts = {}) {
+  if (opts?.disabled) {
+    $('#zone-live-card')?.classList.add('hidden');
+    return;
+  }
+  if (auto?.builtinAction === 'sichao') {
+    if (opts?.fromToggle) {
+      showAgentLiveCard({ title: '新闻推送 · 正在拉取最新动态…', body: '正在连接云端思潮获取今日前沿信号…' });
+      try {
+        const list = await fetchLiveSignals();
+        const preview = list.slice(0, 3).map((ev, i) => `${i + 1}. ${ev.title}`).join('\n');
+        showAgentLiveCard({
+          title: `新闻推送 · 已送达 ${list.length} 条`,
+          body: preview || '暂无最新信号',
+          onOpen: () => openSichaoSheet(),
+          pinSpec: { id: 'zone-sichao', label: '新闻推送', uri: 'zone://open/sichao', glyph: '闻' }
+        });
+      } catch (err) {
+        showAgentLiveCard({
+          title: '新闻推送 · 离线就绪',
+          body: `云端唤醒中（${err?.message || '稍后重试'}），点下方可立即进入本地情报卡。`,
+          onOpen: () => openSichaoSheet()
+        });
+      }
+      return;
+    }
+    openSichaoSheet();
+    return;
+  }
   if (auto?.prompt) {
     activeThreadId = null;
-    command.run(`问AI：${auto.prompt}`);
+    await chatWithActiveBot(auto.prompt);
   }
 }
 const openBotsFromHub = () => openBotStudio({
@@ -3075,8 +3221,12 @@ $('#zone-hero-form')?.addEventListener('submit', async e => {
   const text = (inp?.value || '').trim();
   if (!text) { command.openBar({ listen: true }); return; }
   inp.value = '';
-  inp.blur();
-  await command.run(text);
+  const ops = parseNaturalCommands(text, { reading: false, pane: currentPane() });
+  if (ops.length && ops[0].op !== 'askAi') {
+    await command.run(text);
+  } else {
+    await chatWithActiveBot(ops[0]?.question || text);
+  }
   renderAgentHub();
 });
 
