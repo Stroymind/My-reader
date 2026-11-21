@@ -409,14 +409,12 @@ try {
   await page.$eval('#grid .book[data-id="z-e"]', el => el.scrollIntoView({ block: 'center' }));
   const er = await page.$eval('#grid .book[data-id="z-e"]', el => { const r = el.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
   await page.mouse.move(er.x, er.y); await page.mouse.down(); await sleep(380);
-  assert.equal(await page.evaluate(() => !!document.querySelector('.drag-ghost') && !document.querySelector('#drag-trash-zone').classList.contains('hidden')), true, 'long-press lifts card and shows top drop-to-delete zone');
+  assert.equal(await page.evaluate(() => !!document.querySelector('.drag-ghost') && !document.querySelector('#drag-trash-zone').classList.contains('hidden')), true, 'long-press lifts card and shows monochrome top drop-to-remove zone');
   await page.mouse.up();
-  assert.equal(await page.evaluate(() => !document.querySelector('.drag-ghost') && !document.querySelector('#card-quick-mask').classList.contains('hidden') && !document.querySelector('#library').classList.contains('picking')), true, 'releasing in place opens compact Haptic-Touch quick pill without checkbox mode');
-  await page.click('#card-quick-mask', { offset: { x: 4, y: 4 } });
-  await page.waitForFunction(() => document.querySelector('#card-quick-mask').classList.contains('hidden'));
+  assert.equal(await page.evaluate(() => !document.querySelector('.drag-ghost') && !document.querySelector('#card-quick-mask') && !document.querySelector('#library').classList.contains('picking')), true, 'releasing in place settles cleanly with zero extra popup button menu');
   assert.equal(await page.evaluate(() => document.querySelector('#reader').classList.contains('active')), false);
   assert.equal(await bookCount(), 5);
-  report.checks.push('Long-press lifts card with top drop-to-delete zone; releasing in place opens compact Haptic-Touch pill (透视/删除) with zero checkbox mode');
+  report.checks.push('Long-press lifts card with monochrome top drop-to-remove zone; releasing in place settles cleanly with zero popup delete button');
 
   await enterSelect();
   await tap('.stack-head');

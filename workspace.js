@@ -554,20 +554,6 @@ export async function openEditor(id, keep) {
     host.appendChild(relSec);
   }
 
-  if (draft.id) {
-    const danger = h('button', 'editor-del', '删除');
-    danger.type = 'button';
-    danger.onclick = async () => {
-      if (!confirm('删除这条笔记？书里对应的划线或摘录也会去掉。')) return;
-      const bookId = draft.bookId;
-      await deleteNote(draft.id);
-      if (bookId) api.onHighlightsChanged(bookId);
-      closeEditor();
-      await refreshWorkspace();
-      api.toast('已删除');
-    };
-    host.appendChild(danger);
-  }
   title.focus();
 }
 

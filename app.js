@@ -289,40 +289,13 @@ function findDropTarget(x, y, dragId) {
   return null;
 }
 
-function closeCardQuickMenu() {
-  const m = $('#card-quick-mask');
-  if (!m || m.classList.contains('hidden')) return false;
-  m.classList.add('hidden');
-  return true;
-}
-function openCardQuickMenu(rect, actions) {
-  const mask = $('#card-quick-mask');
-  const menu = $('#card-quick-menu');
-  if (!mask || !menu) return;
-  menu.replaceChildren();
-  for (const act of actions) {
-    const btn = node('button', act.danger ? 'danger' : '', act.label);
-    btn.type = 'button';
-    btn.setAttribute('role', 'menuitem');
-    btn.onclick = () => { closeCardQuickMenu(); act.onClick(); };
-    menu.appendChild(btn);
-  }
-  mask.classList.remove('hidden');
-  const mw = Math.min(280, menu.offsetWidth || 180);
-  const left = Math.max(14, Math.min(window.innerWidth - mw - 14, rect.left + rect.width / 2 - mw / 2));
-  const top = rect.top > 96 ? rect.top - 52 : Math.min(window.innerHeight - 80, rect.bottom + 10);
-  menu.style.left = Math.round(left) + 'px';
-  menu.style.top = Math.round(top) + 'px';
-}
-$('#card-quick-mask')?.addEventListener('click', e => { if (e.target === e.currentTarget) closeCardQuickMenu(); });
-
 function showTrashZone(show, hot = false) {
   const z = $('#drag-trash-zone');
   const lbl = $('#drag-trash-label');
   if (!z) return;
   z.classList.toggle('hidden', !show);
   z.classList.toggle('hot', !!(show && hot));
-  if (lbl) lbl.textContent = hot ? '松手删除' : '拖到这里删除';
+  if (lbl) lbl.textContent = hot ? '松手移除' : '拖到这里移除';
 }
 function inTrashZone(x, y) {
   const z = $('#drag-trash-zone');
@@ -462,8 +435,6 @@ function bindShelfBook(el, b, stack, swipeBg) {
     } else if (dragging) {
       const droppedTrash = e.type === 'pointerup' && (overTrash || inTrashZone(e.clientX, e.clientY));
       const drop = (e.type === 'pointerup' && !droppedTrash) ? (hoverTarget || findDropTarget(e.clientX, e.clientY, b.id)) : null;
-      const stayedStill = e.type === 'pointerup' && !movedDuringDrag && !droppedTrash && !drop;
-      const rect = el.getBoundingClientRect();
       endDrag();
       held = true;
       peekSwipedAt = Date.now();
@@ -493,21 +464,6 @@ function bindShelfBook(el, b, stack, swipeBg) {
             }
           }
         }
-      } else if (stayedStill) {
-        const actions = [{ label: '透视', onClick: () => openBookPeek(b) }];
-        if (stack) {
-          actions.push({
-            label: '移出堆',
-            onClick: async () => {
-              removeFromStacks([b.id]);
-              const still = getStack(stack.id);
-              toast(still ? `已移出「${stack.name}」` : `「${stack.name}」只剩一项，已散开`);
-              await renderLibrary(still ? { anchor: 'stack:' + stack.id, focus: 'stack:' + stack.id } : { anchor: 'book:' + b.id, focus: 'book:' + b.id });
-            }
-          });
-        }
-        actions.push({ label: '删除', danger: true, onClick: () => deleteBooks([b]) });
-        openCardQuickMenu(rect, actions);
       }
     }
   };
