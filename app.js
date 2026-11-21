@@ -5,10 +5,10 @@ import { findAndFetchBook, getOpdsUrl, setOpdsUrl } from './book-finder.js';
 import { fetchLiveSignals, getSichaoApi, initSichao, setSichaoApi } from './sichao.js';
 import { getPhoneUseStatus, openPhoneUseSettings, runPhoneUseTask } from './phone-use.js';
 import { closeMicroApp, consumeLaunchDeepLink, craftMicroApp, isMicroAppOpen, listMicroApps, openMicroApp, pinToDesktop } from './agent-surface.js';
-import { applyThemePlugin, closeBotStudio, getActiveBot, getActiveThemePlugin, getBotPlugins, getPrimaryBot, isPluginEnabled, isPluginMountedOnBot, listBots, listGroups, listPlugins, openBotStudio, renderBotSvg, renderGroupAvatarHtml, setActiveBot, syncToAndroidWidget, toggleBotPlugin } from './bots.js';
-import { buildMemoryContextForBot, closeImportMemorySheet, importMemoryText, listMemories, openImportMemorySheet } from './memory.js';
+import { applyThemePlugin, closeBotStudio, deleteBotById, getActiveBot, getActiveThemePlugin, getBotPlugins, getPrimaryBot, isPluginEnabled, isPluginMountedOnBot, listAutomations, listBots, listGroups, listPlugins, openBotStudio, renderBotSvg, renderGroupAvatarHtml, setActiveBot, startBotLifeEngine, syncToAndroidWidget, toggleBotPlugin, triggerBotMood, updateBotNotify } from './bots.js';
+import { buildMemoryContextForBot, closeImportMemorySheet, extractDocFileText, importMemoryText, listMemories, openImportMemorySheet } from './memory.js';
 import { BookletEngine, EpubEngine, PdfEngine, TxtEngine } from './engines.js';
-import { aiConfigured, complete as aiComplete, fetchLiveBalance, getAiConfig, getAiUsage, getModelPricing, recordAiUsage, resetAiUsage, setAiBudget, setRechargeBalance } from './ai.js';
+import { aiConfigured, complete as aiComplete, fetchLiveBalance, getAiConfig, getAiUsage, getModelPricing, nativePostJson, recordAiUsage, resetAiUsage, setAiBudget, setRechargeBalance } from './ai.js';
 import { settings, saveSettings, applyBodyTheme, applyAppearance, appearancePref, cycleAppearance, applyCustomFontBlob, FONTS, THEMES } from './settings.js';
 import { isMostlyCjk, translateVisible } from './bilingual.js';
 import { backfillFromBooks, createNote, deleteBookBundle, listNotes, parseTags, syncBook } from './knowledge.js';
@@ -2002,21 +2002,35 @@ function closeBotReaderSheet() {
   return false;
 }
 
-async function openBotReaderSheet(bot = getActiveBot(), { initialPane = 'shelf', fromHome = false } = {}) {
-  if (initialPane === 'shelf' && !isPluginEnabled('reading-cosmos')) {
-    toast('请先在插件中开启「阅读器」');
-    return;
+function canAccessReaderSpace(bot = getActiveBot()) {
+  if (document.documentElement.classList.contains('legacy-reader-home')) return { ok: true, bot: bot || getActiveBot() };
+  if (!isPluginEnabled('reading-cosmos')) {
+    return { ok: false, reason: '「阅读器」插件已关闭，请先在插件中开启' };
   }
-  const targetBot = fromHome ? null : (bot || getActiveBot());
+  const target = bot || getActiveBot();
+  if (!target || !isPluginMountedOnBot(target.id, 'reading-cosmos')) {
+    return { ok: false, reason: `请先在「${target?.name || '当前 Bot'}」对话的 + 中开启「阅读器」插件` };
+  }
+  return { ok: true, bot: target };
+}
+
+async function openBotReaderSheet(bot = getActiveBot(), { initialPane = 'shelf' } = {}) {
+  const gate = canAccessReaderSpace(bot);
+  if (!gate.ok) {
+    toast(gate.reason, 2600);
+    return false;
+  }
+  const targetBot = gate.bot;
   readerReturnBotId = targetBot?.id || '';
   const retBtn = $('#btn-intent-return-bot');
-  if (retBtn) retBtn.textContent = targetBot ? `返回 ${targetBot.name}` : '返回 Zone';
+  if (retBtn) retBtn.textContent = targetBot ? `返回 ${targetBot.name}` : '返回对话';
   $('#zone-chat-modal')?.classList.add('hidden');
   document.documentElement.classList.add('in-bot-reader');
   showPane(initialPane || 'shelf', { instant: true });
   applyAppearance();
   await renderLibrary();
   if (initialPane === 'graph' || initialPane === 'knowledge') await refreshWorkspace();
+  return true;
 }
 
 $('#btn-intent-return-bot')?.addEventListener('click', () => {
@@ -2070,21 +2084,11 @@ function openBotPluginsSheet(bot = getActiveBot()) {
           }).join('')}
         </div>
         <div style="display:flex;flex-direction:column;gap:8px">
-          <button type="button" class="bots-secondary" data-bp-act="cosmos">星海 · 第二大脑</button>
-          <button type="button" class="bots-secondary" data-bp-act="memory">导入记忆（${listMemories().length}）</button>
           <button type="button" class="bots-secondary" data-bp-act="manage">插件中心与远程 MCP ›</button>
         </div>
       </div>`;
     mask.onclick = e => { if (e.target === mask) closeBotPluginsSheet(); };
     mask.querySelector('[data-bp-act="close"]').onclick = () => closeBotPluginsSheet();
-    mask.querySelector('[data-bp-act="cosmos"]').onclick = () => {
-      closeBotPluginsSheet();
-      openBotReaderSheet(bot, { initialPane: 'graph' });
-    };
-    mask.querySelector('[data-bp-act="memory"]').onclick = () => {
-      closeBotPluginsSheet();
-      openZoneMemorySheet(bot.id);
-    };
     mask.querySelector('[data-bp-act="manage"]').onclick = () => {
       closeBotPluginsSheet();
       openBotsFromHub({ initialTab: 'plugins' });
@@ -2094,7 +2098,7 @@ function openBotPluginsSheet(bot = getActiveBot()) {
         const pid = chk.dataset.bpToggle;
         const nowOn = toggleBotPlugin(bot.id, pid, chk.checked);
         const pl = listPlugins().find(p => p.id === pid);
-        renderBotMountedBar(bot);
+        syncPluginStates();
         toast(nowOn
           ? `已在「${bot.name}」对话中加载「${pl?.short || pl?.name || pid}」`
           : `已从「${bot.name}」对话卸载「${pl?.short || pl?.name || pid}」`, 2400);
@@ -2113,7 +2117,10 @@ function openBotPluginsSheet(bot = getActiveBot()) {
         }
         if (!getBotPlugins(bot.id).includes(pid)) {
           toggleBotPlugin(bot.id, pid, true);
-          renderBotMountedBar(bot);
+          syncPluginStates();
+          toast(`已在「${bot.name}」对话中加载「${pl.short || pl.name}」`, 2200);
+          draw();
+          return;
         }
         closeBotPluginsSheet();
         if (pl.launchable) launchPluginById(pid, bot);
@@ -2125,10 +2132,217 @@ function openBotPluginsSheet(bot = getActiveBot()) {
   mask.classList.remove('hidden');
 }
 
+function closeChatMoreMenu() {
+  const m = $('#zone-chat-more-menu');
+  if (!m || m.classList.contains('hidden')) return false;
+  m.classList.add('hidden');
+  return true;
+}
+
+function closeChatFindBar() {
+  const f = $('#zone-chat-find');
+  if (!f || f.classList.contains('hidden')) return false;
+  f.classList.add('hidden');
+  const inp = $('#zone-chat-find-inp');
+  if (inp) inp.value = '';
+  chatFindQuery = '';
+  const th = taskThreads.find(t => t.id === activeThreadId);
+  if (th) renderChatBox(th);
+  return true;
+}
+
+function closeBotProfilePage() {
+  const v = document.getElementById('zone-bot-profile-view');
+  if (!v || v.classList.contains('hidden')) return false;
+  v.classList.add('hidden');
+  return true;
+}
+
+function openBotProfilePage(bot = getActiveBot()) {
+  if (!bot) return;
+  closeChatMoreMenu();
+  let view = document.getElementById('zone-bot-profile-view');
+  if (!view) {
+    view = document.createElement('section');
+    view.id = 'zone-bot-profile-view';
+    view.className = 'bot-profile-view hidden';
+    view.setAttribute('role', 'dialog');
+    view.setAttribute('aria-modal', 'true');
+    document.body.appendChild(view);
+  }
+  const escHtml = s => String(s || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const draw = () => {
+    const fresh = listBots().find(x => x.id === bot.id) || bot;
+    const enabledAutos = listAutomations().filter(a => a.enabled).length;
+    const kbCount = listMemories().length;
+    const mountedCount = getBotPlugins(fresh.id).filter(pid => listPlugins().some(p => p.id === pid && p.enabled)).length;
+    const cuUrl = (() => { try { return localStorage.getItem('zone-cu-bridge') || ''; } catch { return ''; } })();
+    const notifyOn = fresh.notify !== false;
+    view.style.setProperty('--bot-accent', fresh.accent || '#007AFF');
+    view.innerHTML = `
+      <div class="bp-top">
+        <button type="button" class="bot-chat-back" data-bpp-act="back" aria-label="返回">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>
+        </button>
+        <div class="bp-top-r">
+          <button type="button" class="bot-chat-more" data-bpp-act="share" aria-label="分享为模板">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15V4M8 8l4-4 4 4"/><path d="M5 14v4a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4"/></svg>
+          </button>
+          <button type="button" class="bot-chat-more" data-bpp-act="edit" aria-label="编辑资料">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="18" cy="12" r="1.6" fill="currentColor" stroke="none"/></svg>
+          </button>
+        </div>
+      </div>
+      <div class="bp-hero">
+        <div class="bp-avatar" data-bpp-act="poke">${renderBotSvg(fresh.shape, fresh.accent, fresh.id)}</div>
+        <h2 class="bp-name">${escHtml(fresh.name)}</h2>
+        <button type="button" class="bp-edit-pill" data-bpp-act="edit">编辑</button>
+      </div>
+      <div class="bp-card">
+        <button type="button" class="bp-row" data-bpp-act="routines">
+          <span class="bp-row-l">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5v4.8l3.2 1.8"/></svg>
+            <strong>定时任务</strong>
+          </span>
+          <span class="bp-row-r">${enabledAutos ? `${enabledAutos} 个开启` : '未开启'} ›</span>
+        </button>
+        <button type="button" class="bp-row" data-bpp-act="library">
+          <span class="bp-row-l">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 7.5A2 2 0 0 1 5.5 5.5h4.2l1.8 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/></svg>
+            <strong>资料库</strong>
+          </span>
+          <span class="bp-row-r">${kbCount ? `${kbCount} 条` : ''} ›</span>
+        </button>
+        <button type="button" class="bp-row" data-bpp-act="plugins">
+          <span class="bp-row-l">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="7" height="7" rx="2"/><rect x="13" y="4" width="7" height="7" rx="2"/><rect x="4" y="13" width="7" height="7" rx="2"/><rect x="13" y="13" width="7" height="7" rx="2"/></svg>
+            <strong>插件</strong>
+          </span>
+          <span class="bp-row-r">${mountedCount ? `${mountedCount} 个已载` : '未加载'} ›</span>
+        </button>
+        <button type="button" class="bp-row" data-bpp-act="computer">
+          <span class="bp-row-l">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4.5" width="18" height="12" rx="2"/><path d="M8.5 20h7M12 16.5V20"/></svg>
+            <strong>电脑</strong>
+          </span>
+          <span class="bp-row-r">${cuUrl ? '已连接' : '空闲'} ›</span>
+        </button>
+      </div>
+      <div class="bp-card">
+        <div class="bp-row" style="cursor:default">
+          <span class="bp-row-l"><strong>通知</strong></span>
+          <label class="ios-switch" aria-label="通知开关">
+            <input type="checkbox" data-bpp-notify ${notifyOn ? 'checked' : ''}>
+            <span></span>
+          </label>
+        </div>
+      </div>
+      <p class="bp-caption">当「${escHtml(fresh.name)}」完成任务或等待你确认时通知你</p>
+    `;
+    view.querySelector('[data-bpp-act="back"]').onclick = () => closeBotProfilePage();
+    view.querySelector('[data-bpp-act="poke"]').onclick = () => {
+      const svg = view.querySelector('.bp-avatar .bot-glyph');
+      if (svg) triggerBotMood(svg, Math.random() < 0.55 ? 'laugh' : 'hop');
+    };
+    view.querySelectorAll('[data-bpp-act="edit"]').forEach(b => {
+      b.onclick = () => { closeBotProfilePage(); openBotsFromHub({ editBotId: fresh.id }); };
+    });
+    view.querySelector('[data-bpp-act="share"]').onclick = async () => {
+      const tpl = JSON.stringify({ name: fresh.name, shape: fresh.shape, accent: fresh.accent, rules: fresh.rules || '', plugins: getBotPlugins(fresh.id) }, null, 2);
+      await copyText(tpl);
+      toast(`已复制「${fresh.name}」模板配置`);
+    };
+    view.querySelector('[data-bpp-act="routines"]').onclick = () => {
+      closeBotProfilePage();
+      openBotsFromHub({ initialTab: 'automations' });
+    };
+    view.querySelector('[data-bpp-act="library"]').onclick = () => {
+      closeBotProfilePage();
+      openZoneMemorySheet(fresh.id);
+    };
+    view.querySelector('[data-bpp-act="plugins"]').onclick = () => {
+      closeBotProfilePage();
+      openBotPluginsSheet(fresh);
+    };
+    view.querySelector('[data-bpp-act="computer"]').onclick = () => {
+      closeBotProfilePage();
+      launchPluginById('computer-use', fresh);
+    };
+    view.querySelector('[data-bpp-notify]').onchange = e => {
+      updateBotNotify(fresh.id, e.target.checked);
+      toast(e.target.checked ? `已开启「${fresh.name}」任务通知` : `已关闭「${fresh.name}」通知`);
+    };
+  };
+  draw();
+  view.classList.remove('hidden');
+}
+
+function closeChatAttachSheet() {
+  const mask = document.getElementById('zone-attach-mask');
+  if (!mask || mask.classList.contains('hidden')) return false;
+  mask.classList.add('hidden');
+  return true;
+}
+
+function openChatAttachSheet() {
+  closeChatMoreMenu();
+  let mask = document.getElementById('zone-attach-mask');
+  if (!mask) {
+    mask = document.createElement('div');
+    mask.id = 'zone-attach-mask';
+    mask.className = 'bots-mask hidden';
+    document.body.appendChild(mask);
+  }
+  mask.innerHTML = `
+    <div class="bots-sheet" role="dialog" aria-label="添加附件">
+      <div class="bots-head" style="margin-bottom:14px">
+        <div>
+          <h3>添加内容</h3>
+          <p>照片与视频自动视觉解析，文档直接读取正文</p>
+        </div>
+        <button type="button" class="bots-close" data-att-act="close">完成</button>
+      </div>
+      <div class="attach-grid">
+        <button type="button" class="attach-tile" data-att-pick="photo">
+          <span class="attach-tile-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="14" rx="2.5"/><circle cx="9" cy="10" r="1.6"/><path d="M4.5 17l4.8-4.5 3.4 3.2 2.8-2.6 4 3.9"/></svg></span>
+          <span>照片</span>
+        </button>
+        <button type="button" class="attach-tile" data-att-pick="camera">
+          <span class="attach-tile-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8.5A2.5 2.5 0 0 1 6.5 6h2l1.4-1.8h4.2L15.5 6h2A2.5 2.5 0 0 1 20 8.5v8A2.5 2.5 0 0 1 17.5 19h-11A2.5 2.5 0 0 1 4 16.5z"/><circle cx="12" cy="12.5" r="3.2"/></svg></span>
+          <span>拍照</span>
+        </button>
+        <button type="button" class="attach-tile" data-att-pick="video">
+          <span class="attach-tile-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="6" width="13" height="12" rx="2.2"/><path d="M16.5 10l4-2.4v8.8l-4-2.4z"/></svg></span>
+          <span>视频</span>
+        </button>
+        <button type="button" class="attach-tile" data-att-pick="file">
+          <span class="attach-tile-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 4h7.5l4.5 4.5V19a1.5 1.5 0 0 1-1.5 1.5h-10.5A1.5 1.5 0 0 1 5 19V5.5A1.5 1.5 0 0 1 6.5 4z"/><path d="M14 4v4.5h4.5M8.5 13h7M8.5 16.5h5"/></svg></span>
+          <span>文件</span>
+        </button>
+      </div>
+    </div>`;
+  mask.onclick = e => { if (e.target === mask) closeChatAttachSheet(); };
+  mask.querySelector('[data-att-act="close"]').onclick = () => closeChatAttachSheet();
+  mask.querySelectorAll('[data-att-pick]').forEach(btn => {
+    btn.onclick = () => {
+      const k = btn.dataset.attPick;
+      closeChatAttachSheet();
+      const map = { photo: '#chat-pick-photo', camera: '#chat-pick-camera', video: '#chat-pick-video', file: '#chat-pick-file' };
+      const inp = $(map[k]);
+      if (inp) { inp.value = ''; inp.click(); }
+    };
+  });
+  mask.classList.remove('hidden');
+}
+
 function handleBack() {
   if (command?.closeBar(true)) return true;
+  if (closeChatMoreMenu()) return true;
+  if (closeChatAttachSheet()) return true;
   if (closeImportMemorySheet()) return true;
   if (closeBotPluginsSheet()) return true;
+  if (closeBotProfilePage()) return true;
+  if (closeChatFindBar()) return true;
   if (closeBotReaderSheet()) return true;
   if (closeProfileSheet()) return true;
   if (closeBotStudio()) return true;
@@ -2655,24 +2869,36 @@ command = createCommandController({
         return { label: '已返回列表' };
       }
       case 'pane': {
+        const gate = canAccessReaderSpace();
+        if (!gate.ok) return { label: gate.reason };
         if (reading) await closeBook();
-        showPane(a.value, { whisper: true });
+        if (!document.documentElement.classList.contains('legacy-reader-home') && !document.documentElement.classList.contains('in-bot-reader')) {
+          await openBotReaderSheet(gate.bot, { initialPane: a.value });
+        } else {
+          showPane(a.value, { whisper: true });
+        }
         const nm = a.value === 'graph' ? '星海' : a.value === 'knowledge' ? '知识' : '流';
         return { label: nm, undoable: true };
       }
       case 'graphTilt': {
+        const gate = canAccessReaderSpace();
+        if (!gate.ok) return { label: gate.reason };
         if (reading) await closeBook();
         showPane('graph', { whisper: false });
         setGraphTilt(a.on);
         return { label: a.on ? '2.5D 立体' : '平视星图', undoable: true };
       }
       case 'graphFit': {
+        const gate = canAccessReaderSpace();
+        if (!gate.ok) return { label: gate.reason };
         if (reading) await closeBook();
         showPane('graph', { whisper: false });
         fitGraph();
         return { label: '适应全图' };
       }
       case 'graphMood': {
+        const gate = canAccessReaderSpace();
+        if (!gate.ok) return { label: gate.reason };
         if (reading) await closeBook();
         showPane('graph', { whisper: false });
         setGraphMood(a.value, true);
@@ -2680,6 +2906,8 @@ command = createCommandController({
         return { label: nm, undoable: true };
       }
       case 'openBook': {
+        const gate = canAccessReaderSpace();
+        if (!gate.ok) return { label: gate.reason };
         const books = await db.all('books');
         if (!books.length) return { label: '还没有导入书' };
         sortBooks(books, currentSort());
@@ -2735,12 +2963,16 @@ command = createCommandController({
         return null;
       }
       case 'importBooks': {
+        const gate = canAccessReaderSpace();
+        if (!gate.ok) return { label: gate.reason };
         if (reading) await closeBook();
         showPane('shelf');
         $('#file-input')?.click();
         return { label: '请选择要导入的书籍或文件' };
       }
       case 'cosmosExplore': {
+        const gate = canAccessReaderSpace();
+        if (!gate.ok) return { label: gate.reason };
         if (reading) await closeBook();
         showPane('graph', { whisper: false });
         const hit = exploreCosmos(a.mode || 'tour');
@@ -2748,6 +2980,8 @@ command = createCommandController({
         return { label: `${hit.sector} · ${hit.title}` };
       }
       case 'cosmosFocus': {
+        const gate = canAccessReaderSpace();
+        if (!gate.ok) return { label: gate.reason };
         if (reading) await closeBook();
         showPane('graph', { whisper: false });
         const hit = focusStarByQuery(a.query);
@@ -2755,6 +2989,8 @@ command = createCommandController({
         return { label: `已飞往「${hit.title}」` };
       }
       case 'cosmosNeighbors': {
+        const gate = canAccessReaderSpace();
+        if (!gate.ok) return { label: gate.reason };
         if (reading) await closeBook();
         showPane('graph', { whisper: false });
         const hit = focusGraphNeighborhood();
@@ -2762,6 +2998,8 @@ command = createCommandController({
         return { label: `「${hit.title}」· ${hit.links} 条航线` };
       }
       case 'cosmosLink': {
+        const gate = canAccessReaderSpace();
+        if (!gate.ok) return { label: gate.reason };
         if (reading) await closeBook();
         showPane('graph', { whisper: false });
         const res = await linkFocusedStarTo(a.target);
@@ -2769,6 +3007,8 @@ command = createCommandController({
         return { label: `已连接「${res.from}」↔「${res.to}」` };
       }
       case 'cosmosZoom': {
+        const gate = canAccessReaderSpace();
+        if (!gate.ok) return { label: gate.reason };
         if (reading) await closeBook();
         showPane('graph', { whisper: false });
         zoomGraph(a.factor || 1.45);
@@ -3106,8 +3346,18 @@ async function openDeepLink(uri) {
     return true;
   }
   if (s === 'zone://open/sichao') { openSichaoSheet(); return true; }
-  if (s === 'zone://open/graph') { if (reading) await closeBook(); showPane('graph', { whisper: false }); return true; }
-  if (s === 'zone://open/knowledge') { if (reading) await closeBook(); showPane('knowledge', { whisper: false }); return true; }
+  if (s === 'zone://open/graph') {
+    if (reading) await closeBook();
+    if (document.documentElement.classList.contains('legacy-reader-home')) { showPane('graph', { whisper: false }); return true; }
+    const mounted = listBots().find(b => isPluginMountedOnBot(b.id, 'reading-cosmos')) || getActiveBot();
+    return openBotReaderSheet(mounted, { initialPane: 'graph' });
+  }
+  if (s === 'zone://open/knowledge') {
+    if (reading) await closeBook();
+    if (document.documentElement.classList.contains('legacy-reader-home')) { showPane('knowledge', { whisper: false }); return true; }
+    const mounted = listBots().find(b => isPluginMountedOnBot(b.id, 'reading-cosmos')) || getActiveBot();
+    return openBotReaderSheet(mounted, { initialPane: 'knowledge' });
+  }
   return false;
 }
 /* ---------------- Zone 2.0 苹果风 Agent 主画布 + 独立上下文多任务线程 ---------------- */
@@ -3118,6 +3368,167 @@ let taskThreads = (() => {
 let activeThreadId = null;
 let activeGroupId = null;
 let newlyBornBotId = '';
+let pendingAttachments = [];
+let chatFindQuery = '';
+
+function updateSendBtnState() {
+  const btn = $('#zone-chat-send');
+  if (!btn) return;
+  const hasVal = !!($('#zone-chat-input')?.value || '').trim() || pendingAttachments.length > 0;
+  btn.classList.toggle('ready', hasVal);
+}
+
+function renderPendingAttachments() {
+  const strip = $('#zone-chat-attachments');
+  if (!strip) return;
+  strip.replaceChildren();
+  if (!pendingAttachments.length) {
+    strip.classList.add('hidden');
+    updateSendBtnState();
+    return;
+  }
+  strip.classList.remove('hidden');
+  pendingAttachments.forEach((att, idx) => {
+    const item = document.createElement('div');
+    item.className = 'chat-att-item' + (att.kind === 'image' ? ' is-img' : '');
+    if (att.kind === 'image') {
+      const img = document.createElement('img');
+      img.src = att.dataUrl;
+      img.alt = att.name || '照片';
+      item.appendChild(img);
+    } else if (att.kind === 'video') {
+      if (att.thumb) {
+        const img = document.createElement('img');
+        img.src = att.thumb;
+        img.style.width = '40px';
+        img.style.height = '40px';
+        img.style.flex = 'none';
+        item.appendChild(img);
+      }
+      const meta = document.createElement('div');
+      meta.className = 'chat-att-meta';
+      const st = document.createElement('strong');
+      st.textContent = att.name || '视频';
+      const sp = document.createElement('span');
+      sp.textContent = `视频 · ${att.durationSec ? `${att.durationSec}s · ` : ''}${(att.frames || []).length} 帧`;
+      meta.append(st, sp);
+      item.appendChild(meta);
+    } else {
+      const meta = document.createElement('div');
+      meta.className = 'chat-att-meta';
+      const st = document.createElement('strong');
+      st.textContent = att.name || '文档';
+      const sp = document.createElement('span');
+      sp.textContent = `${att.chars || 0} 字`;
+      meta.append(st, sp);
+      item.appendChild(meta);
+    }
+    const rm = document.createElement('button');
+    rm.type = 'button';
+    rm.className = 'chat-att-rm';
+    rm.textContent = '×';
+    rm.setAttribute('aria-label', '移除附件');
+    rm.onclick = () => { pendingAttachments.splice(idx, 1); renderPendingAttachments(); };
+    item.appendChild(rm);
+    strip.appendChild(item);
+  });
+  updateSendBtnState();
+}
+
+function compressImageFile(file, maxSide = 1024) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const scale = Math.min(1, maxSide / Math.max(img.naturalWidth || 1, img.naturalHeight || 1));
+        const w = Math.max(1, Math.round((img.naturalWidth || 1) * scale));
+        const h = Math.max(1, Math.round((img.naturalHeight || 1) * scale));
+        const c = document.createElement('canvas');
+        c.width = w; c.height = h;
+        c.getContext('2d').drawImage(img, 0, 0, w, h);
+        const dataUrl = c.toDataURL('image/jpeg', 0.82);
+        URL.revokeObjectURL(url);
+        resolve({ kind: 'image', name: file.name || '照片.jpg', dataUrl });
+      } catch (e) { URL.revokeObjectURL(url); reject(e); }
+    };
+    img.onerror = e => { URL.revokeObjectURL(url); reject(e); };
+    img.src = url;
+  });
+}
+
+function extractVideoKeyframes(file) {
+  return new Promise(resolve => {
+    const url = URL.createObjectURL(file);
+    const v = document.createElement('video');
+    v.muted = true;
+    v.playsInline = true;
+    v.preload = 'auto';
+    const done = (frames, dur) => {
+      try { URL.revokeObjectURL(url); } catch {}
+      resolve({
+        kind: 'video',
+        name: file.name || '视频.mp4',
+        durationSec: Math.round(dur || 0),
+        frames,
+        thumb: frames[0] || ''
+      });
+    };
+    const timer = setTimeout(() => done([], 0), 12000);
+    v.onloadedmetadata = async () => {
+      const dur = Number.isFinite(v.duration) && v.duration > 0 ? v.duration : 1;
+      const marks = dur > 3 ? [dur * 0.15, dur * 0.5, dur * 0.85] : [Math.min(0.2, dur * 0.5)];
+      const frames = [];
+      const scale = Math.min(1, 768 / Math.max(v.videoWidth || 640, v.videoHeight || 360));
+      const c = document.createElement('canvas');
+      c.width = Math.max(1, Math.round((v.videoWidth || 640) * scale));
+      c.height = Math.max(1, Math.round((v.videoHeight || 360) * scale));
+      const ctx = c.getContext('2d');
+      for (const t of marks) {
+        await new Promise(res => {
+          const onSeek = () => {
+            v.removeEventListener('seeked', onSeek);
+            try { ctx.drawImage(v, 0, 0, c.width, c.height); frames.push(c.toDataURL('image/jpeg', 0.78)); } catch {}
+            res();
+          };
+          v.addEventListener('seeked', onSeek, { once: true });
+          try { v.currentTime = Math.min(Math.max(0.05, t), Math.max(0.1, dur - 0.05)); } catch { res(); }
+        });
+      }
+      clearTimeout(timer);
+      done(frames, dur);
+    };
+    v.onerror = () => { clearTimeout(timer); done([], 0); };
+    v.src = url;
+  });
+}
+
+function buildApiContentForMsg(m, includeImages = true) {
+  const atts = Array.isArray(m.attachments) ? m.attachments : [];
+  if (!atts.length) return String(m.content || '');
+  const textParts = [];
+  if (m.content) textParts.push(String(m.content));
+  const imgUrls = [];
+  for (const a of atts) {
+    if (a.kind === 'file' && a.text) {
+      textParts.push(`[附件文档：${a.name}]\n${String(a.text).slice(0, 12000)}`);
+    } else if (a.kind === 'image' && a.dataUrl) {
+      if (includeImages) imgUrls.push(a.dataUrl);
+      else textParts.push(`[用户发送了一张图片：${a.name || '照片'}]`);
+    } else if (a.kind === 'video') {
+      textParts.push(`[用户发送了一段视频：${a.name || '视频'}，时长约 ${a.durationSec || 0} 秒，附 ${(a.frames || []).length} 张关键帧]`);
+      if (includeImages) {
+        for (const fr of (a.frames || []).slice(0, 3)) imgUrls.push(fr);
+      }
+    }
+  }
+  const mergedText = textParts.join('\n\n') || '请帮我分析这些附件内容。';
+  if (!includeImages || !imgUrls.length) return mergedText;
+  return [
+    { type: 'text', text: mergedText },
+    ...imgUrls.slice(0, 4).map(u => ({ type: 'image_url', image_url: { url: u } }))
+  ];
+}
 
 function saveTaskThreads() {
   try { localStorage.setItem(THREADS_KEY, JSON.stringify(taskThreads.slice(0, 30))); } catch {}
@@ -3143,6 +3554,10 @@ function ensureActiveTaskThread(seedTitle, botId) {
 function closeBotChat() {
   const modal = $('#zone-chat-modal');
   if (!modal || modal.classList.contains('hidden')) return false;
+  closeChatMoreMenu();
+  closeChatFindBar();
+  pendingAttachments = [];
+  renderPendingAttachments();
   modal.classList.add('hidden');
   modal.classList.remove('typing', 'thinking');
   activeGroupId = null;
@@ -3352,12 +3767,6 @@ function renderBotMountedBar(bot) {
     };
     bar.appendChild(chip);
   }
-  const addChip = document.createElement('button');
-  addChip.type = 'button';
-  addChip.className = 'bot-mounted-chip add-more';
-  addChip.textContent = '+ 插件';
-  addChip.onclick = () => openBotPluginsSheet(bot);
-  bar.appendChild(addChip);
 }
 
 function renderChatCardElement(card, thread) {
@@ -3544,33 +3953,50 @@ function renderChatBox(thread, pendingText = '') {
 
   if (isGroup && group) {
     const members = (group.memberIds || []).map(id => bots.find(b => b.id === id)).filter(Boolean);
+    modal.style.setProperty('--bot-accent', members[0]?.accent || '#007AFF');
     if (avEl) avEl.innerHTML = renderGroupAvatarHtml(group.memberIds);
     if (nameEl) nameEl.textContent = `${group.name} (${members.length})`;
     if (inp) inp.placeholder = `在「${group.name}」发消息，可 @ 指定 Bot…`;
     renderGroupMentionBar(group);
   } else {
+    modal.style.setProperty('--bot-accent', bot.accent || '#007AFF');
     if (avEl) avEl.innerHTML = renderBotSvg(bot.shape, bot.accent);
     if (nameEl) nameEl.textContent = bot.name;
-    if (inp) inp.placeholder = `给 ${bot.name} 发消息，或直接说话…`;
+    if (inp) inp.placeholder = `给 ${bot.name} 发消息…`;
     renderBotMountedBar(bot);
   }
 
   listEl.replaceChildren();
-  const visibleMsgs = (thread?.messages || []).filter(m => !m.internal);
+  const qFind = chatFindQuery.trim().toLowerCase();
+  const visibleMsgs = (thread?.messages || []).filter(m => {
+    if (m.internal) return false;
+    if (!qFind) return true;
+    const hay = `${m.content || ''} ${m.card?.title || ''} ${m.card?.detail || ''} ${(m.attachments || []).map(a => a.name).join(' ')}`.toLowerCase();
+    return hay.includes(qFind);
+  });
   const allMsgs = pendingText ? [...visibleMsgs, { role: 'assistant', content: pendingText, pending: true, botId: isGroup ? (group?.memberIds?.[0] || bot.id) : bot.id }] : visibleMsgs;
   if (!allMsgs.length) {
     const empty = document.createElement('div');
     empty.className = 'bot-chat-empty';
     const av = document.createElement('div');
-    av.className = 'bot-chat-empty-av' + (!isGroup && newlyBornBotId === bot.id ? ' bot-born' : '');
-    av.innerHTML = (isGroup && group) ? renderGroupAvatarHtml(group.memberIds) : renderBotSvg(bot.shape, bot.accent, bot.id);
-    if (!isGroup && newlyBornBotId === bot.id) newlyBornBotId = '';
+    const isFreshBorn = !isGroup && newlyBornBotId === bot.id;
+    av.className = 'bot-chat-empty-av';
+    av.innerHTML = (isGroup && group)
+      ? renderGroupAvatarHtml(group.memberIds)
+      : renderBotSvg(bot.shape, bot.accent, bot.id, { coalesce: isFreshBorn });
+    if (isFreshBorn) {
+      newlyBornBotId = '';
+      setTimeout(() => av.querySelector('.bot-glyph')?.classList.remove('bot-coalescing'), 1180);
+    }
+    av.onclick = () => { const svg = av.querySelector('.bot-glyph'); if (svg) triggerBotMood(svg, Math.random() < 0.5 ? 'laugh' : 'hop'); };
     const h4 = document.createElement('h4');
-    h4.textContent = (isGroup && group) ? group.name : bot.name;
+    h4.textContent = qFind ? '没有找到相关聊天记录' : ((isGroup && group) ? group.name : bot.name);
     const p = document.createElement('p');
-    p.textContent = (isGroup && group)
-      ? `群聊成员：${(group.memberIds || []).map(id => bots.find(b => b.id === id)?.name).filter(Boolean).join('、')}。直接发消息或 @ 某位 Bot 分工协作。`
-      : (bot.rules ? bot.rules : `直接发消息或说话；点左下角 + 可为 ${bot.name} 加载阅读器、电脑或控屏等专属插件。`);
+    p.textContent = qFind
+      ? `换个关键词试试，或点右上角「完成」返回全部消息。`
+      : ((isGroup && group)
+        ? `群聊成员：${(group.memberIds || []).map(id => bots.find(b => b.id === id)?.name).filter(Boolean).join('、')}。直接发消息或 @ 某位 Bot 分工协作。`
+        : (bot.rules ? bot.rules : `直接发消息、照片、视频或文件；轻点顶部「${bot.name}」可进入资料页管理插件与资料库。`));
     empty.append(av, h4, p);
     listEl.appendChild(empty);
   } else {
@@ -3612,6 +4038,28 @@ function renderChatBox(thread, pendingText = '') {
       }
       const bub = document.createElement('div');
       bub.className = 'chat-bubble';
+      if (Array.isArray(m.attachments) && m.attachments.length) {
+        const imgs = m.attachments.filter(a => (a.kind === 'image' && a.dataUrl) || (a.kind === 'video' && a.thumb));
+        if (imgs.length) {
+          const mg = document.createElement('div');
+          mg.className = 'chat-bubble-media';
+          for (const im of imgs) {
+            const imgEl = document.createElement('img');
+            imgEl.src = im.kind === 'video' ? im.thumb : im.dataUrl;
+            imgEl.alt = im.name || '媒体';
+            mg.appendChild(imgEl);
+          }
+          bub.appendChild(mg);
+        }
+        for (const fl of m.attachments.filter(a => a.kind === 'file' || a.kind === 'video')) {
+          const fc = document.createElement('div');
+          fc.className = 'chat-bubble-file';
+          fc.textContent = fl.kind === 'video'
+            ? `🎬 ${fl.name || '视频'}${fl.durationSec ? ` (${fl.durationSec}s)` : ''}`
+            : `📄 ${fl.name || '文档'}${fl.chars ? ` · ${fl.chars} 字` : ''}`;
+          bub.appendChild(fc);
+        }
+      }
       const raw = String(m.content || '');
       const thinkM = raw.match(/^<think>([\s\S]*?)<\/think>\s*([\s\S]*)$/);
       if (thinkM) {
@@ -3624,7 +4072,7 @@ function renderChatBox(thread, pendingText = '') {
         det.append(sum, tp);
         bub.appendChild(det);
         renderBubbleRichText(bub, thinkM[2].trim());
-      } else {
+      } else if (raw) {
         renderBubbleRichText(bub, raw);
       }
       if (m.needKey) {
@@ -3636,14 +4084,15 @@ function renderChatBox(thread, pendingText = '') {
         bub.appendChild(document.createElement('br'));
         bub.appendChild(cta);
       } else if (m.role === 'assistant' && !m.pending && raw.length >= 6) {
+        const targetBot = senderBot || bot;
         const saveBtn = document.createElement('button');
         saveBtn.type = 'button';
         saveBtn.className = 'chat-mem-btn' + (m.inCosmos ? ' saved' : '');
-        saveBtn.textContent = m.inCosmos ? '已存星海 ✓' : '存入星海';
+        saveBtn.textContent = m.inCosmos ? '已存知识库 ✓' : '存入知识库';
         saveBtn.onclick = async () => {
-          if (m.inCosmos) { openBotReaderSheet(senderBot || bot, { initialPane: 'graph' }); return; }
+          if (m.inCosmos) { openZoneMemorySheet(targetBot.id); return; }
           const cleanTxt = raw.replace(/^<think>[\s\S]*?<\/think>\s*/, '').trim();
-          await saveBotInsightToCosmos(senderBot || bot, cleanTxt);
+          await saveBotInsightToCosmos(targetBot, cleanTxt);
           m.inCosmos = true;
           saveTaskThreads();
           renderChatBox(thread);
@@ -3731,58 +4180,49 @@ function mountedExtPluginsFor(botId) {
 async function inspectExternalPluginRemote({ url, token = '' } = {}) {
   const api = getSichaoApi();
   if (!api) return { ok: false, error: '未配置云端代理地址，无法探测远程 MCP' };
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 45000);
   try {
-    const r = await fetch(`${api}/api/mcp/inspect`, {
-      method: 'POST',
-      signal: ctrl.signal,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url, token })
-    });
-    const data = await r.json().catch(() => ({}));
-    if (!r.ok) return { ok: false, error: data?.detail || `HTTP ${r.status}` };
-    return data;
+    const r = await nativePostJson(`${api}/api/mcp/inspect`, {}, { url, token }, 45000);
+    if (!r.ok) return { ok: false, error: r.data?.detail || `HTTP ${r.status}` };
+    return r.data;
   } catch (err) {
     return { ok: false, error: err?.name === 'AbortError' ? '云端节点正在唤醒或目标超时，请稍后再试' : (err?.message || '网络异常') };
-  } finally {
-    clearTimeout(timer);
   }
 }
 
 async function buildSecondBrainContext(botId = '', query = '') {
   const parts = [];
-  const memText = buildMemoryContextForBot(botId, query, 1000);
-  if (memText) parts.push(`[个人与 Bot 记忆]\n${memText}`);
-  try {
-    const notes = await listNotes();
-    if (notes.length) {
-      const qTokens = String(query || '')
-        .toLowerCase()
-        .split(/[\s,，。！？、；;:/()（）]+/)
-        .filter(w => w.length >= 2);
-      const scored = notes.map((n, idx) => {
-        const hay = `${n.title || ''} ${(n.tags || []).join(' ')} ${n.bookTitle || ''} ${n.quote || ''} ${n.body || ''}`.toLowerCase();
-        let score = 1;
-        for (const tk of qTokens) { if (hay.includes(tk)) score += 5; }
-        if (n.kind === 'memory' || (n.tags || []).includes('记忆')) score += 2;
-        score += Math.max(0, 1 - idx * 0.015);
-        return { n, score };
-      });
-      scored.sort((a, b) => b.score - a.score);
-      const lines = [];
-      let used = 0;
-      for (const { n } of scored.slice(0, 10)) {
-        const src = n.bookTitle ? `《${n.bookTitle}》` : ((n.tags || []).slice(0, 2).join('/') || '笔记');
-        const snippet = String(n.quote || n.body || '').replace(/\s+/g, ' ').trim().slice(0, 120);
-        const line = `- [${src}] ${n.title}${snippet ? `：${snippet}` : ''}`;
-        if (used + line.length + 1 > 900) break;
-        lines.push(line);
-        used += line.length + 1;
+  const memText = buildMemoryContextForBot(botId, query, 1400);
+  if (memText) parts.push(`[云端知识库与长期记忆]\n${memText}`);
+  if (isPluginEnabled('reading-cosmos') && (!botId || isPluginMountedOnBot(botId, 'reading-cosmos'))) {
+    try {
+      const notes = await listNotes();
+      if (notes.length) {
+        const qTokens = String(query || '')
+          .toLowerCase()
+          .split(/[\s,，。！？、；;:/()（）]+/)
+          .filter(w => w.length >= 2);
+        const scored = notes.map((n, idx) => {
+          const hay = `${n.title || ''} ${(n.tags || []).join(' ')} ${n.bookTitle || ''} ${n.quote || ''} ${n.body || ''}`.toLowerCase();
+          let score = 1;
+          for (const tk of qTokens) { if (hay.includes(tk)) score += 5; }
+          score += Math.max(0, 1 - idx * 0.015);
+          return { n, score };
+        });
+        scored.sort((a, b) => b.score - a.score);
+        const lines = [];
+        let used = 0;
+        for (const { n } of scored.slice(0, 8)) {
+          const src = n.bookTitle ? `《${n.bookTitle}》` : ((n.tags || []).slice(0, 2).join('/') || '阅读笔记');
+          const snippet = String(n.quote || n.body || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+          const line = `- [${src}] ${n.title}${snippet ? `：${snippet}` : ''}`;
+          if (used + line.length + 1 > 800) break;
+          lines.push(line);
+          used += line.length + 1;
+        }
+        if (lines.length) parts.push(`[阅读器摘录与笔记]\n${lines.join('\n')}`);
       }
-      if (lines.length) parts.push(`[星海知识库（书籍摘录 / 笔记 / 共享记忆）]\n${lines.join('\n')}`);
-    }
-  } catch {}
+    } catch {}
+  }
   return parts.join('\n\n');
 }
 
@@ -3790,46 +4230,19 @@ async function saveBotInsightToCosmos(bot, text) {
   const clean = String(text || '').trim();
   if (!clean) return null;
   const botName = bot?.name || 'Zone';
-  importMemoryText(clean.slice(0, 320), { source: `${botName} 对话`, scope: 'global' });
-  const firstLine = (clean.split(/[。！？!?\n]/).map(s => s.trim()).find(Boolean) || clean).slice(0, 24);
-  const note = await createNote({
-    title: firstLine || `${botName} 记忆`,
-    body: clean.slice(0, 2400),
-    tags: ['记忆', botName],
-    kind: 'memory'
-  });
-  await refreshWorkspace();
-  toast('已存入星海并共享给所有 Bot', 2400);
-  return note;
+  importMemoryText(clean.slice(0, 520), { source: `${botName} 对话`, scope: 'global', kind: 'memory' });
+  toast('已存入知识库（可在知识库一键云端同步）', 2400);
+  return true;
 }
 
 function openZoneMemorySheet(defaultScope = 'global') {
   openImportMemorySheet({
     bots: listBots(),
     defaultScope,
+    cloudApi: getSichaoApi(),
     onCopyPrompt: txt => copyText(txt),
     onToast: (msg, ms) => toast(msg, ms),
-    onChanged: () => renderAgentHub(),
-    onSyncToKnowledge: async items => {
-      const existing = await listNotes();
-      const seenBodies = new Set(existing.map(n => String(n.body || n.title || '').trim().toLowerCase()));
-      let added = 0;
-      for (const m of items.slice(0, 30)) {
-        const body = String(m.text || '').trim();
-        if (!body || seenBodies.has(body.toLowerCase())) continue;
-        seenBodies.add(body.toLowerCase());
-        const title = (body.split(/[。！？!?\n]/).map(s => s.trim()).find(Boolean) || body).slice(0, 22);
-        await createNote({
-          title,
-          body,
-          tags: ['记忆', m.source || '导入'],
-          kind: 'memory'
-        });
-        added++;
-      }
-      await refreshWorkspace();
-      toast(added ? `已将 ${added} 条记忆点亮到「星海」第二大脑` : '这些记忆已在「星海」中', 2600);
-    }
+    onChanged: () => renderAgentHub()
   });
 }
 
@@ -3837,29 +4250,25 @@ async function runCloudByokAgent(bot, ctxMsgs, memoryCtx, extPlugs, rulesOverrid
   const api = getSichaoApi();
   if (!api) return null;
   const cfg = getAiConfig();
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 72000);
   try {
-    const r = await fetch(`${api}/api/agent/run`, {
-      method: 'POST',
-      signal: ctrl.signal,
-      headers: {
-        'Content-Type': 'application/json',
+    const r = await nativePostJson(
+      `${api}/api/agent/run`,
+      {
         'X-User-Api-Key': cfg.apiKey || '',
         'X-User-Base-Url': cfg.baseUrl || '',
         'X-User-Model': cfg.model || ''
       },
-      body: JSON.stringify({
+      {
         messages: ctxMsgs,
         rules: rulesOverride || bot.rules || '',
         memory: memoryCtx || '',
         ext_plugins: extPlugs || [],
         max_steps: 4
-      })
-    });
-    if (!r.ok) return null;
-    const data = await r.json().catch(() => null);
-    if (!data?.ok || !data.reply) return null;
+      },
+      72000
+    );
+    const data = r.data;
+    if (!r.ok || !data?.ok || !data.reply) return null;
     if (data.usage?.total_tokens > 0) {
       recordAiUsage(data.usage, cfg.model || '');
     } else {
@@ -3869,14 +4278,13 @@ async function runCloudByokAgent(bot, ctxMsgs, memoryCtx, extPlugs, rulesOverrid
     return data;
   } catch {
     return null;
-  } finally {
-    clearTimeout(timer);
   }
 }
 
-async function chatWithActiveGroup(text) {
+async function chatWithActiveGroup(text, attachments = []) {
   const q = String(text || '').trim();
-  if (!q || !activeGroupId) return;
+  const atts = Array.isArray(attachments) ? attachments : [];
+  if ((!q && !atts.length) || !activeGroupId) return;
   const group = listGroups().find(g => g.id === activeGroupId);
   if (!group) return;
   const bots = listBots();
@@ -3889,7 +4297,7 @@ async function chatWithActiveGroup(text) {
     taskThreads.unshift(thread);
   }
   activeThreadId = thread.id;
-  thread.messages.push({ role: 'user', content: q, at: Date.now() });
+  thread.messages.push({ role: 'user', content: q, ...(atts.length ? { attachments: atts } : {}), at: Date.now() });
   thread.updatedAt = Date.now();
   saveTaskThreads();
 
@@ -3920,14 +4328,15 @@ async function chatWithActiveGroup(text) {
     for (let i = thread.messages.length - 1; i >= 0; i--) {
       if (thread.messages[i]?.role === 'divider') { startIdx = i + 1; break; }
     }
-    const buildGroupCtx = () => thread.messages
+    const buildGroupCtx = (includeImages = false) => thread.messages
       .slice(startIdx)
       .filter(m => !m.needKey && !m.internal && (m.role === 'user' || m.role === 'assistant'))
       .slice(-16)
       .map(m => ({
         role: m.role,
-        content: m.role === 'assistant' ? `[${m.botName || 'Bot'}]: ${m.content}` : m.content
+        content: m.role === 'assistant' ? `[${m.botName || 'Bot'}]: ${m.content}` : buildApiContentForMsg(m, includeImages)
       }));
+    const hasVisualAtts = atts.some(a => a.kind === 'image' || a.kind === 'video');
 
     let handoffCount = 0;
     for (let idx = 0; idx < queue.length; idx++) {
@@ -3936,19 +4345,19 @@ async function chatWithActiveGroup(text) {
       respondedIds.add(b.id);
       const memCtx = await buildSecondBrainContext(b.id, q);
       const extPlugs = mountedExtPluginsFor(b.id);
-      const useCloud = (isPluginMountedOnBot(b.id, 'mcp-bridge') || extPlugs.length > 0) && getSichaoApi() && q.length >= 6;
+      const useCloud = !hasVisualAtts && (isPluginMountedOnBot(b.id, 'mcp-bridge') || extPlugs.length > 0) && getSichaoApi() && q.length >= 6;
       renderChatBox(thread, `${b.name} ${useCloud ? '正在联网协同思考…' : '正在群内回复…'}`);
       const peers = members.filter(x => x.id !== b.id).map(x => `${x.name}${x.rules ? `(${x.rules.slice(0, 20)})` : ''}`).join('、');
       const sysPrompt = [
         b.rules ? b.rules : `你是群聊中的智能体「${b.name}」。`,
-        memCtx ? `[共享第二大脑（记忆与星海知识库）]\n${memCtx}` : '',
+        memCtx ? `[长期云端知识库与记忆]\n${memCtx}` : '',
         `当前你在多 Bot 群聊「${group.name}」中，同群成员有：${peers || '无'}。`,
         '请站在你的职责与视角简洁发言，不要重复前面同事已说过的观点；若本轮无需你发言，请仅回复 [[PASS]]。',
         '如需交接给同群某位成员继续，可在回复中 @对方名字；如需用户确认某项操作，可输出 [[CONFIRM:标题|目标|说明|指令]]；如需输出卡片，可输出 [[CARD:来源|标题|副标题|详情|https://链接]]。'
       ].filter(Boolean).join('\n');
       let rawAns = '';
       if (useCloud) {
-        const cloudData = await runCloudByokAgent(b, buildGroupCtx(), memCtx, extPlugs, sysPrompt);
+        const cloudData = await runCloudByokAgent(b, buildGroupCtx(false), memCtx, extPlugs, sysPrompt);
         if (cloudData?.reply) {
           const steps = Array.isArray(cloudData.steps) ? cloudData.steps : [];
           rawAns = steps.length
@@ -3957,7 +4366,7 @@ async function chatWithActiveGroup(text) {
         }
       }
       if (!rawAns) {
-        rawAns = String(await aiComplete([{ role: 'system', content: sysPrompt }, ...buildGroupCtx()]) || '').trim();
+        rawAns = String(await aiComplete([{ role: 'system', content: sysPrompt }, ...buildGroupCtx(true)]) || '').trim();
       }
       if (!rawAns || /^\[\[PASS\]\]$/i.test(rawAns)) continue;
       const parsed = parseBotCardDirectives(rawAns);
@@ -3986,10 +4395,11 @@ async function chatWithActiveGroup(text) {
   }
 }
 
-async function chatWithActiveBot(text) {
-  if (activeGroupId) { await chatWithActiveGroup(text); return; }
+async function chatWithActiveBot(text, attachments = []) {
+  if (activeGroupId) { await chatWithActiveGroup(text, attachments); return; }
   const q = String(text || '').trim();
-  if (!q) return;
+  const atts = Array.isArray(attachments) ? attachments : [];
+  if (!q && !atts.length) return;
   const bot = getActiveBot();
   let thread = taskThreads.find(t => t.botId === bot.id && !t.groupId);
   if (!thread) {
@@ -4003,24 +4413,26 @@ async function chatWithActiveBot(text) {
     taskThreads.unshift(thread);
   }
   activeThreadId = thread.id;
-  thread.messages.push({ role: 'user', content: q, at: Date.now() });
+  thread.messages.push({ role: 'user', content: q, ...(atts.length ? { attachments: atts } : {}), at: Date.now() });
   thread.updatedAt = Date.now();
   saveTaskThreads();
 
-  // 自然语言直接记住或存入星海第二大脑（无需联网、零 Token 即可写入共享记忆与星海）
-  const memMatch = q.match(/^(?:帮我记住|请记住|记住|存入星海|存进星海)[：:\s]+([\s\S]+)$/);
-  if (memMatch && memMatch[1].trim()) {
+  // 自然语言直接记住或存入知识库（无需联网、零 Token 即可写入长久知识库）
+  const memMatch = q.match(/^(?:帮我记住|请记住|记住|存入知识库|存进知识库|存入星海|存进星海)[：:\s]+([\s\S]+)$/);
+  if (memMatch && memMatch[1].trim() && !atts.length) {
     const fact = memMatch[1].trim();
     await saveBotInsightToCosmos(bot, fact);
     thread.messages.push({
       role: 'assistant',
-      content: `已记住并存入「星海」第二大脑：「${fact.slice(0, 80)}」。后续你和任意 Bot 对话，都能自动共享这条记忆。`,
+      content: `已存入长期知识库：「${fact.slice(0, 80)}」。后续你和任意 Bot 对话都会自动共享，也可在「知识库」一键同步到云端。`,
       inCosmos: true,
       at: Date.now()
     });
     thread.updatedAt = Date.now();
     saveTaskThreads();
     renderChatBox(thread);
+    const headSvg = $('#chat-head-av .bot-glyph');
+    if (headSvg) triggerBotMood(headSvg, 'laugh');
     renderBotRoster();
     return;
   }
@@ -4028,7 +4440,7 @@ async function chatWithActiveBot(text) {
   if (!aiConfigured()) {
     thread.messages.push({
       role: 'assistant',
-      content: `你好，我是 ${bot.name}。填上你自己的 AI API Key（支持 OpenAI / DeepSeek / Claude / Gemini 兼容接口，纯 BYOK 零平台扣费）后，就能直接在这里和我连续对话啦。`,
+      content: `你好，我是 ${bot.name}。填上你自己的 AI API Key（支持 DeepSeek / 硅基流动 / 通义千问 / OpenAI / Gemini / Claude，纯 BYOK 零平台扣费）后，就能直接在这里和我连续对话啦。`,
       needKey: true,
       at: Date.now()
     });
@@ -4037,18 +4449,20 @@ async function chatWithActiveBot(text) {
     renderBotRoster();
     return;
   }
+  const hasVisualAtts = atts.some(a => a.kind === 'image' || a.kind === 'video');
   const memoryCtx = await buildSecondBrainContext(bot.id, q);
   const extPlugs = mountedExtPluginsFor(bot.id);
-  const canUseCloudEngine = (isPluginMountedOnBot(bot.id, 'mcp-bridge') || extPlugs.length > 0) && !!getSichaoApi() && (q.length >= 4 || extPlugs.length > 0);
-  renderChatBox(thread, canUseCloudEngine ? '云端多步 Agent 思考与按需联网中…' : '思考中…');
+  const canUseCloudEngine = !hasVisualAtts && (isPluginMountedOnBot(bot.id, 'mcp-bridge') || extPlugs.length > 0) && !!getSichaoApi() && (q.length >= 4 || extPlugs.length > 0);
+  renderChatBox(thread, hasVisualAtts ? '正在解析照片/视频内容…' : (canUseCloudEngine ? '云端多步 Agent 思考与按需联网中…' : '思考中…'));
   $('#zone-chat-modal')?.classList.add('thinking');
   try {
-    // 只携带最后一条「新话题分割线」之后的上下文，彻底零串味、省 Token
     let startIdx = 0;
     for (let i = thread.messages.length - 1; i >= 0; i--) {
       if (thread.messages[i]?.role === 'divider') { startIdx = i + 1; break; }
     }
-    const ctxMsgs = thread.messages.slice(startIdx).filter(m => !m.needKey && !m.internal && (m.role === 'user' || m.role === 'assistant')).slice(-14).map(m => ({ role: m.role, content: m.content }));
+    const rawSlice = thread.messages.slice(startIdx).filter(m => !m.needKey && !m.internal && (m.role === 'user' || m.role === 'assistant')).slice(-14);
+    const textCtxMsgs = rawSlice.map(m => ({ role: m.role, content: buildApiContentForMsg(m, false) }));
+    const visionCtxMsgs = rawSlice.map(m => ({ role: m.role, content: buildApiContentForMsg(m, true) }));
     const otherBots = listBots().filter(b => b.id !== bot.id);
     const peerHint = otherBots.length
       ? `你可后台静默联系的其他 Bot：${otherBots.map(b => `${b.name}${b.rules ? `(${b.rules.slice(0, 22)})` : ''}`).join('、')}。如任务需要交给某位 Bot 协同，可输出 [[MSG_BOT:对方Bot名|具体委托内容]]，系统会后台静默通讯并把结果交回给你，不会打扰用户。`
@@ -4060,7 +4474,7 @@ async function chatWithActiveBot(text) {
     let cloudSteps = [];
     let cloudSources = [];
     if (canUseCloudEngine) {
-      const data = await runCloudByokAgent(bot, ctxMsgs, memoryCtx, extPlugs, combinedRules);
+      const data = await runCloudByokAgent(bot, textCtxMsgs, memoryCtx, extPlugs, combinedRules);
       if (data?.reply) {
         cloudSteps = Array.isArray(data.steps) ? data.steps : [];
         cloudSources = Array.isArray(data.sources) ? data.sources : [];
@@ -4074,9 +4488,9 @@ async function chatWithActiveBot(text) {
     }
     if (!ans) {
       const skillBlocks = extPlugs.filter(p => p.protocol === 'skill_md' && p.instructions).map(p => `[已挂载 Skill「${p.name}」]\n${p.instructions.slice(0, 1800)}`).join('\n\n');
-      const memBlock = memoryCtx ? `[用户已导入的个人记忆（请自然结合但无需逐条复述）]\n${memoryCtx}` : '';
+      const memBlock = memoryCtx ? `[用户长期知识库与记忆（请自然结合但无需逐条复述）]\n${memoryCtx}` : '';
       const sysContent = [combinedRules, memBlock, skillBlocks].filter(Boolean).join('\n\n');
-      ans = await aiComplete([{ role: 'system', content: sysContent }, ...ctxMsgs]);
+      ans = await aiComplete([{ role: 'system', content: sysContent }, ...visionCtxMsgs]);
     }
     // 处理 Bot 间静默后台通讯（最多 2 次接力，绝不刷屏、绝不死循环）
     const relayParsed = parseBotRelayDirectives(String(ans || ''));
@@ -4094,7 +4508,7 @@ async function chatWithActiveBot(text) {
         renderChatBox(thread, '已收到后台协作结果，正在汇总…');
         const synth = await aiComplete([
           ...(bot.rules ? [{ role: 'system', content: bot.rules }] : []),
-          ...ctxMsgs,
+          ...textCtxMsgs,
           { role: 'user', content: `以下为其他 Bot 在后台静默协作返回的结果（不要输出 MSG_BOT 标签），请直接整理成清晰结果回复用户：\n${relayNotes.join('\n')}` }
         ]);
         ans = String(synth || relayParsed.text || relayNotes.join('\n'));
@@ -4140,6 +4554,8 @@ async function chatWithActiveBot(text) {
     thread.updatedAt = Date.now();
     saveTaskThreads();
     renderChatBox(thread);
+    const headSvg = $('#chat-head-av .bot-glyph');
+    if (headSvg) triggerBotMood(headSvg, 'laugh');
   } catch (err) {
     thread.messages.push({ role: 'assistant', content: `连接模型失败：${err?.message || '请检查 API 地址、模型名或密钥'}`, needKey: true, at: Date.now() });
     saveTaskThreads();
@@ -4226,13 +4642,19 @@ function syncPluginStates() {
       const grp = listGroups().find(g => g.id === activeGroupId);
       if (grp) renderGroupMentionBar(grp);
     } else {
-      renderBotMountedBar(getActiveBot());
+      const th = taskThreads.find(t => t.id === activeThreadId) || taskThreads.find(t => t.botId === getActiveBot().id && !t.groupId);
+      if (th) renderChatBox(th);
+      else renderBotMountedBar(getActiveBot());
     }
   }
   if (!readerOn) {
     $('#zone-agent-hub')?.classList.remove('compact');
     if ($('#reader')?.classList.contains('active')) closeBook();
-    if (currentPane() !== 'shelf') showPane('shelf', { instant: true });
+    if (document.documentElement.classList.contains('in-bot-reader')) {
+      exitBotReaderWorkspace({ returnToBot: false });
+    } else if (currentPane() !== 'shelf') {
+      showPane('shelf', { instant: true });
+    }
   } else {
     renderLibrary();
   }
@@ -4473,19 +4895,12 @@ function openProfileSheet() {
           </button>
         </div>
         <div class="prof-group">
-          <button type="button" class="prof-row" data-p-act="cosmos">
-            <div class="prof-row-main">
-              <strong>星海</strong>
-              <span>书籍 · 笔记 · Bot 共享第二大脑</span>
-            </div>
-            <span class="prof-row-val">进入 ›</span>
-          </button>
           <button type="button" class="prof-row" data-p-act="import-mem">
             <div class="prof-row-main">
-              <strong>导入记忆</strong>
-              <span>从其他 AI 迁入并同步至星海</span>
+              <strong>知识库</strong>
+              <span>长久记忆与文档 · 支持云端同步</span>
             </div>
-            <span class="prof-row-val">${memCount ? `${memCount} 条 ›` : '导入 ›'}</span>
+            <span class="prof-row-val">${memCount ? `${memCount} 条 ›` : '进入 ›'}</span>
           </button>
           <button type="button" class="prof-row" data-p-act="plugins">
             <div class="prof-row-main">
@@ -4522,7 +4937,6 @@ function openProfileSheet() {
     mask.onclick = e => { if (e.target === mask) closeProfileSheet(); };
     mask.querySelector('[data-p-act="close"]').onclick = () => closeProfileSheet();
     mask.querySelector('[data-p-act="ai-cfg"]').onclick = () => { closeProfileSheet(); openAiSettingsDialog(); };
-    mask.querySelector('[data-p-act="cosmos"]').onclick = () => { closeProfileSheet(); openBotReaderSheet(null, { initialPane: 'graph', fromHome: true }); };
     mask.querySelector('[data-p-act="edit-recharge"]').onclick = () => { editingRecharge = !editingRecharge; draw(); };
     mask.querySelectorAll('[data-p-cur]').forEach(btn => {
       btn.onclick = () => { setRechargeBalance(u.rechargeAmount, btn.dataset.pCur); draw(); };
@@ -4663,39 +5077,117 @@ $('#zone-bot-search')?.addEventListener('input', () => renderBotRoster());
 $('#btn-chat-back')?.addEventListener('click', () => closeBotChat());
 $('#btn-chat-botmeta')?.addEventListener('click', () => {
   if (activeGroupId) openBotsFromHub({ editGroupId: activeGroupId });
-  else openBotsFromHub({ editBotId: getActiveBot().id });
+  else openBotProfilePage(getActiveBot());
 });
-$('#btn-chat-plugins')?.addEventListener('click', () => {
-  if (activeGroupId) openBotsFromHub({ editGroupId: activeGroupId });
-  else openBotPluginsSheet(getActiveBot());
+$('#btn-chat-more')?.addEventListener('click', e => {
+  e.stopPropagation();
+  $('#zone-chat-more-menu')?.classList.toggle('hidden');
 });
-$('#btn-chat-new')?.addEventListener('click', () => insertNewTopicDivider());
+document.addEventListener('click', e => {
+  const menu = $('#zone-chat-more-menu');
+  if (menu && !menu.classList.contains('hidden') && !e.target.closest('#zone-chat-more-menu, #btn-chat-more')) {
+    menu.classList.add('hidden');
+  }
+});
+$('#zone-chat-more-menu')?.addEventListener('click', async e => {
+  const btn = e.target.closest('[data-cm-act]');
+  if (!btn) return;
+  const act = btn.dataset.cmAct;
+  closeChatMoreMenu();
+  if (act === 'profile') {
+    if (activeGroupId) openBotsFromHub({ editGroupId: activeGroupId });
+    else openBotProfilePage(getActiveBot());
+  } else if (act === 'find') {
+    $('#zone-chat-find')?.classList.remove('hidden');
+    $('#zone-chat-find-inp')?.focus();
+  } else if (act === 'share') {
+    const bot = getActiveBot();
+    const tpl = JSON.stringify({ name: bot.name, shape: bot.shape, accent: bot.accent, rules: bot.rules || '', plugins: getBotPlugins(bot.id) }, null, 2);
+    await copyText(tpl);
+    toast(`已复制「${bot.name}」模板配置`);
+  } else if (act === 'clear') {
+    const th = activeGroupId
+      ? taskThreads.find(t => t.groupId === activeGroupId)
+      : taskThreads.find(t => t.botId === getActiveBot().id && !t.groupId);
+    if (th) {
+      th.messages = [];
+      th.lastHandoff = null;
+      th.updatedAt = Date.now();
+      saveTaskThreads();
+      renderChatBox(th);
+      renderBotRoster();
+      toast('已清空当前对话');
+    }
+  }
+});
+$('#zone-chat-find-inp')?.addEventListener('input', e => {
+  chatFindQuery = e.target.value || '';
+  const th = taskThreads.find(t => t.id === activeThreadId);
+  if (th) renderChatBox(th);
+});
+$('#zone-chat-find-close')?.addEventListener('click', () => closeChatFindBar());
+$('#btn-chat-plugins')?.addEventListener('click', () => openChatAttachSheet());
+const handlePickedImages = async fileList => {
+  const files = [...(fileList || [])].slice(0, 4);
+  for (const f of files) {
+    try {
+      const att = await compressImageFile(f);
+      pendingAttachments.push(att);
+    } catch { toast(`无法读取图片 ${f.name || ''}`); }
+  }
+  renderPendingAttachments();
+};
+$('#chat-pick-photo')?.addEventListener('change', e => handlePickedImages(e.target.files));
+$('#chat-pick-camera')?.addEventListener('change', e => handlePickedImages(e.target.files));
+$('#chat-pick-video')?.addEventListener('change', async e => {
+  const f = e.target.files?.[0];
+  if (!f) return;
+  toast('正在提取视频关键帧…', 2000);
+  const att = await extractVideoKeyframes(f);
+  pendingAttachments.push(att);
+  renderPendingAttachments();
+});
+$('#chat-pick-file')?.addEventListener('change', async e => {
+  const files = [...(e.target.files || [])].slice(0, 3);
+  for (const f of files) {
+    try {
+      const text = await extractDocFileText(f);
+      pendingAttachments.push({ kind: 'file', name: f.name || '文档', text: text.slice(0, 14000), chars: text.length });
+    } catch { toast(`无法读取文件 ${f.name || ''}`); }
+  }
+  renderPendingAttachments();
+});
 $('#zone-chat-mic')?.addEventListener('click', () => command.openBar({ listen: true }));
+$('#zone-chat-input')?.addEventListener('input', () => updateSendBtnState());
 $('#zone-chat-input')?.addEventListener('focus', () => $('#zone-chat-modal')?.classList.add('typing'));
 $('#zone-chat-input')?.addEventListener('blur', () => $('#zone-chat-modal')?.classList.remove('typing'));
 $('#zone-chat-form')?.addEventListener('submit', async e => {
   e.preventDefault();
   const inp = $('#zone-chat-input');
   const text = (inp?.value || '').trim();
-  if (!text) { command.openBar({ listen: true }); return; }
-  inp.value = '';
+  const atts = pendingAttachments.splice(0);
+  renderPendingAttachments();
+  if (!text && !atts.length) return;
+  if (inp) inp.value = '';
+  updateSendBtnState();
   if (activeGroupId) {
-    await chatWithActiveGroup(text);
+    await chatWithActiveGroup(text, atts);
     renderAgentHub();
     return;
   }
-  const ops = parseNaturalCommands(text, { reading: false, pane: currentPane() });
+  const ops = !atts.length ? parseNaturalCommands(text, { reading: false, pane: currentPane() }) : [];
   if (ops.length && ops[0].op !== 'askAi') {
     await command.run(text);
   } else {
-    await chatWithActiveBot(ops[0]?.question || text);
+    await chatWithActiveBot(ops[0]?.question || text, atts);
   }
   renderAgentHub();
 });
 
 applyThemePlugin(getActiveThemePlugin());
 renderAgentHub();
+startBotLifeEngine();
 consumeLaunchDeepLink(openDeepLink);
 syncToAndroidWidget();
 
-window.__app = { db, openBook, closeBook, importFiles, importBlob, importArticleUrl, handleBack, openDeepLink, openMicroApp, closeMicroApp, isMicroAppOpen, pinToDesktop, postChatCard, requestChatConfirm, openBotConversation, openGroupConversation, relayBotToBotMessage, buildSecondBrainContext, get engine() { return engine; }, renderLibrary, stacks: { list: listStacks }, runCommand: text => command.run(text), openCommand: opts => command.openBar(opts), openPeek: openBookPeek, closePeek: closeBookPeek, openAuthGate, getAuthUser, getOpdsUrl, setOpdsUrl };
+window.__app = { db, openBook, closeBook, importFiles, importBlob, importArticleUrl, handleBack, openDeepLink, openMicroApp, closeMicroApp, isMicroAppOpen, pinToDesktop, postChatCard, requestChatConfirm, openBotConversation, openGroupConversation, openBotReaderSheet, relayBotToBotMessage, buildSecondBrainContext, get engine() { return engine; }, renderLibrary, stacks: { list: listStacks }, runCommand: text => command.run(text), openCommand: opts => command.openBar(opts), openPeek: openBookPeek, closePeek: closeBookPeek, openAuthGate, getAuthUser, getOpdsUrl, setOpdsUrl };

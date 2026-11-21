@@ -1,5 +1,5 @@
 // 书库之外的工作台：知识列表、笔记编辑、图谱、AI 面板。
-import { aiConfigured, askText, clearAiKey, explainText, getAiConfig, saveAiConfig, testAi } from './ai.js';
+import { AI_PRESETS, aiConfigured, askText, clearAiKey, explainText, getAiConfig, saveAiConfig, testAi } from './ai.js';
 import {
   createNote, deleteNote, extractKeyPoints, linkNotes, listLinks, listNotes,
   makeTitle, parseTags, saveNote, suggestTags, unlinkPair
@@ -866,8 +866,26 @@ function openAiSettings() {
   $('#ai-base').value = cfg.baseUrl || '';
   $('#ai-model').value = cfg.model || '';
   $('#ai-key').value = '';
-  $('#ai-key').placeholder = cfg.apiKey ? '已保存在这台设备，留空则不修改' : '只保存在这台设备';
-  $('#ai-settings-status').textContent = cfg.apiKey ? '这台设备上已经有一把密钥。' : '还没有密钥。不填写也可以继续阅读，解释会使用本地要点。';
+  $('#ai-key').placeholder = cfg.apiKey ? '已保存在本机，留空则保持不变' : '粘贴 API Key（只保存在本机）';
+  $('#ai-settings-status').textContent = cfg.apiKey ? '已配置密钥，可点「测试」验证连通性。' : '点上方服务商一键填入地址，再粘贴密钥即可。';
+  const presetBox = $('#ai-presets');
+  if (presetBox) {
+    presetBox.replaceChildren();
+    for (const p of AI_PRESETS) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'ai-preset-chip' + (String(cfg.baseUrl || '').toLowerCase().includes(p.baseUrl.replace(/^https?:\/\//, '').split('/')[0]) ? ' on' : '');
+      b.textContent = p.label;
+      b.onclick = () => {
+        $('#ai-base').value = p.baseUrl;
+        $('#ai-model').value = p.model;
+        presetBox.querySelectorAll('.ai-preset-chip').forEach(x => x.classList.toggle('on', x === b));
+        $('#ai-settings-status').textContent = `已填入 ${p.label} 官方地址与推荐模型（${p.model}），粘贴密钥后点「测试」或「保存」。`;
+        $('#ai-key').focus();
+      };
+      presetBox.appendChild(b);
+    }
+  }
   const sheet = $('#settings-mask');
   sheet.classList.remove('hidden');
   holdFocus(sheet);

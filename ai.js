@@ -2,7 +2,114 @@
 
 const KEY = 'rr-ai';
 const USAGE_KEY = 'zone-ai-usage-v2';
-const DEFAULTS = { baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o-mini', apiKey: '' };
+const DEFAULTS = { baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat', apiKey: '' };
+const CLOUD_FALLBACK_DEFAULT = 'https://sichao-v2-server.onrender.com';
+
+export const AI_PRESETS = [
+  { id: 'deepseek', label: 'DeepSeek', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
+  { id: 'siliconflow', label: '硅基流动', baseUrl: 'https://api.siliconflow.cn/v1', model: 'deepseek-ai/DeepSeek-V3' },
+  { id: 'qwen', label: '通义千问', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-plus' },
+  { id: 'kimi', label: 'Kimi', baseUrl: 'https://api.moonshot.cn/v1', model: 'moonshot-v1-8k' },
+  { id: 'glm', label: '智谱 GLM', baseUrl: 'https://open.bigmodel.cn/api/paas/v4', model: 'glm-4-flash' },
+  { id: 'doubao', label: '豆包', baseUrl: 'https://ark.cn-beijing.volces.com/api/v3', model: 'doubao-1-5-pro-32k-250115' },
+  { id: 'openrouter', label: 'OpenRouter', baseUrl: 'https://openrouter.ai/api/v1', model: 'openai/gpt-4o-mini' },
+  { id: 'openai', label: 'OpenAI', baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
+  { id: 'gemini', label: 'Gemini', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', model: 'gemini-2.5-flash' },
+  { id: 'grok', label: 'Grok', baseUrl: 'https://api.x.ai/v1', model: 'grok-3-mini' },
+  { id: 'claude', label: 'Claude', baseUrl: 'https://api.anthropic.com/v1', model: 'claude-3-5-sonnet-latest' }
+];
+
+const NEEDS_V1_RE = /^https?:\/\/(api\.openai\.com|api\.deepseek\.com|api\.siliconflow\.cn|api\.moonshot\.cn|api\.x\.ai|openrouter\.ai\/api|api\.groq\.com\/openai|dashscope\.aliyuncs\.com\/compatible-mode)$/i;
+
+export function resolveChatEndpoint(rawBase) {
+  let base = String(rawBase || '').replace(/[\s\u200b-\u200d\ufeff]+/g, '').replace(/\/+$/, '');
+  if (!base) base = DEFAULTS.baseUrl;
+  if (!/^https?:\/\//i.test(base)) {
+    const isLan = /^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/i.test(base);
+    base = (isLan ? 'http://' : 'https://') + base;
+  }
+  const low = base.toLowerCase();
+  if (low.includes('api.anthropic.com')) {
+    if (low.endsWith('/messages')) return { url: base, proto: 'anthropic', base };
+    if (low.endsWith('/v1')) return { url: `${base}/messages`, proto: 'anthropic', base };
+    return { url: `${base}/v1/messages`, proto: 'anthropic', base };
+  }
+  if (low.endsWith('/chat/completions')) return { url: base, proto: 'openai', base: base.replace(/\/chat\/completions$/i, '') };
+  if (NEEDS_V1_RE.test(base)) return { url: `${base}/v1/chat/completions`, proto: 'openai', base: `${base}/v1` };
+  return { url: `${base}/chat/completions`, proto: 'openai', base };
+}
+
+function isPrivateHostUrl(url) {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return host === 'localhost' || host === '0.0.0.0' || host.endsWith('.local')
+      || /^(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(host);
+  } catch { return false; }
+}
+
+export async function nativePostJson(url, headers = {}, payload = {}, timeoutMs = 45000) {
+  const capHttp = typeof window !== 'undefined' ? window?.Capacitor?.Plugins?.CapacitorHttp : null;
+  if (capHttp && typeof capHttp.post === 'function') {
+    const res = await capHttp.post({
+      url,
+      headers: { 'Content-Type': 'application/json', ...headers },
+      data: payload,
+      connectTimeout: Math.min(25000, timeoutMs),
+      readTimeout: timeoutMs
+    });
+    let data = res?.data;
+    if (typeof data === 'string') {
+      try { data = JSON.parse(data); } catch { data = { _raw: data }; }
+    }
+    const status = Number(res?.status || 0);
+    return { ok: status >= 200 && status < 300, status, data: data || {} };
+  }
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...headers },
+      body: JSON.stringify(payload),
+      signal: ctrl.signal
+    });
+    const text = await res.text().catch(() => '');
+    let data = {};
+    try { data = text ? JSON.parse(text) : {}; } catch { data = { _raw: text }; }
+    return { ok: res.ok, status: res.status, data };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export async function nativeGetJson(url, headers = {}, timeoutMs = 30000) {
+  const capHttp = typeof window !== 'undefined' ? window?.Capacitor?.Plugins?.CapacitorHttp : null;
+  if (capHttp && typeof capHttp.get === 'function') {
+    const res = await capHttp.get({
+      url,
+      headers,
+      connectTimeout: Math.min(20000, timeoutMs),
+      readTimeout: timeoutMs
+    });
+    let data = res?.data;
+    if (typeof data === 'string') {
+      try { data = JSON.parse(data); } catch { data = { _raw: data }; }
+    }
+    const status = Number(res?.status || 0);
+    return { ok: status >= 200 && status < 300, status, data: data || {} };
+  }
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { method: 'GET', headers, signal: ctrl.signal });
+    const text = await res.text().catch(() => '');
+    let data = {};
+    try { data = text ? JSON.parse(text) : {}; } catch { data = { _raw: text }; }
+    return { ok: res.ok, status: res.status, data };
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 // 常见主流模型官方公开单价参考（每百万 tokens：in=输入, out=输出）
 const MODEL_PRICES = [
@@ -137,20 +244,12 @@ export async function fetchLiveBalance(cloudApiBase) {
   if (!cfg.apiKey) return { ok: false, supported: false, reason: '请先填入你的 API Key' };
   const api = String(cloudApiBase || '').replace(/\/+$/, '');
   if (!api) return { ok: false, supported: false, reason: '未配置云端代理地址' };
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 35000);
   try {
-    const r = await fetch(`${api}/api/byok/balance`, {
-      method: 'POST',
-      signal: ctrl.signal,
-      headers: {
-        'Content-Type': 'application/json',
-        'X-User-Api-Key': cfg.apiKey,
-        'X-User-Base-Url': cfg.baseUrl || '',
-        'X-User-Model': cfg.model || ''
-      }
-    });
-    const data = await r.json().catch(() => ({}));
+    const { data } = await nativePostJson(`${api}/api/byok/balance`, {
+      'X-User-Api-Key': cfg.apiKey,
+      'X-User-Base-Url': cfg.baseUrl || '',
+      'X-User-Model': cfg.model || ''
+    }, {}, 35000);
     if (data?.ok && data.balance != null) {
       const u = getAiUsage();
       u.liveBalance = Number(data.balance);
@@ -166,8 +265,6 @@ export async function fetchLiveBalance(cloudApiBase) {
     return data;
   } catch (err) {
     return { ok: false, supported: false, reason: err?.name === 'AbortError' ? '云端节点正在冷启动，请稍后重试' : (err?.message || '网络异常') };
-  } finally {
-    clearTimeout(timer);
   }
 }
 
@@ -176,14 +273,16 @@ export function getAiConfig() {
   catch { return Object.assign({}, DEFAULTS); }
 }
 
-export function aiConfigured() { return !!getAiConfig().apiKey; }
+export function aiConfigured() { return !!String(getAiConfig().apiKey || '').trim(); }
 
 export function saveAiConfig(patch) {
   const cur = getAiConfig();
+  const rawBase = String(patch.baseUrl ?? cur.baseUrl ?? DEFAULTS.baseUrl).replace(/[\s\u200b-\u200d\ufeff]+/g, '');
+  const cleanKey = patch.apiKey == null ? String(cur.apiKey || '').trim() : String(patch.apiKey).replace(/[\r\n\u200b-\u200d\ufeff]+/g, '').trim();
   const next = {
-    baseUrl: String(patch.baseUrl ?? cur.baseUrl ?? DEFAULTS.baseUrl).trim() || DEFAULTS.baseUrl,
+    baseUrl: rawBase || DEFAULTS.baseUrl,
     model: String(patch.model ?? cur.model ?? DEFAULTS.model).trim() || DEFAULTS.model,
-    apiKey: patch.apiKey == null ? cur.apiKey : String(patch.apiKey)
+    apiKey: cleanKey
   };
   localStorage.setItem(KEY, JSON.stringify(next));
   return { baseUrl: next.baseUrl, model: next.model, hasKey: !!next.apiKey };
@@ -195,49 +294,120 @@ export function clearAiKey() {
   localStorage.setItem(KEY, JSON.stringify(cur));
 }
 
+function formatHttpApiError(status, data, model) {
+  const rawMsg = data?.error?.message || (typeof data?.error === 'string' ? data.error : '') || data?.message || '';
+  if (status === 401) return `密钥无效或已过期（401）${rawMsg ? `：${rawMsg.slice(0, 80)}` : ''}`;
+  if (status === 402) return `账号余额不足（402）${rawMsg ? `：${rawMsg.slice(0, 80)}` : ''}`;
+  if (status === 403) return `无权限访问该接口或模型（403）${rawMsg ? `：${rawMsg.slice(0, 80)}` : ''}`;
+  if (status === 404) return `接口地址或模型「${model}」不存在（404）`;
+  if (status === 429) return `请求受限或额度已满（429）${rawMsg ? `：${rawMsg.slice(0, 80)}` : ''}`;
+  return rawMsg || `请求失败（HTTP ${status || '未知'}）`;
+}
+
+function toAnthropicBody(messages, model, temperature) {
+  const sys = [];
+  const userMsgs = [];
+  for (const m of messages || []) {
+    if (m.role === 'system') { sys.push(String(m.content || '')); continue; }
+    if (Array.isArray(m.content)) {
+      const blocks = [];
+      for (const part of m.content) {
+        if (part?.type === 'text') blocks.push({ type: 'text', text: String(part.text || '') });
+        else if (part?.type === 'image_url') {
+          const u = String(part.image_url?.url || '');
+          const dm = u.match(/^data:(image\/[^;]+);base64,(.+)$/s);
+          if (dm) blocks.push({ type: 'image', source: { type: 'base64', media_type: dm[1], data: dm[2] } });
+        }
+      }
+      userMsgs.push({ role: m.role || 'user', content: blocks.length ? blocks : [{ type: 'text', text: '' }] });
+    } else {
+      userMsgs.push({ role: m.role || 'user', content: String(m.content || '') });
+    }
+  }
+  const body = { model, max_tokens: 2048, temperature, messages: userMsgs.length ? userMsgs : [{ role: 'user', content: '你好' }] };
+  if (sys.length) body.system = sys.join('\n\n');
+  return body;
+}
+
 export async function complete(messages, override) {
   const cfg = Object.assign({}, getAiConfig(), override || {});
-  if (!cfg.apiKey) {
+  const apiKey = String(cfg.apiKey || '').replace(/[\r\n\u200b-\u200d\ufeff]+/g, '').trim();
+  if (!apiKey) {
     const err = new Error('尚未配置密钥');
     err.code = 'NO_KEY';
     throw err;
   }
-  const base = String(cfg.baseUrl || '').replace(/\/+$/, '');
-  if (!/^https?:\/\//i.test(base)) throw new Error('接口地址需要以 http:// 或 https:// 开头');
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 30000);
-  let res;
-  let data = {};
+  const model = String(cfg.model || DEFAULTS.model).trim() || DEFAULTS.model;
+  const { url: endpoint, proto } = resolveChatEndpoint(cfg.baseUrl);
+  if (!/^https?:\/\//i.test(endpoint)) throw new Error('接口地址需要以 http:// 或 https:// 开头');
+
+  const recordAndReturn = (text, reasoning, pt, ct, tt) => {
+    const out = String(text || '').trim();
+    if (!out) throw new Error('模型没有返回文字');
+    const estIn = Math.ceil(JSON.stringify(messages).length * 0.45);
+    const estOut = Math.ceil((out.length + String(reasoning || '').length) * 0.65);
+    const realTotal = Number(tt || (Number(pt || 0) + Number(ct || 0)));
+    recordAiUsage(
+      realTotal > 0 ? { promptTokens: Number(pt || 0), completionTokens: Number(ct || 0), totalTokens: realTotal } : { promptTokens: estIn, completionTokens: estOut, totalTokens: estIn + estOut },
+      model
+    );
+    return reasoning ? `<think>${String(reasoning).trim()}</think>\n${out}` : out;
+  };
+
+  let directErr = '';
   try {
-    res = await fetch(base + '/chat/completions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + cfg.apiKey },
-      body: JSON.stringify({ model: cfg.model || DEFAULTS.model, temperature: 0.3, messages }),
-      signal: ctrl.signal
-    });
-    data = await res.json().catch(() => ({}));
+    const headers = proto === 'anthropic'
+      ? { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' }
+      : { Authorization: 'Bearer ' + apiKey };
+    const body = proto === 'anthropic'
+      ? toAnthropicBody(messages, model, 0.3)
+      : { model, temperature: 0.3, messages };
+    const res = await nativePostJson(endpoint, headers, body, 45000);
+    if (!res.ok) {
+      const apiErr = new Error(formatHttpApiError(res.status, res.data, model));
+      apiErr.isHttpApiError = true;
+      throw apiErr;
+    }
+    if (proto === 'anthropic') {
+      const blocks = Array.isArray(res.data?.content) ? res.data.content : [];
+      const text = blocks.filter(b => b?.type === 'text').map(b => b.text || '').join('\n').trim();
+      const u = res.data?.usage || {};
+      return recordAndReturn(text, '', u.input_tokens || 0, u.output_tokens || 0, (u.input_tokens || 0) + (u.output_tokens || 0));
+    }
+    const msgObj = res.data?.choices?.[0]?.message || {};
+    const u = res.data?.usage || {};
+    return recordAndReturn(msgObj.content, msgObj.reasoning_content, u.prompt_tokens || 0, u.completion_tokens || 0, u.total_tokens || 0);
   } catch (err) {
-    if (err?.name === 'AbortError') throw new Error('模型太久没有回应。');
-    throw new Error('网络请求没有发出去。请检查接口地址，或稍后再试。');
-  } finally {
-    clearTimeout(timer);
+    if (err?.isHttpApiError) throw err;
+    directErr = err?.name === 'AbortError' ? '直连超时' : String(err?.message || '直连失败');
   }
-  if (!res.ok) throw new Error(data?.error?.message || ('请求失败（' + res.status + '）'));
-  const msgObj = data?.choices?.[0]?.message || {};
-  const text = msgObj.content;
-  const reasoning = msgObj.reasoning_content;
-  if (!text) throw new Error('模型没有返回文字');
-  const out = String(text).trim();
-  const pt = Number(data?.usage?.prompt_tokens || 0);
-  const ct = Number(data?.usage?.completion_tokens || 0);
-  const realTotal = Number(data?.usage?.total_tokens || (pt + ct));
-  const estIn = Math.ceil(JSON.stringify(messages).length * 0.55);
-  const estOut = Math.ceil((out.length + String(reasoning || '').length) * 0.65);
-  recordAiUsage(
-    realTotal > 0 ? { promptTokens: pt, completionTokens: ct, totalTokens: realTotal } : { promptTokens: estIn, completionTokens: estOut, totalTokens: estIn + estOut },
-    cfg.model || DEFAULTS.model
-  );
-  return reasoning ? `<think>${String(reasoning).trim()}</think>\n${out}` : out;
+
+  // 若手机直连公网接口失败（如跨境网络/CORS），自动走无状态云端 BYOK 中转重试（0 平台额度、不保存 Key）
+  const cloudApi = (() => {
+    try { return String(override?.cloudApi || localStorage.getItem('zone-sichao-api') || CLOUD_FALLBACK_DEFAULT).replace(/\/+$/, ''); }
+    catch { return CLOUD_FALLBACK_DEFAULT; }
+  })();
+  if (cloudApi && !isPrivateHostUrl(endpoint)) {
+    try {
+      const proxyRes = await nativePostJson(
+        `${cloudApi}/api/byok/chat`,
+        { 'X-User-Api-Key': apiKey, 'X-User-Base-Url': cfg.baseUrl || '', 'X-User-Model': model },
+        { messages, temperature: 0.3 },
+        55000
+      );
+      if (proxyRes.ok && proxyRes.data?.ok) {
+        const u = proxyRes.data.usage || {};
+        return recordAndReturn(proxyRes.data.content, proxyRes.data.reasoning, u.prompt_tokens || 0, u.completion_tokens || 0, u.total_tokens || 0);
+      }
+      if (proxyRes.data?.error) {
+        throw new Error(formatHttpApiError(proxyRes.data.status || proxyRes.status, { error: proxyRes.data.error }, model));
+      }
+    } catch (pErr) {
+      if (pErr?.message && /401|402|403|404|429|密钥|余额|模型/.test(pErr.message)) throw pErr;
+      throw new Error(`无法连接接口（${endpoint}）：${directErr}；云端中转失败：${pErr?.name === 'AbortError' ? '超时' : (pErr?.message || '网络不可用')}`);
+    }
+  }
+  throw new Error(`无法连接接口（${endpoint}）：${directErr}。请检查网络与接口地址。`);
 }
 
 export function explainText(quote, context = '') {

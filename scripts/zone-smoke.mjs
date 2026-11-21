@@ -57,10 +57,27 @@ try {
   await page.click('#btn-hub-profile');
   await page.waitForFunction(() => !document.querySelector('#zone-profile-mask').classList.contains('hidden'));
   await sleep(200);
+  // Zero Settings backdoor to Reader / 星海 plugin!
+  assert.equal(await page.$('#zone-profile-mask [data-p-act="cosmos"]'), null, 'ZERO Settings backdoor to 星海 / 阅读器 plugin');
   await page.screenshot({ path: path.resolve(root, 'test-results/zone-profile-usage.png') });
-  // Open Import Memory from Profile, paste real memories, and verify injection into Bot context
+  // Verify AI URL normalization (zero double /chat/completions, auto /v1, native Anthropic)
+  const epChecks = await page.evaluate(async () => {
+    const a = await import('./ai.js');
+    return {
+      openai: a.resolveChatEndpoint('https://api.openai.com').url,
+      deepseekFull: a.resolveChatEndpoint('https://api.deepseek.com/v1/chat/completions/').url,
+      sf: a.resolveChatEndpoint('https://api.siliconflow.cn').url,
+      claude: a.resolveChatEndpoint('https://api.anthropic.com')
+    };
+  });
+  assert.equal(epChecks.openai, 'https://api.openai.com/v1/chat/completions');
+  assert.equal(epChecks.deepseekFull, 'https://api.deepseek.com/v1/chat/completions');
+  assert.equal(epChecks.sf, 'https://api.siliconflow.cn/v1/chat/completions');
+  assert.equal(epChecks.claude.proto, 'anthropic');
+  // Open Durable Cloud Knowledge Base from Profile, paste real memories, verify Sync Code & Bot context injection
   await page.click('#zone-profile-mask [data-p-act="import-mem"]');
   await page.waitForFunction(() => !document.querySelector('#zone-memory-mask').classList.contains('hidden'));
+  assert.ok(await page.$('#zone-memory-mask [data-m-act="sync-cloud"]'), 'Cloud KB sync button present');
   await page.type('#zone-mem-input', '- 我是独立开发者，偏好苹果极简设计\n- 常用 Python、Android Capacitor 和 DeepSeek');
   await page.click('#zone-memory-mask [data-m-act="import-text"]');
   await sleep(180);
@@ -68,8 +85,8 @@ try {
     const m = await import('./memory.js');
     return { count: m.listMemories().length, ctx: m.buildMemoryContextForBot('zone-chief', '帮我优化 Android 界面') };
   });
-  assert.equal(memCtx.count, 2, 'Import Memory parsed 2 clean facts');
-  assert.ok(memCtx.ctx.includes('苹果极简设计') && memCtx.ctx.includes('Android Capacitor'), `Memory injected into Bot prompt: ${memCtx.ctx}`);
+  assert.equal(memCtx.count, 2, 'Cloud KB parsed 2 clean facts');
+  assert.ok(memCtx.ctx.includes('苹果极简设计') && memCtx.ctx.includes('Android Capacitor'), `Cloud KB injected into Bot prompt: ${memCtx.ctx}`);
   // Verify E-Ink mode strictly isolates to Reader plugin (NEVER grayscale-filters Agent Home!)
   const einkIso = await page.evaluate(() => {
     document.documentElement.classList.add('mode-eink');
@@ -84,10 +101,13 @@ try {
   await page.screenshot({ path: path.resolve(root, 'test-results/zone-import-memory.png') });
   await page.click('#zone-memory-mask [data-m-act="close"]');
   await page.waitForFunction(() => document.querySelector('#zone-memory-mask').classList.contains('hidden'));
-  // Tap + to verify clean Bot Creator
+  // Tap + to verify full-screen Create New Bot (13 shapes 5+5+3 + liquid splash coalescence + settled state)
   await page.click('#btn-hub-newbot');
   await page.waitForFunction(() => !document.querySelector('#zone-bots-mask').classList.contains('hidden'));
-  await sleep(240);
+  assert.equal(await page.$$eval('#zone-bots-mask [data-shape]', els => els.length), 13, '13 sculpted shapes including hex');
+  await sleep(170);
+  await page.screenshot({ path: path.resolve(root, 'test-results/zone-bot-create-birth.png') });
+  await sleep(1080);
   await page.screenshot({ path: path.resolve(root, 'test-results/zone-bot-create.png') });
   await page.click('#zone-bots-mask [data-act="cancel"]');
   await page.waitForFunction(() => document.querySelector('#zone-bots-mask').classList.contains('hidden'));
@@ -99,6 +119,8 @@ try {
   await page.click('#zone-bots-mask [data-tab="plugins"]');
   await sleep(220);
   await page.screenshot({ path: path.resolve(root, 'test-results/zone-plugins-tab.png') });
+  // Verify ZERO duplicate per-Bot assignment matrix in global Plugin store
+  assert.equal((await page.$$('#zone-bots-mask [data-assign-bot]')).length, 0, 'ZERO duplicate per-Bot chip matrix in global plugin sheet');
   // Verify 阅读器 plugin toggle REALLY hides/restores books & reader chrome
   await page.click('#zone-bots-mask label.ios-switch:has([data-toggle="reading-cosmos"])');
   await sleep(160);
@@ -106,21 +128,40 @@ try {
   await page.click('#zone-bots-mask label.ios-switch:has([data-toggle="reading-cosmos"])');
   await sleep(160);
   assert.equal(await page.evaluate(() => document.documentElement.classList.contains('plugin-reader-off')), false, 'toggling 阅读器 on restores reader');
-  assert.ok((await page.$$('#zone-bots-mask [data-assign-bot]')).length >= 1, 'plugin sheet shows per-Bot assignment chips');
   await page.click('#zone-bots-mask [data-act="close"]');
   await page.waitForFunction(() => document.querySelector('#zone-bots-mask').classList.contains('hidden'));
-  // Verify tapping the top Hero Bot card opens full-screen Bot Chat
+  // Verify tapping the top Hero Bot card opens full-screen Bot Chat (no top-right 新话题, clean ⋯ popover + Bot Profile)
   await page.click('#zone-hero-card');
   await page.waitForFunction(() => !document.querySelector('#zone-chat-modal').classList.contains('hidden'));
-  // Per-Bot plugin loading: initially 阅读器 is not mounted on Zone; tap + to load it ONLY into this Bot's chat
+  assert.equal(await page.$('#btn-chat-new'), null, 'top-right 新话题 removed cleanly');
   assert.equal(await page.$('#btn-chat-reader'), null, '阅读器 not cluttered into Bot chat until mounted for this Bot');
+  // Bottom-left + opens pure media & files sheet (照片 / 拍照 / 视频 / 文件), ZERO duplicate plugin loader
   await page.click('#btn-chat-plugins');
+  await page.waitForFunction(() => !document.querySelector('#zone-attach-mask').classList.contains('hidden'));
+  const attTiles = await page.$$eval('#zone-attach-mask .attach-tile span:last-child', els => els.map(e => e.textContent));
+  assert.deepEqual(attTiles, ['照片', '拍照', '视频', '文件']);
+  await page.click('#zone-attach-mask [data-att-act="close"]');
+  await page.waitForFunction(() => document.querySelector('#zone-attach-mask').classList.contains('hidden'));
+  // Tap ⋯ top-right -> verify exact 4 Grok-style items -> tap 查看资料 -> opens full-screen Bot Profile Page -> mount 阅读器
+  await page.click('#btn-chat-more');
+  await page.waitForFunction(() => !document.querySelector('#zone-chat-more-menu').classList.contains('hidden'));
+  const moreItems = await page.$$eval('#zone-chat-more-menu .chat-more-item span', els => els.map(e => e.textContent));
+  assert.deepEqual(moreItems, ['查看资料', '聊天搜索', '分享为模板…', '删除']);
+  await sleep(160);
+  await page.screenshot({ path: path.resolve(root, 'test-results/zone-chat-more.png') });
+  await page.click('#zone-chat-more-menu [data-cm-act="profile"]');
+  await page.waitForFunction(() => !document.querySelector('#zone-bot-profile-view').classList.contains('hidden'));
+  await sleep(200);
+  await page.screenshot({ path: path.resolve(root, 'test-results/zone-bot-profile.png') });
+  await page.click('#zone-bot-profile-view [data-bpp-act="plugins"]');
   await page.waitForFunction(() => !document.querySelector('#zone-bot-plugins-mask').classList.contains('hidden'));
+  assert.equal(await page.$('#zone-bot-plugins-mask [data-bp-act="cosmos"]'), null, 'ZERO backdoor 星海 button inside Bot plugins sheet');
   await page.click('#zone-bot-plugins-mask label.ios-switch:has([data-bp-toggle="reading-cosmos"])');
   await sleep(160);
   await page.click('#zone-bot-plugins-mask [data-bp-act="close"]');
   await page.waitForFunction(() => document.querySelector('#zone-bot-plugins-mask').classList.contains('hidden'));
   assert.equal(await page.$eval('#btn-chat-reader', el => getComputedStyle(el).display !== 'none'), true, '阅读器 pill loaded into THIS Bot chat');
+  assert.equal(await page.$('#zone-chat-plugins-bar .add-more'), null, 'ZERO redundant + 插件 button in mounted bar');
   // Tap 阅读器 inside THIS Bot chat -> enters pure frameless Card Stack workspace (ZERO top bar, ZERO bottom button bar; Android Back returns to Bot)
   await page.click('#btn-chat-reader');
   await page.waitForFunction(() => document.documentElement.classList.contains('in-bot-reader'));
@@ -128,12 +169,11 @@ try {
   assert.equal(await page.$eval('#grid', el => getComputedStyle(el).display !== 'none'), true, 'real Card Stack #grid active inside in-Bot Reader workspace');
   await page.evaluate(() => window.__app.handleBack());
   await page.waitForFunction(() => !document.documentElement.classList.contains('in-bot-reader') && !document.querySelector('#zone-chat-modal').classList.contains('hidden'));
+  // Type text & send by clicking circular ↑ Send button (NOT forced to press Enter!)
   await page.type('#zone-chat-input', '你好，帮我规划今天');
-  await page.keyboard.press('Enter');
+  assert.equal(await page.$eval('#zone-chat-send', el => el.classList.contains('ready')), true, 'circular ↑ send button lights up when text entered');
+  await page.click('#zone-chat-send');
   await page.waitForFunction(() => document.querySelectorAll('#zone-chat-messages .chat-row').length >= 2);
-  // Test 新话题 context divider line (1 Bot = 1 clean stream, zero nested pills)
-  await page.click('#btn-chat-new');
-  await page.waitForFunction(() => document.querySelectorAll('#zone-chat-messages .chat-divider').length === 1);
   // Test Grok-style Interactive Confirmation Card + Task Result Link Card inside Bot Chat
   const confirmOutcome = await page.evaluate(async () => {
     const p = window.__app.requestChatConfirm({
@@ -176,17 +216,25 @@ try {
   await page.screenshot({ path: path.resolve(root, 'test-results/zone-bot-chat.png') });
   await page.click('#btn-chat-back');
   await page.waitForFunction(() => document.querySelector('#zone-chat-modal').classList.contains('hidden'));
-  // Create a 2nd Bot (verify birth-from-zero animation + async non-synced animation timing) and a Multi-Bot Group Chat + silent Bot-to-Bot relay
+  // Create a 2nd Bot (verify 5-droplet organic gooey coalescence + laughing/hopping expression SVGs + async non-synced animation timing) and a Multi-Bot Group Chat + silent Bot-to-Bot relay
   await page.click('#btn-hub-newbot');
   await page.waitForFunction(() => !document.querySelector('#zone-bots-mask').classList.contains('hidden'));
-  assert.equal(await page.$eval('#zone-bots-mask .bots-preview', el => el.classList.contains('bot-born')), true, 'new Bot preview plays birth-from-zero animation');
+  assert.equal(await page.$eval('#zone-bots-mask .bots-preview', el => el.classList.contains('bot-born')), true, 'new Bot preview plays birth animation');
+  assert.equal(await page.$$eval('#zone-bots-mask .bots-preview .bot-drop', els => els.length), 5, 'new Bot preview coalesces from organic liquid droplets');
+  assert.ok(await page.$('#zone-bots-mask .bots-preview .bot-eyes-laugh'), 'Bot SVG includes happy laughing eyes');
   await page.type('#bot-f-name', '土豆');
   await page.click('#zone-bots-mask [data-shape="orb"]');
   await page.click('#zone-bots-mask [data-accent="#FF6B00"]');
   await page.click('#zone-bots-mask [data-act="save"]');
   await page.waitForFunction(() => !document.querySelector('#zone-chat-modal').classList.contains('hidden') && document.querySelector('#chat-head-name').textContent === '土豆');
-  // Verify 土豆 does NOT inherit Zone's 阅读器 plugin (strict per-Bot plugin isolation!)
+  // Verify 土豆 does NOT inherit Zone's 阅读器 plugin AND openBotReaderSheet(土豆) is strictly BLOCKED!
   assert.equal(await page.$('#btn-chat-reader'), null, '阅读器 mounted on Zone does NOT leak to 土豆');
+  const blockedPotatoReader = await page.evaluate(async () => {
+    const botsMod = await import('./bots.js');
+    const potato = botsMod.listBots().find(b => b.name === '土豆');
+    return await window.__app.openBotReaderSheet(potato, { initialPane: 'graph' });
+  });
+  assert.equal(blockedPotatoReader, false, 'opening 星海 / 阅读器 for Bot without plugin mounted is strictly blocked');
   await page.click('#btn-chat-back');
   await page.waitForFunction(() => document.querySelector('#zone-chat-modal').classList.contains('hidden'));
   // Verify two Bots have different (non-synchronized) animation timing CSS variables

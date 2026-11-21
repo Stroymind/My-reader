@@ -204,3 +204,61 @@ def test_parallel_agent_loop_memory_and_usage(tmp_path: Path, monkeypatch) -> No
     assert res["usage"] == {"prompt_tokens": 380, "completion_tokens": 110, "total_tokens": 490}
     assert "用户偏好苹果极简风格" in turns[0][0]["content"]
     assert "写作规范" in turns[0][0]["content"]
+
+
+def test_byok_chat_endpoint_normalization_and_cloud_kb(tmp_path: Path) -> None:
+    from sichao.gateway import resolve_chat_endpoint
+
+    assert resolve_chat_endpoint("https://api.openai.com") == ("https://api.openai.com/v1/chat/completions", "openai")
+    assert resolve_chat_endpoint("https://api.deepseek.com/v1/chat/completions/") == ("https://api.deepseek.com/v1/chat/completions", "openai")
+    assert resolve_chat_endpoint("https://api.siliconflow.cn") == ("https://api.siliconflow.cn/v1/chat/completions", "openai")
+    assert resolve_chat_endpoint("https://dashscope.aliyuncs.com/compatible-mode") == ("https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions", "openai")
+    assert resolve_chat_endpoint("https://api.anthropic.com") == ("https://api.anthropic.com/v1/messages", "anthropic")
+
+    app = create_app(db_path=str(tmp_path / "kb.db"), enable_scheduler=False)
+    client = TestClient(app)
+
+    # /api/byok/chat: missing key & private IP SSRF guard
+    r0 = client.post("/api/byok/chat", json={"messages": [{"role": "user", "content": "hi"}]})
+    assert r0.status_code == 200 and r0.json()["ok"] is False
+    r_ssrf = client.post(
+        "/api/byok/chat",
+        headers={"X-User-Api-Key": "sk-demo", "X-User-Base-Url": "http://127.0.0.1:11434/v1"},
+        json={"messages": [{"role": "user", "content": "hi"}]},
+    )
+    assert r_ssrf.status_code == 200 and r_ssrf.json()["ok"] is False and "公网" in r_ssrf.json()["error"]
+
+    # /api/kb/sync & /api/kb/list: durable cloud KB sync + multi-user space isolation + deletion tombstone
+    h1 = {"X-Zone-Space-Key": "ZN-SPACE-ALPHA-01"}
+    h2 = {"X-Zone-Space-Key": "ZN-SPACE-BETA-02"}
+    s1 = client.post(
+        "/api/kb/sync",
+        headers=h1,
+        json={
+            "items": [
+                {"id": "kb-1", "title": "项目架构", "text": "Zone 采用 BYOK 与独立云端知识库", "kind": "doc", "source": "设计.md", "scope": "global", "updatedAt": 100.0},
+                {"id": "kb-2", "title": "偏好", "text": "偏好苹果极简设计", "kind": "memory", "source": "导入", "scope": "global", "updatedAt": 100.0},
+            ]
+        },
+    )
+    assert s1.status_code == 200 and s1.json()["ok"] is True and s1.json()["count"] == 2
+
+    # Space 2 cannot see Space 1
+    l2 = client.get("/api/kb/list", headers=h2)
+    assert l2.status_code == 200 and l2.json()["count"] == 0
+
+    # Device 2 in Space 1 pushes an update + deletes kb-2
+    s2 = client.post(
+        "/api/kb/sync",
+        headers=h1,
+        json={
+            "items": [
+                {"id": "kb-2", "deleted": True, "updatedAt": 200.0},
+                {"id": "kb-3", "title": "云端新条", "text": "跨设备同步测试通过", "kind": "doc", "source": "云端", "scope": "global", "updatedAt": 210.0},
+            ]
+        },
+    )
+    assert s2.status_code == 200 and s2.json()["count"] == 2
+    l1 = client.get("/api/kb/list", headers=h1).json()
+    ids = {x["id"] for x in l1["items"]}
+    assert ids == {"kb-1", "kb-3"}

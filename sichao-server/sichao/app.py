@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import time
@@ -71,6 +72,22 @@ class AgentRunReq(BaseModel):
 class McpInspectReq(BaseModel):
     url: str = Field(..., min_length=6, max_length=1000)
     token: str = ""
+
+
+class ByokChatReq(BaseModel):
+    messages: list[dict[str, Any]] = Field(default_factory=list)
+    temperature: float = Field(default=0.3, ge=0.0, le=2.0)
+
+
+class KbSyncReq(BaseModel):
+    items: list[dict[str, Any]] = Field(default_factory=list)
+
+
+def _space_hash(request: Request) -> str:
+    raw = (request.headers.get("x-zone-space-key") or "").strip()
+    if len(raw) < 6:
+        raise HTTPException(status_code=400, detail="请提供至少 6 位的云端同步码（X-Zone-Space-Key）")
+    return hashlib.sha256(f"zone-kb-v1:{raw}".encode("utf-8")).hexdigest()
 
 
 def _seed_initial_event_if_empty(db: Database) -> None:
@@ -213,14 +230,36 @@ def create_app(db_path: str | None = None, enable_scheduler: bool = True) -> Fas
     def health() -> dict[str, Any]:
         return {
             "status": "ok",
-            "version": "2.2.0",
+            "version": "2.3.0",
             "byok_mode": True,
             "platform_token_used": False,
             "agent_tools": sorted(TOOL_REGISTRY.keys()),
             "mcp_remote_http": True,
             "byok_balance_check": True,
+            "byok_chat_proxy": True,
+            "cloud_kb": True,
             "runtime_paused": runtime.paused,
         }
+
+    @app.post("/api/byok/chat")
+    async def byok_chat(req: ByokChatReq, request: Request) -> dict[str, Any]:
+        """无状态 BYOK 聊天中转（仅用于解决移动端 CORS / 跨境网络可达性，0 平台额度、不落盘 Key）。"""
+        user_gw = ModelGateway.from_user_headers(request.headers)
+        return await user_gw.complete_detailed(req.messages, temperature=req.temperature)
+
+    @app.post("/api/kb/sync")
+    def kb_sync(req: KbSyncReq, request: Request) -> dict[str, Any]:
+        """独立长久云端知识库双向同步（完全独立于阅读器/星海插件，按用户同步码隔离）。"""
+        sh = _space_hash(request)
+        merged = db.sync_kb_items(sh, req.items)
+        active = [x for x in merged if not x.get("deleted")]
+        return {"ok": True, "count": len(active), "items": merged, "synced_at": time.time()}
+
+    @app.get("/api/kb/list")
+    def kb_list(request: Request) -> dict[str, Any]:
+        sh = _space_hash(request)
+        active = db.list_kb_items(sh)
+        return {"ok": True, "count": len(active), "items": active}
 
     @app.post("/api/agent/run")
     async def agent_run(req: AgentRunReq, request: Request) -> dict[str, Any]:

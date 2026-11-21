@@ -173,6 +173,20 @@ class Database:
                     key TEXT PRIMARY KEY,
                     value TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS kb_items (
+                    space_hash TEXT NOT NULL,
+                    item_id TEXT NOT NULL,
+                    title TEXT NOT NULL DEFAULT '',
+                    content TEXT NOT NULL DEFAULT '',
+                    kind TEXT NOT NULL DEFAULT 'memory',
+                    source TEXT NOT NULL DEFAULT '手动录入',
+                    scope TEXT NOT NULL DEFAULT 'global',
+                    updated_at REAL NOT NULL,
+                    deleted INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (space_hash, item_id)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_kb_space_upd ON kb_items(space_hash, deleted, updated_at DESC);
                 """
             )
 
@@ -335,3 +349,85 @@ class Database:
                             item.get("observed_at", now),
                         ),
                     )
+
+    def sync_kb_items(self, space_hash: str, incoming: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """长久云端知识库双向合并同步（按 updated_at 保留最新状态，支持删除墓碑）。"""
+        now = time.time()
+        with self.connect() as conn:
+            for raw in incoming[:400]:
+                item_id = str(raw.get("id") or "").strip()[:80]
+                if not item_id:
+                    continue
+                updated_at = float(raw.get("updatedAt") or raw.get("updated_at") or now)
+                deleted = 1 if raw.get("deleted") else 0
+                title = str(raw.get("title") or "").strip()[:160]
+                content = str(raw.get("text") or raw.get("content") or "").strip()[:16000]
+                kind = str(raw.get("kind") or "memory").strip()[:24]
+                source = str(raw.get("source") or "手动录入").strip()[:60]
+                scope = str(raw.get("scope") or "global").strip()[:60]
+                if not deleted and not content:
+                    continue
+                conn.execute(
+                    """
+                    INSERT INTO kb_items(space_hash, item_id, title, content, kind, source, scope, updated_at, deleted)
+                    VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(space_hash, item_id) DO UPDATE SET
+                        title = CASE WHEN excluded.updated_at >= kb_items.updated_at THEN excluded.title ELSE kb_items.title END,
+                        content = CASE WHEN excluded.updated_at >= kb_items.updated_at THEN excluded.content ELSE kb_items.content END,
+                        kind = CASE WHEN excluded.updated_at >= kb_items.updated_at THEN excluded.kind ELSE kb_items.kind END,
+                        source = CASE WHEN excluded.updated_at >= kb_items.updated_at THEN excluded.source ELSE kb_items.source END,
+                        scope = CASE WHEN excluded.updated_at >= kb_items.updated_at THEN excluded.scope ELSE kb_items.scope END,
+                        deleted = CASE WHEN excluded.updated_at >= kb_items.updated_at THEN excluded.deleted ELSE kb_items.deleted END,
+                        updated_at = MAX(kb_items.updated_at, excluded.updated_at)
+                    """,
+                    (space_hash, item_id, title, content, kind, source, scope, updated_at, deleted),
+                )
+            rows = conn.execute(
+                """
+                SELECT item_id, title, content, kind, source, scope, updated_at, deleted
+                FROM kb_items
+                WHERE space_hash = ?
+                ORDER BY updated_at DESC
+                LIMIT 500
+                """,
+                (space_hash,),
+            ).fetchall()
+        return [
+            {
+                "id": r["item_id"],
+                "title": r["title"],
+                "text": r["content"],
+                "kind": r["kind"],
+                "source": r["source"],
+                "scope": r["scope"],
+                "updatedAt": r["updated_at"],
+                "deleted": bool(r["deleted"]),
+            }
+            for r in rows
+        ]
+
+    def list_kb_items(self, space_hash: str) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT item_id, title, content, kind, source, scope, updated_at, deleted
+                FROM kb_items
+                WHERE space_hash = ? AND deleted = 0
+                ORDER BY updated_at DESC
+                LIMIT 500
+                """,
+                (space_hash,),
+            ).fetchall()
+        return [
+            {
+                "id": r["item_id"],
+                "title": r["title"],
+                "text": r["content"],
+                "kind": r["kind"],
+                "source": r["source"],
+                "scope": r["scope"],
+                "updatedAt": r["updated_at"],
+                "deleted": False,
+            }
+            for r in rows
+        ]

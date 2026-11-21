@@ -228,11 +228,12 @@
 </div>
 <div id="settings-mask" class="note-mask hidden">
   <form id="ai-settings" class="note-dialog">
-    <h3>AI 设置</h3>
-    <p class="desk-note">兼容 OpenAI 的聊天接口。密钥只存在这台设备上。</p>
-    <label class="field">接口地址<input id="ai-base" type="url" placeholder="https://api.openai.com/v1" autocomplete="off"></label>
-    <label class="field">模型<input id="ai-model" type="text" placeholder="gpt-4o-mini" autocomplete="off"></label>
-    <label class="field">密钥<input id="ai-key" type="password" autocomplete="off" placeholder="只保存在这台设备"></label>
+    <h3>模型与密钥</h3>
+    <p class="desk-note">支持国内外主流接口，密钥仅保存在本机。点下方服务商一键填入地址：</p>
+    <div id="ai-presets" class="ai-preset-chips" aria-label="快捷服务商预设"></div>
+    <label class="field">接口地址<input id="ai-base" type="text" inputmode="url" placeholder="https://api.deepseek.com/v1" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+    <label class="field">模型<input id="ai-model" type="text" placeholder="deepseek-chat" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+    <label class="field">密钥<input id="ai-key" type="password" autocomplete="off" placeholder="粘贴 API Key（只保存在本机）"></label>
     <p id="ai-settings-status" class="desk-note"></p>
     <div class="note-actions">
       <button type="button" id="ai-settings-clear">清除密钥</button>
@@ -356,31 +357,75 @@
 </div>
 <section id="zone-chat-modal" class="bot-chat-view hidden" role="dialog" aria-modal="true" aria-label="Bot 对话">
   <header class="bot-chat-bar">
-    <button id="btn-chat-back" class="bot-chat-back" type="button" aria-label="返回">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>
-    </button>
-    <button id="btn-chat-botmeta" class="bot-chat-who" type="button" title="定制形象与规则">
-      <span id="chat-head-av" class="bot-chat-av" aria-hidden="true"></span>
-      <span id="chat-head-name" class="bot-chat-name">Zone</span>
-    </button>
+    <div class="bot-chat-left">
+      <button id="btn-chat-back" class="bot-chat-back" type="button" aria-label="返回">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>
+      </button>
+      <button id="btn-chat-botmeta" class="bot-chat-who" type="button" title="查看资料">
+        <span id="chat-head-av" class="bot-chat-av" aria-hidden="true"></span>
+        <span id="chat-head-name" class="bot-chat-name">Zone</span>
+      </button>
+    </div>
     <div class="bot-chat-right">
-      <button id="btn-chat-new" class="bot-chat-pill" type="button">新话题</button>
+      <button id="btn-chat-more" class="bot-chat-more" type="button" aria-label="更多操作" title="更多">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="18" cy="12" r="1.6" fill="currentColor" stroke="none"/></svg>
+      </button>
     </div>
   </header>
+  <div id="zone-chat-more-menu" class="chat-more-menu hidden" role="menu" aria-label="对话菜单">
+    <button type="button" class="chat-more-item" data-cm-act="profile" role="menuitem">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8.5" r="3.5"/><path d="M5.5 19a6.5 6.5 0 0 1 13 0"/></svg>
+      <span>查看资料</span>
+    </button>
+    <button type="button" class="chat-more-item" data-cm-act="find" role="menuitem">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.2-4.2"/></svg>
+      <span>聊天搜索</span>
+    </button>
+    <button type="button" class="chat-more-item" data-cm-act="share" role="menuitem">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15V4M8 8l4-4 4 4"/><path d="M5 14v4a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4"/></svg>
+      <span>分享为模板…</span>
+    </button>
+    <button type="button" class="chat-more-item danger" data-cm-act="clear" role="menuitem">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg>
+      <span>删除</span>
+    </button>
+  </div>
+  <div id="zone-chat-find" class="chat-find-bar hidden">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.2-4.2"/></svg>
+    <input id="zone-chat-find-inp" type="search" placeholder="在当前对话中搜索…" autocomplete="off">
+    <button id="zone-chat-find-close" type="button">完成</button>
+  </div>
   <div id="zone-chat-plugins-bar" class="bot-mounted-bar hidden" aria-label="当前 Bot 已加载插件"></div>
   <div id="zone-chat-messages" class="bot-chat-messages" aria-live="polite"></div>
+  <div id="zone-chat-attachments" class="chat-att-strip hidden" aria-label="待发送附件"></div>
   <form id="zone-chat-form" class="bot-chat-foot">
     <div class="agent-capsule">
-      <button id="btn-chat-plugins" class="chat-plus-btn" type="button" aria-label="在当前 Bot 加载插件" title="为当前 Bot 加载或管理插件">
+      <button id="btn-chat-plugins" class="chat-plus-btn" type="button" aria-label="添加照片、视频、文件或插件" title="照片 · 视频 · 文件 · 插件">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
       </button>
       <input id="zone-chat-input" type="text" placeholder="发消息，或直接说话…" autocomplete="off" enterkeyhint="send" aria-label="发消息给 Bot">
       <button id="zone-chat-mic" class="agent-mic" type="button" aria-label="语音输入" title="直接说话">
         <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="4" width="6" height="10" rx="3"/><path d="M6.5 11.5a5.5 5.5 0 0 0 11 0M12 17v3.2M9 20.2h6"/></svg>
       </button>
+      <button id="zone-chat-send" class="chat-send-btn" type="submit" aria-label="发送消息" title="发送">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6"/></svg>
+      </button>
     </div>
   </form>
+  <input id="chat-pick-photo" type="file" accept="image/*" multiple hidden>
+  <input id="chat-pick-camera" type="file" accept="image/*" capture="environment" hidden>
+  <input id="chat-pick-video" type="file" accept="video/*" hidden>
+  <input id="chat-pick-file" type="file" accept=".txt,.md,.markdown,.json,.csv,.docx,.js,.ts,.py,.html,.css,.xml,.yaml,.yml,.log,.srt,.vtt" multiple hidden>
 </section>
+<svg style="position:fixed;width:0;height:0;pointer-events:none" aria-hidden="true">
+  <defs>
+    <filter id="zone-gooey" filterUnits="userSpaceOnUse" x="-45" y="-45" width="190" height="190">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="3.4" result="blur"/>
+      <feColorMatrix in="blur" mode="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 19 -7" result="goo"/>
+      <feComposite in="SourceGraphic" in2="goo" operator="atop"/>
+    </filter>
+  </defs>
+</svg>
 <div id="toast" class="toast hidden" role="status"></div>
 <script type="module" src="app.js"></script>
 </body>

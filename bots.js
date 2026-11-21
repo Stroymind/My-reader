@@ -35,7 +35,7 @@ const DEFAULT_AUTOMATIONS = [
 ];
 
 const DEFAULT_PLUGINS = [
-  { id: 'reading-cosmos', name: '阅读器', short: '阅读器', desc: '卡片堆 · 沉浸阅读 · 星海第二大脑', enabled: true, launchable: true },
+  { id: 'reading-cosmos', name: '阅读器', short: '阅读器', desc: '卡片堆 · 沉浸阅读 · 星海', enabled: true, launchable: true },
   { id: 'phone-use', name: '手机控屏', short: '手机控屏', desc: '跨应用执行与敏感确认', enabled: true, launchable: true },
   { id: 'computer-use', name: '连接电脑', short: '连接电脑', desc: '遥控本地桌面与工作节点', enabled: true, launchable: true },
   { id: 'mcp-bridge', name: '联网与 MCP', short: '联网与 MCP', desc: '实时检索与远程技能调用', enabled: true, launchable: false },
@@ -62,7 +62,8 @@ const SHAPES = [
   { id: 'bean', label: '软豆', eyeDx: 5, eyeDy: -4, tilt: -16, path: 'M24 27 H76 A23 23 0 0 1 76 73 H24 A23 23 0 0 1 24 27 Z' },
   { id: 'onigiri', label: '饭团', eyeDx: 0, eyeDy: 6, tilt: 0, path: 'M42 16 C46 9 54 9 58 16 L86 67 C91 76 85 86 75 86 H25 C15 86 9 76 14 67 Z' },
   { id: 'house', label: '小屋', eyeDx: 3, eyeDy: 3, tilt: -10, path: 'M43 14 C47 10 53 10 57 14 L82 36 C86 40 87 45 86 50 L80 76 C78 82 73 86 67 86 H33 C27 86 22 82 20 76 L14 50 C13 45 14 40 18 36 Z' },
-  { id: 'splash', label: '海星', eyeDx: 3, eyeDy: 0, tilt: -8, path: 'M49 10 C57 10 58 24 66 26 C74 28 84 20 89 27 C93 34 81 44 83 52 C85 60 95 66 90 74 C85 82 72 75 65 79 C58 83 56 93 48 92 C40 91 40 79 32 76 C24 73 14 80 10 72 C6 64 18 57 17 49 C16 41 6 35 12 27 C18 19 29 27 36 23 C43 19 41 10 49 10 Z' }
+  { id: 'splash', label: '海星', eyeDx: 3, eyeDy: 0, tilt: -8, path: 'M49 10 C57 10 58 24 66 26 C74 28 84 20 89 27 C93 34 81 44 83 52 C85 60 95 66 90 74 C85 82 72 75 65 79 C58 83 56 93 48 92 C40 91 40 79 32 76 C24 73 14 80 10 72 C6 64 18 57 17 49 C16 41 6 35 12 27 C18 19 29 27 36 23 C43 19 41 10 49 10 Z' },
+  { id: 'hex', label: '六角', eyeDx: 3, eyeDy: -1, tilt: -12, path: 'M44 13 C48 10.5 52 10.5 56 13 L81 27.5 C85 30 87 34 87 38.5 V61.5 C87 66 85 70 81 72.5 L56 87 C52 89.5 48 89.5 44 87 L19 72.5 C15 70 13 66 13 61.5 V38.5 C13 34 15 30 19 27.5 Z' }
 ];
 
 const ACCENTS = [
@@ -81,6 +82,24 @@ export function listBots() {
 function saveBots(list) {
   try { localStorage.setItem(BOTS_KEY, JSON.stringify(list)); } catch {}
   syncToAndroidWidget(list);
+}
+
+export function updateBotNotify(botId, enabled) {
+  const list = listBots();
+  const idx = list.findIndex(b => b.id === botId);
+  if (idx < 0) return true;
+  list[idx] = { ...list[idx], notify: !!enabled };
+  saveBots(list);
+  return !!enabled;
+}
+
+export function deleteBotById(botId) {
+  const list = listBots();
+  if (list.length <= 1) return false;
+  const next = list.filter(b => b.id !== botId);
+  saveBots(next);
+  if (getActiveBot().id === botId) setActiveBot(next[0].id);
+  return true;
 }
 
 export function listGroups() {
@@ -271,23 +290,94 @@ function animTimingFor(seedStr) {
   return `--float-dur:${floatDur}s;--float-del:-${floatDel}s;--eye-dur:${eyeDur}s;--eye-del:-${eyeDel}s`;
 }
 
-export function renderBotSvg(shape = 'onigiri', accent = '#111111', seed = '') {
+const COALESCE_DROPS = [
+  { sx: '24px', sy: '-22px', r: 7.4, del: '0s' },
+  { sx: '18px', sy: '34px', r: 5.2, del: '.04s' },
+  { sx: '-30px', sy: '-14px', r: 6.8, del: '.02s' },
+  { sx: '-24px', sy: '26px', r: 5.8, del: '.06s' },
+  { sx: '34px', sy: '6px', r: 4.8, del: '.08s' }
+];
+
+export function renderBotSvg(shape = 'onigiri', accent = '#111111', seed = '', opts = {}) {
   const spec = SHAPES.find(s => s.id === shape) || SHAPES.find(s => s.id === 'onigiri');
   const color = accent || '#111111';
   const ex1 = 41 + (spec.eyeDx || 0);
   const ex2 = 57 + (spec.eyeDx || 0);
   const ey = 43 + (spec.eyeDy || 0);
+  const lx1 = (ex1 - 2.4).toFixed(1), lx2 = (ex1 + 9.6).toFixed(1), lcx = (ex1 + 3.6).toFixed(1);
+  const rx1 = (ex2 - 2.4).toFixed(1), rx2 = (ex2 + 9.6).toFixed(1), rcx = (ex2 + 3.6).toFixed(1);
+  const ly = (ey + 11.2).toFixed(1), lcy = (ey + 2.2).toFixed(1);
   const rot = spec.tilt || 0;
   const timing = animTimingFor(`${seed || ''}:${spec.id}:${color}`);
-  return `<svg class="bot-glyph" style="${timing}" viewBox="0 0 100 100" aria-hidden="true">
-    <g transform="rotate(${rot} 50 50)">
-      <path d="${spec.path}" fill="${color}" stroke="none"/>
-      <g class="bot-eyes">
-        <rect x="${ex1}" y="${ey}" width="7.2" height="17" rx="3.6" fill="#FFFFFF" stroke="none"/>
-        <rect x="${ex2}" y="${ey}" width="7.2" height="17" rx="3.6" fill="#FFFFFF" stroke="none"/>
+  const cls = ['bot-glyph', opts.coalesce ? 'bot-coalescing' : '', opts.static ? 'no-life' : ''].filter(Boolean).join(' ');
+  const dropsMarkup = opts.coalesce ? `
+    <g class="bot-coalesce" filter="url(#zone-gooey)">
+      <circle class="bot-core-drop" cx="50" cy="50" r="14" fill="${color}" stroke="none"/>
+      ${COALESCE_DROPS.map(d => `<circle class="bot-drop" cx="50" cy="50" r="${d.r}" fill="${color}" stroke="none" style="--sx:${d.sx};--sy:${d.sy};--dd:${d.del}"/>`).join('')}
+    </g>` : '';
+  return `<svg class="${cls}" style="${timing}" viewBox="0 0 100 100" aria-hidden="true">
+    ${dropsMarkup}
+    <g class="bot-body">
+      <g transform="rotate(${rot} 50 50)">
+        <path class="bot-main-shape" d="${spec.path}" fill="${color}" stroke="none"/>
+        <g class="bot-eyes">
+          <g class="bot-eyes-norm">
+            <rect class="bot-eye bot-eye-l" x="${ex1}" y="${ey}" width="7.2" height="17" rx="3.6" fill="#FFFFFF" stroke="none"/>
+            <rect class="bot-eye bot-eye-r" x="${ex2}" y="${ey}" width="7.2" height="17" rx="3.6" fill="#FFFFFF" stroke="none"/>
+          </g>
+          <g class="bot-eyes-laugh">
+            <path d="M${lx1} ${ly} Q${lcx} ${lcy} ${lx2} ${ly}" fill="none" stroke="#FFFFFF" stroke-width="4.4" stroke-linecap="round"/>
+            <path d="M${rx1} ${ly} Q${rcx} ${lcy} ${rx2} ${ly}" fill="none" stroke="#FFFFFF" stroke-width="4.4" stroke-linecap="round"/>
+          </g>
+        </g>
       </g>
     </g>
   </svg>`;
+}
+
+const MOOD_LIST = ['laugh', 'hop', 'wink', 'curious', 'wiggle'];
+const MOOD_DURS = { laugh: 1350, hop: 1050, wink: 980, curious: 1450, wiggle: 1120 };
+let lifeTimer = null;
+
+export function triggerBotMood(svgEl, mood = '') {
+  if (!svgEl || svgEl.classList.contains('no-life') || svgEl.classList.contains('bot-coalescing')) return;
+  const pick = mood || MOOD_LIST[Math.floor(Math.random() * MOOD_LIST.length)];
+  for (const m of MOOD_LIST) svgEl.classList.remove('mood-' + m);
+  void svgEl.getBoundingClientRect();
+  svgEl.classList.add('mood-' + pick);
+  svgEl.dataset.lastMood = pick;
+  clearTimeout(svgEl._moodTimer);
+  svgEl._moodTimer = setTimeout(() => {
+    svgEl.classList.remove('mood-' + pick);
+  }, MOOD_DURS[pick] || 1200);
+}
+
+export function startBotLifeEngine() {
+  if (lifeTimer) return;
+  const tick = () => {
+    if (document.hidden) return;
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
+    const now = Date.now();
+    const glyphs = document.querySelectorAll('.bot-glyph:not(.no-life):not(.bot-coalescing)');
+    for (const el of glyphs) {
+      if (el.closest('.hidden') || el.closest('.bots-shape-btn') || el.closest('.grp-av-grid')) continue;
+      let due = Number(el.dataset.nextMood || 0);
+      if (!due) {
+        // 每个 Bot 首次触发时间完全随机散开（1.6s ~ 5.8s），绝不同步
+        el.dataset.nextMood = String(now + 1600 + Math.floor(Math.random() * 4200));
+        continue;
+      }
+      if (now >= due) {
+        const last = el.dataset.lastMood || '';
+        const pool = MOOD_LIST.filter(m => m !== last);
+        const nextMood = pool[Math.floor(Math.random() * pool.length)] || 'laugh';
+        triggerBotMood(el, nextMood);
+        // 下一次表现同样独立随机（3.2s ~ 8.4s），绝不齐舞
+        el.dataset.nextMood = String(now + (MOOD_DURS[nextMood] || 1200) + 3200 + Math.floor(Math.random() * 5200));
+      }
+    }
+  };
+  lifeTimer = setInterval(tick, 450);
 }
 
 function esc(s) {
@@ -404,37 +494,68 @@ export function openBotStudio({ onSelect, onSelectGroup, onStatus, onLaunchPlugi
     }
 
     if (editing) {
+      const showRules = !!(editing.showRules || editing.rules);
+      const hasName = !!String(editing.name || '').trim();
       mask.innerHTML = `
-        <div class="bots-sheet" role="dialog" aria-label="定制 Bot">
-          <div class="bots-head">
-            <h3>${editing.isNew ? '新建 Bot' : '定制 Bot'}</h3>
-            <button type="button" class="bots-close" data-act="cancel">返回</button>
+        <div class="bots-sheet create-bot-full" role="dialog" aria-label="${editing.isNew ? '新建 Bot' : '编辑 Bot'}">
+          <div class="cb-head">
+            <div class="cb-head-l">
+              <button type="button" class="cb-close-btn" data-act="cancel" aria-label="关闭">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7L7 17"/></svg>
+              </button>
+              <h3>${editing.isNew ? '新建 Bot' : '编辑 Bot'}</h3>
+            </div>
+            ${editing.isNew ? `<button type="button" class="cb-grp-btn" data-new-kind="group">创建群聊</button>` : ''}
           </div>
-          ${editing.isNew ? `
-            <div class="bots-seg" role="tablist">
-              <button type="button" role="tab" class="on" data-new-kind="bot">新建 Bot</button>
-              <button type="button" role="tab" data-new-kind="group">创建群聊</button>
+          <div class="bots-preview cb-preview ${editing.isNew || editing.justPicked ? 'bot-born' : ''}">${renderBotSvg(editing.shape, editing.accent, editing.id || ('prev-' + editing.shape), { coalesce: !!(editing.isNew || editing.justPicked) })}</div>
+          <div class="cb-body">
+            <input id="bot-f-name" class="cb-name-inp" type="text" placeholder="给你的 Bot 起个名字" value="${esc(editing.name)}">
+            <div class="cb-shape-grid">
+              ${SHAPES.map(s => `<button type="button" class="cb-shape-btn ${editing.shape === s.id ? 'on' : ''}" data-shape="${s.id}" title="${s.label}">${renderBotSvg(s.id, editing.accent, s.id, { static: true })}</button>`).join('')}
             </div>
-          ` : ''}
-          <div class="bots-preview ${editing.isNew || editing.justPicked ? 'bot-born' : ''}">${renderBotSvg(editing.shape, editing.accent, editing.id || 'preview')}</div>
-          <div class="bots-form">
-            <input id="bot-f-name" class="bot-name-inp" type="text" placeholder="给你的 Bot 起个名字" value="${esc(editing.name)}">
-            <div class="bots-shape-grid">
-              ${SHAPES.map(s => `<button type="button" class="bots-shape-btn ${editing.shape === s.id ? 'on' : ''}" data-shape="${s.id}" title="${s.label}">${renderBotSvg(s.id, editing.accent)}</button>`).join('')}
+            <div class="cb-color-grid">
+              ${ACCENTS.map(c => `<button type="button" class="cb-dot ${editing.accent === c ? 'on' : ''}" style="background:${c}" data-accent="${c}" aria-label="${c}"></button>`).join('')}
             </div>
-            <div class="bots-color-grid">
-              ${ACCENTS.map(c => `<button type="button" class="bots-dot ${editing.accent === c ? 'on' : ''}" style="background:${c}" data-accent="${c}" aria-label="${c}"></button>`).join('')}
-            </div>
-            <textarea id="bot-f-rules" rows="3" placeholder="由你自由定义它的规则、风格或边界（留空则无预设限制）">${esc(editing.rules)}</textarea>
-            <button type="button" class="bots-primary" data-act="save">${editing.isNew ? '创建' : '保存'}</button>
+            ${showRules
+              ? `<textarea id="bot-f-rules" class="cb-rules-inp" rows="3" placeholder="定义它的规则、风格或边界（留空则无预设限制）">${esc(editing.rules)}</textarea>`
+              : `<button type="button" class="cb-rules-toggle" data-act="show-rules">+ 添加规则与人格（可选）</button>`}
+          </div>
+          <div class="cb-foot">
+            <button type="button" id="bot-f-submit" class="cb-submit ${hasName ? 'ready' : ''}" data-act="save">${editing.isNew ? '创建' : '保存'}</button>
             ${!editing.isNew && editing.id !== getPrimaryBot().id ? `<button type="button" class="bots-secondary" data-act="pin-primary">设为顶部固定主位 ★</button>` : ''}
             ${!editing.isNew && list.length > 1 ? `<button type="button" class="bots-danger" data-act="del">删除此 Bot</button>` : ''}
           </div>
         </div>`;
       mask.onclick = e => { if (e.target === mask) mask.classList.add('hidden'); };
+      const nameInp = mask.querySelector('#bot-f-name');
+      const submitBtn = mask.querySelector('#bot-f-submit');
+      if (nameInp && submitBtn) {
+        nameInp.oninput = () => submitBtn.classList.toggle('ready', !!nameInp.value.trim());
+      }
+      const prevEl = mask.querySelector('.bots-preview');
+      if (prevEl) {
+        prevEl.onclick = () => {
+          const svg = prevEl.querySelector('.bot-glyph');
+          if (svg) {
+            svg.classList.remove('bot-coalescing');
+            triggerBotMood(svg, Math.random() < 0.55 ? 'laugh' : 'hop');
+          }
+        };
+        setTimeout(() => {
+          const svg = prevEl.querySelector('.bot-glyph');
+          if (svg) svg.classList.remove('bot-coalescing');
+        }, 1180);
+      }
       mask.querySelector('[data-act="cancel"]').onclick = () => {
         if (startNew || editBotId) { mask.classList.add('hidden'); return; }
         editing = null; draw();
+      };
+      const showRulesBtn = mask.querySelector('[data-act="show-rules"]');
+      if (showRulesBtn) showRulesBtn.onclick = () => {
+        editing.name = mask.querySelector('#bot-f-name')?.value || '';
+        editing.showRules = true;
+        editing.justPicked = false;
+        draw();
       };
       const swGrp = mask.querySelector('[data-new-kind="group"]');
       if (swGrp) swGrp.onclick = () => {
@@ -461,8 +582,9 @@ export function openBotStudio({ onSelect, onSelectGroup, onStatus, onLaunchPlugi
       };
       mask.querySelectorAll('[data-shape]').forEach(b => {
         b.onclick = () => {
-          editing.name = mask.querySelector('#bot-f-name').value;
-          editing.rules = mask.querySelector('#bot-f-rules').value;
+          editing.name = mask.querySelector('#bot-f-name')?.value || '';
+          const rEl = mask.querySelector('#bot-f-rules');
+          if (rEl) editing.rules = rEl.value;
           editing.shape = b.dataset.shape;
           editing.justPicked = true;
           draw();
@@ -470,20 +592,22 @@ export function openBotStudio({ onSelect, onSelectGroup, onStatus, onLaunchPlugi
       });
       mask.querySelectorAll('[data-accent]').forEach(b => {
         b.onclick = () => {
-          editing.name = mask.querySelector('#bot-f-name').value;
-          editing.rules = mask.querySelector('#bot-f-rules').value;
+          editing.name = mask.querySelector('#bot-f-name')?.value || '';
+          const rEl = mask.querySelector('#bot-f-rules');
+          if (rEl) editing.rules = rEl.value;
           editing.accent = b.dataset.accent;
+          editing.justPicked = true;
           draw();
         };
       });
       mask.querySelector('[data-act="save"]').onclick = () => {
-        const name = mask.querySelector('#bot-f-name').value.trim();
-        const rules = mask.querySelector('#bot-f-rules').value.trim();
+        const name = (mask.querySelector('#bot-f-name')?.value || '').trim();
+        const rules = (mask.querySelector('#bot-f-rules')?.value ?? editing.rules ?? '').trim();
         if (!name) return;
         const role = rules ? rules.slice(0, 26) : '轻触形象切换样式、写规则、管定时任务与插件';
         const nextList = listBots();
         if (editing.isNew) {
-          const item = { id: `bot-${Date.now().toString(36)}`, name, role, rules, shape: editing.shape, accent: editing.accent, plugins: Array.isArray(editing.plugins) ? [...editing.plugins] : ['mcp-bridge'] };
+          const item = { id: `bot-${Date.now().toString(36)}`, name, role, rules, shape: editing.shape, accent: editing.accent, plugins: Array.isArray(editing.plugins) ? [...editing.plugins] : ['mcp-bridge'], notify: true };
           nextList.push(item);
           saveBots(nextList);
           setActiveBot(item.id);
@@ -499,7 +623,7 @@ export function openBotStudio({ onSelect, onSelectGroup, onStatus, onLaunchPlugi
           onStatus?.(`已保存「${name}」`);
         }
         editing = null;
-        draw();
+        mask.classList.add('hidden');
       };
       return;
     }
@@ -616,7 +740,7 @@ export function openBotStudio({ onSelect, onSelectGroup, onStatus, onLaunchPlugi
       ? '选择或定制你的专属 Bot'
       : tab === 'automations'
         ? '周期采集与自动推送'
-        : '按 Bot 分配插件、远程 MCP 与主题';
+        : '全局插件开关与外观主题（在各 Bot 资料页按需挂载）';
 
     mask.innerHTML = `
       <div class="bots-sheet" role="dialog" aria-label="Zone 控制台">
@@ -664,32 +788,23 @@ export function openBotStudio({ onSelect, onSelectGroup, onStatus, onLaunchPlugi
           <button type="button" class="bots-primary" data-act="add-auto">+ 新建定时任务 / 信息推送</button>
         ` : `
           <div class="bots-list">
-            ${plugins.map(pl => `
+            ${plugins.map(pl => {
+              const mountedCount = list.filter(b => getBotPlugins(b.id).includes(pl.id)).length;
+              return `
               <div class="plugin-card">
                 <div class="plugin-row" data-launch="${pl.launchable ? esc(pl.id) : ''}">
                   <div class="bot-meta">
-                    <strong>${esc(pl.name)}</strong>
+                    <strong>${esc(pl.name)}${pl.enabled && mountedCount ? ` · ${mountedCount} 个 Bot` : ''}</strong>
                     <span>${esc(pl.desc)}</span>
                   </div>
+                  ${pl.id.startsWith('ext-') ? `<button type="button" class="plugin-bot-chip" style="color:var(--app-danger);margin-right:4px" data-remove-plug="${esc(pl.id)}">卸载</button>` : ''}
                   <label class="ios-switch" aria-label="开关 ${esc(pl.name)}">
                     <input type="checkbox" data-toggle="${esc(pl.id)}" ${pl.enabled ? 'checked' : ''}>
                     <span></span>
                   </label>
                 </div>
-                ${pl.enabled ? `
-                  <div class="plugin-assign">
-                    <span class="plugin-assign-lbl">展示于 Bot 对话：</span>
-                    <div class="plugin-assign-chips">
-                      ${list.map(b => {
-                        const mounted = getBotPlugins(b.id).includes(pl.id);
-                        return `<button type="button" class="plugin-bot-chip ${mounted ? 'on' : ''}" data-assign-bot="${esc(b.id)}" data-assign-plug="${esc(pl.id)}">${esc(b.name)}${mounted ? ' ✓' : ''}</button>`;
-                      }).join('')}
-                      ${pl.id.startsWith('ext-') ? `<button type="button" class="plugin-bot-chip" style="color:var(--app-danger)" data-remove-plug="${esc(pl.id)}">卸载</button>` : ''}
-                    </div>
-                  </div>
-                ` : ''}
-              </div>
-            `).join('')}
+              </div>`;
+            }).join('')}
           </div>
           <div class="theme-plug-bar">
             <span class="theme-plug-lbl">主题插件</span>
@@ -805,11 +920,18 @@ export function openBotStudio({ onSelect, onSelectGroup, onStatus, onLaunchPlugi
         if (!id) return;
         row.onclick = e => {
           if (e.target.closest('.ios-switch')) return;
+          const pl = listPlugins().find(p => p.id === id);
           if (!isPluginEnabled(id)) { onStatus?.('请先打开右侧开关启用此插件'); return; }
+          const mountedBots = listBots().filter(b => getBotPlugins(b.id).includes(id));
+          if (!mountedBots.length) {
+            onStatus?.(`请在目标 Bot 资料页的「插件」中为它开启「${pl?.name || id}」`);
+            return;
+          }
           const curBot = getActiveBot();
-          if (!getBotPlugins(curBot.id).includes(id)) toggleBotPlugin(curBot.id, id, true);
+          const targetBot = mountedBots.find(b => b.id === curBot.id) || mountedBots[0];
           mask.classList.add('hidden');
-          onLaunchPlugin?.(id, curBot);
+          onSelect?.(targetBot);
+          onStatus?.(`已进入「${targetBot.name}」对话，点输入框上方「${pl?.short || pl?.name || id}」即可打开`);
         };
       });
     }

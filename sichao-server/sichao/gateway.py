@@ -1,10 +1,53 @@
 """统一 Model Gateway：不绑定单一模型厂商，离线/无密钥时确定性降级，纯 BYOK 透传用户自有 API Key。"""
 from __future__ import annotations
 
+import ipaddress
 import os
+import re
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
+
+_NEEDS_V1_RE = re.compile(
+    r"^https?://(api\.openai\.com|api\.siliconflow\.cn|api\.moonshot\.cn|api\.x\.ai|openrouter\.ai/api|api\.groq\.com/openai|dashscope\.aliyuncs\.com/compatible-mode)$",
+    re.IGNORECASE,
+)
+
+
+def resolve_chat_endpoint(raw_base: str) -> tuple[str, str]:
+    """智能规范化接口地址，返回 (endpoint_url, protocol['openai'|'anthropic'])。"""
+    base = re.sub(r"[\s\u200b\u200c\u200d\ufeff]+", "", str(raw_base or "")).rstrip("/")
+    if not base:
+        base = "https://api.openai.com/v1"
+    if not re.match(r"^https?://", base, re.IGNORECASE):
+        base = "https://" + base
+    low = base.lower()
+    if "api.anthropic.com" in low:
+        if low.endswith("/messages"):
+            return base, "anthropic"
+        if low.endswith("/v1"):
+            return f"{base}/messages", "anthropic"
+        return f"{base}/v1/messages", "anthropic"
+    if low.endswith("/chat/completions"):
+        return base, "openai"
+    if _NEEDS_V1_RE.match(base):
+        return f"{base}/v1/chat/completions", "openai"
+    return f"{base}/chat/completions", "openai"
+
+
+def _is_private_target(url: str) -> bool:
+    try:
+        host = (urlparse(url).hostname or "").strip().lower()
+        if not host or host in ("localhost", "0.0.0.0") or host.endswith(".local"):
+            return True
+        try:
+            ip = ipaddress.ip_address(host)
+            return ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved
+        except ValueError:
+            return False
+    except Exception:
+        return True
 
 
 class ModelGateway:
@@ -15,7 +58,7 @@ class ModelGateway:
         model: str | None = None,
     ) -> None:
         self.api_key = (api_key if api_key is not None else os.getenv("SICHAO_API_KEY", "")).strip()
-        self.base_url = (base_url or os.getenv("SICHAO_BASE_URL", "https://api.openai.com/v1")).rstrip("/")
+        self.base_url = re.sub(r"[\s\u200b\u200c\u200d\ufeff]+", "", (base_url or os.getenv("SICHAO_BASE_URL", "https://api.openai.com/v1"))).rstrip("/")
         self.model = (model or os.getenv("SICHAO_MODEL", "gpt-4o-mini")).strip()
 
     @property
@@ -30,39 +73,141 @@ class ModelGateway:
         model = (headers.get("x-user-model") or "").strip() or "gpt-4o-mini"
         return cls(api_key=key, base_url=base, model=model)
 
-    async def complete_with_usage(
+    async def complete_detailed(
         self,
-        messages: list[dict[str, str]],
-        temperature: float = 0.2,
-    ) -> tuple[str | None, dict[str, int]]:
+        messages: list[dict[str, Any]],
+        temperature: float = 0.25,
+    ) -> dict[str, Any]:
         zero = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
         if not self.configured:
-            return None, zero
+            return {"ok": False, "status": 400, "error": "尚未提供 API Key", "usage": zero}
+        endpoint, proto = resolve_chat_endpoint(self.base_url)
+        if _is_private_target(endpoint):
+            return {"ok": False, "status": 400, "error": "云端中转仅支持公网接口地址；局域网地址请用手机直连", "usage": zero}
         try:
-            async with httpx.AsyncClient(timeout=35.0) as client:
+            async with httpx.AsyncClient(timeout=50.0) as client:
+                if proto == "anthropic":
+                    sys_parts: list[str] = []
+                    user_msgs: list[dict[str, Any]] = []
+                    for m in messages:
+                        role = m.get("role", "user")
+                        raw_c = m.get("content")
+                        if role == "system":
+                            sys_parts.append(str(raw_c or ""))
+                            continue
+                        if isinstance(raw_c, list):
+                            blocks_in: list[dict[str, Any]] = []
+                            for part in raw_c:
+                                if not isinstance(part, dict):
+                                    continue
+                                if part.get("type") == "text":
+                                    blocks_in.append({"type": "text", "text": str(part.get("text") or "")})
+                                elif part.get("type") == "image_url":
+                                    u = str((part.get("image_url") or {}).get("url") or "")
+                                    dm = re.match(r"^data:(image/[^;]+);base64,(.+)$", u, re.DOTALL)
+                                    if dm:
+                                        blocks_in.append({
+                                            "type": "image",
+                                            "source": {"type": "base64", "media_type": dm.group(1), "data": dm.group(2)},
+                                        })
+                            user_msgs.append({"role": role, "content": blocks_in or [{"type": "text", "text": ""}]})
+                        else:
+                            user_msgs.append({"role": role, "content": str(raw_c or "")})
+                    if not user_msgs:
+                        user_msgs = [{"role": "user", "content": "你好"}]
+                    body: dict[str, Any] = {
+                        "model": self.model,
+                        "max_tokens": 2048,
+                        "temperature": temperature,
+                        "messages": user_msgs,
+                    }
+                    if sys_parts:
+                        body["system"] = "\n\n".join(sys_parts)
+                    res = await client.post(
+                        endpoint,
+                        headers={
+                            "x-api-key": self.api_key,
+                            "anthropic-version": "2023-06-01",
+                            "Content-Type": "application/json",
+                        },
+                        json=body,
+                    )
+                    data: dict[str, Any] = res.json() if res.content else {}
+                    if not res.is_success:
+                        err_msg = (data.get("error") or {}).get("message") or f"请求失败（HTTP {res.status_code}）"
+                        return {"ok": False, "status": res.status_code, "error": err_msg, "usage": zero}
+                    blocks = data.get("content") or []
+                    text = "\n".join(str(b.get("text") or "") for b in blocks if isinstance(b, dict) and b.get("type") == "text").strip()
+                    raw_u = data.get("usage") or {}
+                    pt = int(raw_u.get("input_tokens") or 0)
+                    ct = int(raw_u.get("output_tokens") or 0)
+                    return {
+                        "ok": bool(text),
+                        "status": res.status_code,
+                        "content": text,
+                        "reasoning": "",
+                        "usage": {"prompt_tokens": pt, "completion_tokens": ct, "total_tokens": pt + ct},
+                        "error": "" if text else "模型没有返回文字",
+                    }
+
                 res = await client.post(
-                    f"{self.base_url}/chat/completions",
+                    endpoint,
                     headers={
                         "Authorization": f"Bearer {self.api_key}",
                         "Content-Type": "application/json",
                     },
                     json={"model": self.model, "temperature": temperature, "messages": messages},
                 )
-                res.raise_for_status()
-                data: dict[str, Any] = res.json()
-                msg = data.get("choices", [{}])[0].get("message", {}) or {}
+                try:
+                    data = res.json()
+                except Exception:
+                    data = {}
+                if not res.is_success:
+                    err_obj = data.get("error")
+                    err_msg = (
+                        err_obj.get("message")
+                        if isinstance(err_obj, dict)
+                        else (str(err_obj) if err_obj else (data.get("message") or res.text[:200]))
+                    )
+                    return {
+                        "ok": False,
+                        "status": res.status_code,
+                        "error": err_msg or f"请求失败（HTTP {res.status_code}）",
+                        "usage": zero,
+                    }
+                msg = (data.get("choices") or [{}])[0].get("message", {}) or {}
                 text = str(msg.get("content") or "").strip()
+                reasoning = str(msg.get("reasoning_content") or "").strip()
                 raw_usage = data.get("usage") or {}
                 pt = int(raw_usage.get("prompt_tokens") or 0)
                 ct = int(raw_usage.get("completion_tokens") or 0)
                 tt = int(raw_usage.get("total_tokens") or (pt + ct))
-                if not tt:
+                if not tt and text:
                     est_in = max(1, sum(len(str(m.get("content") or "")) for m in messages) // 2)
-                    est_out = max(1, len(text) // 2)
+                    est_out = max(1, (len(text) + len(reasoning)) // 2)
                     pt, ct, tt = est_in, est_out, est_in + est_out
-                return (text or None), {"prompt_tokens": pt, "completion_tokens": ct, "total_tokens": tt}
-        except Exception:
-            return None, zero
+                return {
+                    "ok": bool(text),
+                    "status": res.status_code,
+                    "content": text,
+                    "reasoning": reasoning,
+                    "usage": {"prompt_tokens": pt, "completion_tokens": ct, "total_tokens": tt},
+                    "error": "" if text else "模型没有返回文字",
+                }
+        except httpx.TimeoutException:
+            return {"ok": False, "status": 504, "error": "上游模型响应超时，请稍后再试", "usage": zero}
+        except Exception as exc:
+            return {"ok": False, "status": 502, "error": f"上游连接异常：{exc}", "usage": zero}
+
+    async def complete_with_usage(
+        self,
+        messages: list[dict[str, str]],
+        temperature: float = 0.2,
+    ) -> tuple[str | None, dict[str, int]]:
+        res = await self.complete_detailed(messages, temperature=temperature)
+        if not res.get("ok"):
+            return None, {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+        return (res.get("content") or None), res.get("usage") or {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 
     async def complete(self, messages: list[dict[str, str]], temperature: float = 0.2) -> str | None:
         text, _ = await self.complete_with_usage(messages, temperature=temperature)
