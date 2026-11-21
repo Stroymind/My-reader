@@ -1,6 +1,7 @@
 services:
   - type: web
     name: sichao-v2-server
+    plan: free
     runtime: python
     rootDir: sichao-server
     buildCommand: pip install -r requirements.txt
