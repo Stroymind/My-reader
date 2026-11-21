@@ -774,6 +774,35 @@ body.theme-night .textLayer span.rr-mark.an{background:rgba(10,132,255,.35)}
 .microapp-pill.accent{background:var(--app-accent);color:#fff}
 .microapp-frame{flex:1;width:100%;height:100%;border:0;background:var(--app-bg)}
 
+/* Zone Bot 工坊（苹果 HIG 浅色毛玻璃 + 动态几何生命体） */
+.bots-mask{position:fixed;inset:0;z-index:165;display:flex;align-items:flex-end;justify-content:center;padding:14px;background:rgba(0,0,0,.22);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
+.bots-sheet{width:100%;max-width:460px;max-height:84vh;overflow:auto;padding:20px 18px calc(env(safe-area-inset-bottom) + 20px);border-radius:28px;background:var(--glass-strong);backdrop-filter:saturate(180%) blur(28px);-webkit-backdrop-filter:saturate(180%) blur(28px);box-shadow:0 1px 0 var(--app-line),0 22px 60px rgba(0,0,0,.16);animation:pop .32s var(--spring)}
+.bots-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:16px}
+.bots-head h3{margin:0;font-size:19px;font-weight:700;letter-spacing:-.015em;color:var(--app-fg)}
+.bots-head p{margin:4px 0 0;font-size:12.5px;line-height:1.45;color:var(--app-muted)}
+.bots-close{padding:6px 12px;border-radius:999px;background:var(--app-fill);font-size:13.5px;font-weight:600;color:var(--app-accent)}
+.bots-list{display:flex;flex-direction:column;gap:10px;margin-bottom:16px}
+.bot-row{display:flex;align-items:center;gap:12px;padding:12px 13px;border-radius:20px;background:var(--app-elev);box-shadow:0 0 0 .5px var(--app-line);cursor:pointer;transition:transform .22s var(--spring),box-shadow .2s}
+.bot-row.active{box-shadow:0 0 0 1.5px var(--app-accent)}
+.bot-row:active{transform:scale(.98)}
+.bot-avatar{width:46px;height:46px;flex:none;display:grid;place-items:center;border-radius:14px;background:var(--app-bg);box-shadow:0 0 0 .5px var(--app-line)}
+.bot-glyph{width:38px;height:38px;animation:botBreathe 4.6s ease-in-out infinite}
+@keyframes botBreathe{0%,100%{transform:scale(1) rotate(0deg)}50%{transform:scale(1.055) rotate(6deg)}}
+.bot-meta{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.bot-meta strong{font-size:15px;font-weight:650;color:var(--app-fg)}
+.bot-meta span{font-size:12.5px;color:var(--app-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bot-edit{flex:none;padding:6px 11px;border-radius:999px;background:var(--app-fill);font-size:12.5px;font-weight:580;color:var(--app-fg)}
+.bots-preview{display:grid;place-items:center;margin:4px 0 14px}
+.bots-preview .bot-glyph{width:76px;height:76px}
+.bots-form{display:flex;flex-direction:column;gap:10px}
+.bots-form input,.bots-form textarea{width:100%;border:0;border-radius:14px;background:var(--app-fill);padding:11px 13px;font-size:14.5px;color:var(--app-fg);outline:none;resize:none}
+.bots-pick-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:2px 0}
+.bots-chip{padding:6px 14px;border-radius:999px;background:var(--app-fill);font-size:13px;font-weight:580;color:var(--app-muted)}
+.bots-chip.on{background:var(--app-fg);color:var(--app-bg)}
+.bots-dot{width:26px;height:26px;padding:0;border-radius:50%;box-shadow:0 0 0 2px transparent}
+.bots-dot.on{box-shadow:0 0 0 2px var(--app-elev),0 0 0 4px var(--app-accent)}
+.bots-primary{width:100%;height:44px;border-radius:999px;background:var(--app-accent);color:#fff;font-size:15px;font-weight:620}
+
 @media (prefers-reduced-motion:reduce){
   *,*::before,*::after{animation:none!important;transition:none!important}
 }

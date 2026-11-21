@@ -154,6 +154,9 @@ function parseSingleClause(rawClause, ctx = {}) {
   if (craftM && /(?:小工具|微应用|番茄钟|计算器|换算|打卡|复盘|清单|计时|倒计时|日历|工具|应用)/.test(text)) {
     return [{ op: 'craftApp', prompt: craftM[1].trim() || text }];
   }
+  if (/(?:Bot\s*工坊|打开\s*Bot|管理\s*Bot|创建\s*Bot|新建\s*Bot|切换\s*Bot|机器人(?:工坊|列表|规则|设置))/i.test(text)) {
+    return [{ op: 'openBotStudio' }];
+  }
   if (/^(?:开启|打开|设置|配置)?(?:手机控屏|控屏权限|无障碍权限|无障碍服务|控屏设置)$/.test(text)) {
     return [{ op: 'phoneUseSetup' }];
   }
@@ -534,7 +537,7 @@ const SAFE_OPS = new Set([
   'pane', 'graphTilt', 'graphFit', 'graphMood', 'openBook', 'createNote', 'search', 'exportOutline', 'importBooks',
   'findBook', 'importUrl', 'setOpds', 'stackCreate', 'stackRemove', 'stackMerge', 'stackDissolve',
   'openSichao', 'setSichaoApi', 'askAi', 'styleUi', 'resetUi', 'exportVault', 'exportWord',
-  'phoneUse', 'phoneUseSetup', 'pinShortcut', 'craftApp',
+  'phoneUse', 'phoneUseSetup', 'pinShortcut', 'craftApp', 'openBotStudio',
   'cosmosExplore', 'cosmosNeighbors', 'cosmosFocus', 'cosmosLink', 'cosmosZoom'
 ]);
 

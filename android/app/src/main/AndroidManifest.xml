@@ -54,6 +54,19 @@
                 android:name="android.accessibilityservice"
                 android:resource="@xml/zone_accessibility_config" />
         </service>
+
+        <receiver
+            android:name=".ZoneWidgetProvider"
+            android:label="Zone 桌面总管"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="io.github.stroymind.myreader.ACTION_NEXT_BOT" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/zone_widget_info" />
+        </receiver>
     </application>
 
     <!-- Permissions -->

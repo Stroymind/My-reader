@@ -38,6 +38,16 @@ public class ZoneShortcutPlugin extends Plugin {
     }
 
     @PluginMethod
+    public void syncWidgetBots(PluginCall call) {
+        String botsJson = call.getString("botsJson", "");
+        int activeIndex = call.getInt("activeIndex", 0);
+        ZoneWidgetProvider.saveBots(getContext(), botsJson, activeIndex);
+        JSObject ret = new JSObject();
+        ret.put("ok", true);
+        call.resolve(ret);
+    }
+
+    @PluginMethod
     public void pinShortcut(PluginCall call) {
         Context ctx = getContext();
         String id = call.getString("id", "zone-shortcut-" + System.currentTimeMillis());

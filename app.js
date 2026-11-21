@@ -5,6 +5,7 @@ import { findAndFetchBook, getOpdsUrl, setOpdsUrl } from './book-finder.js';
 import { initSichao, setSichaoApi } from './sichao.js';
 import { getPhoneUseStatus, openPhoneUseSettings, runPhoneUseTask } from './phone-use.js';
 import { closeMicroApp, consumeLaunchDeepLink, craftMicroApp, isMicroAppOpen, openMicroApp, pinToDesktop } from './agent-surface.js';
+import { closeBotStudio, getActiveBot, openBotStudio, setActiveBot, syncToAndroidWidget } from './bots.js';
 import { BookletEngine, EpubEngine, PdfEngine, TxtEngine } from './engines.js';
 import { aiConfigured, complete as aiComplete } from './ai.js';
 import { settings, saveSettings, applyBodyTheme, applyAppearance, appearancePref, cycleAppearance, applyCustomFontBlob, FONTS, THEMES } from './settings.js';
@@ -2634,6 +2635,12 @@ command = createCommandController({
         toast(res.message, 3200);
         return { label: res.message };
       }
+      case 'openBotStudio': {
+        openBotStudio({
+          onStatus: msg => toast(msg, 2600)
+        });
+        return { label: 'Zone Bot 工坊' };
+      }
       case 'craftApp': {
         const res = await craftMicroApp(a.prompt || '', {
           onStatus: msg => toast(msg, 3200),
@@ -2774,11 +2781,29 @@ async function openDeepLink(uri) {
   if (mBook) { await openBook(decodeURIComponent(mBook[1])); return true; }
   const mApp = s.match(/^zone:\/\/open\/microapp\/(.+)$/);
   if (mApp) { return openMicroApp(decodeURIComponent(mApp[1])); }
+  if (s.startsWith('zone://open/voice')) {
+    try {
+      const u = new URL(s);
+      const botId = u.searchParams.get('bot');
+      if (botId) setActiveBot(botId);
+    } catch {}
+    command.openBar({ listen: true });
+    return true;
+  }
+  const mBot = s.match(/^zone:\/\/open\/bot\/(.+)$/);
+  if (mBot) {
+    const b = setActiveBot(decodeURIComponent(mBot[1]));
+    if (b.id === 'bot-sichao') { openSichaoSheet(); return true; }
+    toast(`当前 Bot：${b.name}`);
+    command.openBar({ listen: false });
+    return true;
+  }
   if (s === 'zone://open/sichao') { openSichaoSheet(); return true; }
   if (s === 'zone://open/graph') { if (reading) await closeBook(); showPane('graph', { whisper: false }); return true; }
   if (s === 'zone://open/knowledge') { if (reading) await closeBook(); showPane('knowledge', { whisper: false }); return true; }
   return false;
 }
 consumeLaunchDeepLink(openDeepLink);
+syncToAndroidWidget();
 
 window.__app = { db, openBook, closeBook, importFiles, importBlob, importArticleUrl, handleBack, openDeepLink, openMicroApp, closeMicroApp, isMicroAppOpen, pinToDesktop, get engine() { return engine; }, renderLibrary, stacks: { list: listStacks }, runCommand: text => command.run(text), openCommand: opts => command.openBar(opts), openPeek: openBookPeek, closePeek: closeBookPeek, openAuthGate, getAuthUser, getOpdsUrl, setOpdsUrl };
