@@ -11,7 +11,7 @@ export const THEMES = {
   night: { label: '夜间', bg: '#1c1c1e', fg: '#f2f2f7', muted: '#98989d' }
 };
 const KEY = 'rr-settings';
-const DEFAULTS = { theme: 'paper', font: 'serif', size: 19, lh: 1.8, margin: 24, eink: false, leftHand: false, flow: 'paginated', writing: 'horizontal' };
+const DEFAULTS = { theme: 'paper', font: 'serif', size: 19, lh: 1.8, margin: 14, eink: false, leftHand: false, flow: 'paginated', writing: 'horizontal' };
 export const settings = Object.assign({}, DEFAULTS, JSON.parse(localStorage.getItem(KEY) || '{}'));
 export function saveSettings() { localStorage.setItem(KEY, JSON.stringify(settings)); }
 export function appearancePref() {

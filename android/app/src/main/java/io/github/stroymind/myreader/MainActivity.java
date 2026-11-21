@@ -2,6 +2,7 @@ package io.github.stroymind.myreader;
 
 import android.os.Build;
 import android.os.Bundle;
+import android.view.ActionMode;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import androidx.activity.OnBackPressedCallback;
@@ -41,5 +42,19 @@ public class MainActivity extends BridgeActivity {
                 );
             }
         });
+    }
+
+    @Override
+    public void onActionModeStarted(ActionMode mode) {
+        if (mode != null && mode.getMenu() != null) {
+            WebView web = getBridge() != null ? getBridge().getWebView() : null;
+            if (web != null) {
+                web.evaluateJavascript(
+                    "(function(){return document.body.classList.contains('selecting');})()",
+                    v -> { if ("true".equals(v)) mode.getMenu().clear(); }
+                );
+            }
+        }
+        super.onActionModeStarted(mode);
     }
 }
