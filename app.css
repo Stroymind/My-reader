@@ -491,7 +491,7 @@ body.selecting .reader-cmd-bar,#bars:not(.hidden) ~ .reader-cmd-bar{opacity:0;po
 /* 阅读器 */
 #reader{position:fixed;inset:0;z-index:25;overflow:hidden;background:var(--bg);color:var(--fg)}
 body.theme-night #reader{color-scheme:dark}
-#stage{position:absolute;inset:0;padding:calc(env(safe-area-inset-top) + 26px) 14px calc(env(safe-area-inset-bottom) + 24px);transform-origin:50% 48%;transition:transform .38s var(--spring),opacity .3s ease,border-radius .3s ease}
+#stage{position:absolute;inset:0;padding:calc(env(safe-area-inset-top) + 18px) 14px calc(env(safe-area-inset-bottom) + 16px);transform-origin:50% 48%;transition:transform .38s var(--spring),opacity .3s ease,border-radius .3s ease}
 body[data-type=epub] #stage{padding-left:4px;padding-right:4px}
 #reader.bird-eye #stage{transform:scale(.9);opacity:.38;border-radius:24px;overflow:hidden;pointer-events:none}
 body.bi #stage{bottom:46%}
@@ -507,9 +507,9 @@ body.bi .run-bottom{bottom:calc(46% + 8px)}
 body[data-type=pdf] #stage{padding:calc(env(safe-area-inset-top) + 30px) 4px calc(env(safe-area-inset-bottom) + 28px)}
 #viewer{width:100%;height:100%;overflow:hidden;position:relative}
 #tap{position:absolute;inset:0;z-index:3;touch-action:pan-y}
-.run{position:absolute;left:24px;right:24px;z-index:2;pointer-events:none;font-size:11.5px;color:var(--muted);text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;letter-spacing:.02em;opacity:.85}
-.run-top{top:calc(env(safe-area-inset-top) + 6px)}
-.run-bottom{bottom:calc(env(safe-area-inset-bottom) + 12px);font-variant-numeric:tabular-nums}
+.run{position:absolute;left:24px;right:24px;z-index:2;pointer-events:none;font-size:10.5px;color:var(--muted);text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;letter-spacing:.02em;opacity:.62}
+.run-top{top:calc(env(safe-area-inset-top) + 2px)}
+.run-bottom{bottom:calc(env(safe-area-inset-bottom) + 5px);font-variant-numeric:tabular-nums}
 .rbar{position:absolute;left:0;right:0;z-index:6;background:var(--bar);backdrop-filter:saturate(180%) blur(22px);-webkit-backdrop-filter:saturate(180%) blur(22px)}
 #bars:not(.hidden) .rbar.top{animation:drop .4s var(--spring)}
 #bars:not(.hidden) .rbar.bottom{animation:rise .42s var(--spring)}

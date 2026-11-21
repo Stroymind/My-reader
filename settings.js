@@ -69,7 +69,7 @@ export function epubCss(cjk) {
 h1 + p, h2 + p, h3 + p, h4 + p, hr + p, blockquote + p, body > p:first-of-type { text-indent: 0; }`;
   return `@import url("${new URL('fonts/fonts.css', location.href)}");
 html { background: ${t.bg} !important; ${vrl ? 'writing-mode: vertical-rl !important; -webkit-writing-mode: vertical-rl !important; text-orientation: mixed !important;' : ''} }
-body { color: ${t.fg} !important; background: transparent !important; -webkit-text-size-adjust: 100%; overflow-wrap: anywhere; text-rendering: optimizeLegibility; ${vrl ? 'writing-mode: vertical-rl !important; -webkit-writing-mode: vertical-rl !important; text-orientation: mixed !important; line-break: strict;' : ''} }
+body { color: ${t.fg} !important; background: transparent !important; padding-top: 0 !important; padding-bottom: 0 !important; margin-top: 0 !important; margin-bottom: 0 !important; -webkit-text-size-adjust: 100%; overflow-wrap: anywhere; text-rendering: optimizeLegibility; ${vrl ? 'writing-mode: vertical-rl !important; -webkit-writing-mode: vertical-rl !important; text-orientation: mixed !important; line-break: strict;' : ''} }
 body, p, div, section, article { max-width: 100% !important; box-sizing: border-box !important; }
 p, div { margin-left: 0 !important; margin-right: 0 !important; }
 body * { color: inherit; }
