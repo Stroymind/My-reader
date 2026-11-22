@@ -306,6 +306,24 @@ export class EpubEngine {
     doc.addEventListener('click', e => {
       if (this.selecting && e.target.closest?.('a')) e.preventDefault();
     }, true);
+    // 上下滚动模式下 #tap 为 pointer-events:none，需在 EPUB iframe 内监听轻点以唤起/收起工具栏（目录、语音、排版）
+    let tx = 0, ty = 0, tt = 0, moved = false;
+    doc.addEventListener('pointerdown', e => {
+      if (e.button != null && e.button !== 0) return;
+      tx = e.clientX; ty = e.clientY; tt = Date.now(); moved = false;
+    }, { passive: true });
+    doc.addEventListener('pointermove', e => {
+      if (Math.abs(e.clientX - tx) > 10 || Math.abs(e.clientY - ty) > 10) moved = true;
+    }, { passive: true });
+    doc.addEventListener('pointerup', e => {
+      if (this.selecting || moved || Date.now() - tt > 360) return;
+      if (e.target?.closest?.('a, button, input, video, audio')) return;
+      const sel = doc.defaultView?.getSelection?.();
+      if (sel && !sel.isCollapsed && String(sel.toString() || '').trim()) return;
+      const frame = doc.defaultView?.frameElement;
+      const rect = frame?.getBoundingClientRect?.() || { left: 0, top: 0 };
+      this.onIframeTap?.(rect.left + e.clientX, rect.top + e.clientY);
+    }, { passive: true });
   }
   setSelectMode(on) { this.selecting = !!on; if (!on) this.clearSelection(); }
   selectAt(x, y) {

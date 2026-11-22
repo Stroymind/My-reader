@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
+import json
 import os
 import re
+from collections.abc import AsyncIterator
 from typing import Any
 from urllib.parse import urlparse
 
@@ -309,6 +311,322 @@ class ModelGateway:
     async def complete(self, messages: list[dict[str, str]], temperature: float = 0.2) -> str | None:
         text, _ = await self.complete_with_usage(messages, temperature=temperature)
         return text
+
+    async def complete_with_tools(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        temperature: float = 0.2,
+    ) -> dict[str, Any]:
+        """原生 Function Calling（OpenAI/Gemini/OpenRouter/Grok `tools`/`tool_calls` 与 Anthropic `tools`/`tool_use`）。"""
+        zero = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+        if not self.configured:
+            return {"ok": False, "status": 400, "protocol": "openai", "content": "", "tool_calls": [], "tools_unsupported": False, "error": "尚未提供 API Key", "usage": zero}
+        endpoint, proto = resolve_chat_endpoint(self.base_url, self.model)
+        if _is_private_target(endpoint):
+            return {"ok": False, "status": 400, "protocol": proto, "content": "", "tool_calls": [], "tools_unsupported": False, "error": "云端中转仅支持公网接口地址；局域网地址请用手机直连", "usage": zero}
+        if not tools or proto == "openai-responses":
+            res = await self.complete_detailed(messages, temperature=temperature)
+            return {
+                **res,
+                "protocol": proto,
+                "tool_calls": [],
+                "raw_assistant_message": {"role": "assistant", "content": res.get("content") or ""},
+                "tools_unsupported": proto == "openai-responses",
+            }
+        try:
+            async with httpx.AsyncClient(timeout=55.0) as client:
+                if proto == "anthropic":
+                    sys_parts: list[str] = []
+                    ant_msgs: list[dict[str, Any]] = []
+                    for m in messages:
+                        role = m.get("role", "user")
+                        raw_c = m.get("content")
+                        if role == "system":
+                            sys_parts.append(str(raw_c or ""))
+                            continue
+                        if isinstance(raw_c, list):
+                            ant_msgs.append({"role": "assistant" if role == "assistant" else "user", "content": raw_c})
+                        else:
+                            ant_msgs.append({"role": "assistant" if role == "assistant" else "user", "content": str(raw_c or "")})
+                    ant_tools = []
+                    for t in tools:
+                        fn = t.get("function") if isinstance(t, dict) else None
+                        if not isinstance(fn, dict):
+                            continue
+                        ant_tools.append({
+                            "name": str(fn.get("name") or ""),
+                            "description": str(fn.get("description") or ""),
+                            "input_schema": fn.get("parameters") or {"type": "object", "properties": {}},
+                        })
+                    body: dict[str, Any] = {
+                        "model": self.model,
+                        "max_tokens": 2048,
+                        "temperature": temperature,
+                        "messages": ant_msgs or [{"role": "user", "content": "你好"}],
+                        "tools": ant_tools,
+                    }
+                    if sys_parts:
+                        body["system"] = "\n\n".join(sys_parts)
+                    res = await client.post(
+                        endpoint,
+                        headers={
+                            "x-api-key": self.api_key,
+                            "anthropic-version": "2023-06-01",
+                            "Content-Type": "application/json",
+                        },
+                        json=body,
+                    )
+                    try:
+                        data = res.json() if res.content else {}
+                    except Exception:
+                        data = {}
+                    if not res.is_success:
+                        err_msg = extract_api_error_text(data, res.text[:200])
+                        unsupported = res.status_code in (400, 422) and bool(re.search(r"(tool|function|schema|unsupported)", err_msg, re.I))
+                        return {"ok": False, "status": res.status_code, "protocol": "anthropic", "content": "", "tool_calls": [], "tools_unsupported": unsupported, "error": err_msg or f"HTTP {res.status_code}", "usage": zero}
+                    blocks = data.get("content") or []
+                    text_parts: list[str] = []
+                    tool_calls: list[dict[str, Any]] = []
+                    for b in blocks:
+                        if not isinstance(b, dict):
+                            continue
+                        if b.get("type") == "text":
+                            text_parts.append(str(b.get("text") or ""))
+                        elif b.get("type") == "tool_use":
+                            tool_calls.append({
+                                "id": str(b.get("id") or f"call_{len(tool_calls)}"),
+                                "name": str(b.get("name") or ""),
+                                "arguments": b.get("input") if isinstance(b.get("input"), dict) else {},
+                            })
+                    raw_u = data.get("usage") or {}
+                    pt = int(raw_u.get("input_tokens") or 0)
+                    ct = int(raw_u.get("output_tokens") or 0)
+                    text = "\n".join(p for p in text_parts if p).strip()
+                    return {
+                        "ok": bool(text or tool_calls),
+                        "status": res.status_code,
+                        "protocol": "anthropic",
+                        "content": text,
+                        "reasoning": "",
+                        "tool_calls": tool_calls,
+                        "raw_assistant_message": {"role": "assistant", "content": blocks},
+                        "tools_unsupported": False,
+                        "usage": {"prompt_tokens": pt, "completion_tokens": ct, "total_tokens": pt + ct},
+                        "error": "" if (text or tool_calls) else "模型没有返回文字或工具调用",
+                    }
+
+                req_payload: dict[str, Any] = {
+                    "model": self.model,
+                    "messages": messages,
+                    "tools": tools,
+                    "tool_choice": "auto",
+                }
+                if not _NO_TEMP_MODEL_RE.search(self.model):
+                    req_payload["temperature"] = temperature
+                res = None
+                data: Any = {}
+                for attempt in range(2):
+                    res = await client.post(
+                        endpoint,
+                        headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
+                        json=req_payload,
+                    )
+                    try:
+                        data = res.json() if res.content else {}
+                    except Exception:
+                        data = {}
+                    if res.status_code == 429 and attempt == 0:
+                        err_preview = extract_api_error_text(data, res.text[:200])
+                        if not _QUOTA_ERR_RE.search(err_preview):
+                            await asyncio.sleep(1.5)
+                            continue
+                    break
+                assert res is not None
+                if not res.is_success:
+                    err_msg = extract_api_error_text(data, res.text[:200])
+                    unsupported = res.status_code in (400, 404, 422) and bool(re.search(r"(tool|function|tool_choice|unsupported|not support)", err_msg, re.I))
+                    return {"ok": False, "status": res.status_code, "protocol": "openai", "content": "", "tool_calls": [], "tools_unsupported": unsupported, "error": err_msg or f"HTTP {res.status_code}", "usage": zero}
+                msg = (data.get("choices") or [{}])[0].get("message", {}) or {}
+                text = str(msg.get("content") or "").strip()
+                reasoning = str(msg.get("reasoning_content") or "").strip()
+                raw_tcs = msg.get("tool_calls") or []
+                tool_calls: list[dict[str, Any]] = []
+                for idx_tc, tc in enumerate(raw_tcs):
+                    if not isinstance(tc, dict):
+                        continue
+                    fn = tc.get("function") or {}
+                    name = str(fn.get("name") or "").strip()
+                    raw_args = fn.get("arguments")
+                    parsed_args: Any = {}
+                    if isinstance(raw_args, dict):
+                        parsed_args = raw_args
+                    elif isinstance(raw_args, str) and raw_args.strip():
+                        try:
+                            parsed_args = json.loads(raw_args)
+                        except Exception:
+                            parsed_args = {"arg": raw_args}
+                    if name:
+                        tool_calls.append({
+                            "id": str(tc.get("id") or f"call_{idx_tc}"),
+                            "name": name,
+                            "arguments": parsed_args,
+                        })
+                raw_usage = data.get("usage") or {}
+                pt = int(raw_usage.get("prompt_tokens") or 0)
+                ct = int(raw_usage.get("completion_tokens") or 0)
+                tt = int(raw_usage.get("total_tokens") or (pt + ct))
+                raw_assist: dict[str, Any] = {"role": "assistant", "content": msg.get("content") or ""}
+                if raw_tcs:
+                    raw_assist["tool_calls"] = raw_tcs
+                return {
+                    "ok": bool(text or tool_calls),
+                    "status": res.status_code,
+                    "protocol": "openai",
+                    "content": text,
+                    "reasoning": reasoning,
+                    "tool_calls": tool_calls,
+                    "raw_assistant_message": raw_assist,
+                    "tools_unsupported": False,
+                    "usage": {"prompt_tokens": pt, "completion_tokens": ct, "total_tokens": tt},
+                    "error": "" if (text or tool_calls) else "模型没有返回文字或工具调用",
+                }
+        except httpx.TimeoutException:
+            return {"ok": False, "status": 504, "protocol": proto, "content": "", "tool_calls": [], "tools_unsupported": False, "error": "上游模型响应超时，请稍后再试", "usage": zero}
+        except Exception as exc:
+            return {"ok": False, "status": 502, "protocol": proto, "content": "", "tool_calls": [], "tools_unsupported": False, "error": f"上游连接异常：{exc}", "usage": zero}
+
+    async def stream_complete(
+        self,
+        messages: list[dict[str, Any]],
+        temperature: float = 0.25,
+    ) -> AsyncIterator[dict[str, Any]]:
+        """真实 SSE 逐字流式生成（支持 OpenAI/Gemini/OpenRouter/Grok 与 Anthropic；不支持流式时自动回退）。"""
+        zero = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+        if not self.configured:
+            yield {"type": "error", "error": "尚未提供 API Key"}
+            return
+        endpoint, proto = resolve_chat_endpoint(self.base_url, self.model)
+        if _is_private_target(endpoint):
+            yield {"type": "error", "error": "云端中转仅支持公网接口地址；局域网地址请用手机直连"}
+            return
+        if proto == "openai-responses":
+            res = await self.complete_detailed(messages, temperature=temperature)
+            if not res.get("ok"):
+                yield {"type": "error", "error": res.get("error") or "模型调用失败"}
+                return
+            txt = str(res.get("content") or "")
+            if txt:
+                yield {"type": "delta", "text": txt}
+            yield {"type": "done", "content": txt, "usage": res.get("usage") or zero}
+            return
+
+        full_parts: list[str] = []
+        usage = dict(zero)
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=20.0)) as client:
+                if proto == "anthropic":
+                    sys_parts: list[str] = []
+                    user_msgs: list[dict[str, Any]] = []
+                    for m in messages:
+                        role = m.get("role", "user")
+                        raw_c = m.get("content")
+                        if role == "system":
+                            sys_parts.append(str(raw_c or ""))
+                            continue
+                        user_msgs.append({"role": "assistant" if role == "assistant" else "user", "content": raw_c if isinstance(raw_c, list) else str(raw_c or "")})
+                    body: dict[str, Any] = {
+                        "model": self.model,
+                        "max_tokens": 2048,
+                        "temperature": temperature,
+                        "messages": user_msgs or [{"role": "user", "content": "你好"}],
+                        "stream": True,
+                    }
+                    if sys_parts:
+                        body["system"] = "\n\n".join(sys_parts)
+                    headers = {
+                        "x-api-key": self.api_key,
+                        "anthropic-version": "2023-06-01",
+                        "Content-Type": "application/json",
+                        "Accept": "text/event-stream",
+                    }
+                else:
+                    body = {"model": self.model, "messages": messages, "stream": True}
+                    if not _NO_TEMP_MODEL_RE.search(self.model):
+                        body["temperature"] = temperature
+                    headers = {
+                        "Authorization": f"Bearer {self.api_key}",
+                        "Content-Type": "application/json",
+                        "Accept": "text/event-stream",
+                    }
+                async with client.stream("POST", endpoint, headers=headers, json=body) as res:
+                    if not res.is_success:
+                        raw_err = (await res.aread()).decode("utf-8", errors="ignore")
+                        try:
+                            err_d = json.loads(raw_err)
+                        except Exception:
+                            err_d = {}
+                        yield {"type": "error", "error": extract_api_error_text(err_d, raw_err[:200]) or f"HTTP {res.status_code}"}
+                        return
+                    ctype = (res.headers.get("content-type") or "").lower()
+                    if "event-stream" not in ctype and "json" in ctype:
+                        raw_body = (await res.aread()).decode("utf-8", errors="ignore")
+                        data = json.loads(raw_body) if raw_body else {}
+                        if proto == "anthropic":
+                            txt = "\n".join(str(b.get("text") or "") for b in (data.get("content") or []) if isinstance(b, dict) and b.get("type") == "text").strip()
+                        else:
+                            txt = str(((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
+                        if txt:
+                            yield {"type": "delta", "text": txt}
+                        yield {"type": "done", "content": txt, "usage": usage}
+                        return
+                    async for line in res.aiter_lines():
+                        s = line.strip()
+                        if not s or not s.startswith("data:"):
+                            continue
+                        payload_str = s[5:].strip()
+                        if not payload_str or payload_str == "[DONE]":
+                            continue
+                        try:
+                            ev = json.loads(payload_str)
+                        except Exception:
+                            continue
+                        if proto == "anthropic":
+                            ev_type = ev.get("type")
+                            if ev_type == "content_block_delta":
+                                delta_txt = str((ev.get("delta") or {}).get("text") or "")
+                                if delta_txt:
+                                    full_parts.append(delta_txt)
+                                    yield {"type": "delta", "text": delta_txt}
+                            elif ev_type == "message_start":
+                                mu = (ev.get("message") or {}).get("usage") or {}
+                                usage["prompt_tokens"] = int(mu.get("input_tokens") or usage["prompt_tokens"])
+                            elif ev_type == "message_delta":
+                                mu = ev.get("usage") or {}
+                                usage["completion_tokens"] = int(mu.get("output_tokens") or usage["completion_tokens"])
+                                usage["total_tokens"] = usage["prompt_tokens"] + usage["completion_tokens"]
+                        else:
+                            choice = (ev.get("choices") or [{}])[0]
+                            delta = choice.get("delta") or {}
+                            delta_txt = str(delta.get("content") or "")
+                            if delta_txt:
+                                full_parts.append(delta_txt)
+                                yield {"type": "delta", "text": delta_txt}
+                            raw_u = ev.get("usage") or {}
+                            if raw_u:
+                                pt = int(raw_u.get("prompt_tokens") or 0)
+                                ct = int(raw_u.get("completion_tokens") or 0)
+                                usage = {"prompt_tokens": pt, "completion_tokens": ct, "total_tokens": int(raw_u.get("total_tokens") or (pt + ct))}
+            full_text = "".join(full_parts).strip()
+            if not usage["total_tokens"] and full_text:
+                est_in = max(1, sum(len(str(m.get("content") or "")) for m in messages) // 2)
+                est_out = max(1, len(full_text) // 2)
+                usage = {"prompt_tokens": est_in, "completion_tokens": est_out, "total_tokens": est_in + est_out}
+            yield {"type": "done", "content": full_text, "usage": usage}
+        except httpx.TimeoutException:
+            yield {"type": "error", "error": "上游模型流式响应超时，请稍后再试"}
+        except Exception as exc:
+            yield {"type": "error", "error": f"上游流式连接异常：{exc}"}
 
     async def check_balance(self) -> dict[str, Any]:
         """纯 BYOK 实时余额查询（仅向用户自己的模型服务商官方接口发起只读查询，绝不保存密钥）。"""

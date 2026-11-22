@@ -4,6 +4,7 @@ import { importArticleUrl, importBlob, importFiles, parseManifest, applyManifest
 import { findAndFetchBook, getOpdsUrl, setOpdsUrl } from './book-finder.js';
 import { getPhoneUseStatus, openPhoneUseSettings, runPhoneUseTask } from './phone-use.js';
 import { closeMicroApp, consumeLaunchDeepLink, craftMicroApp, isMicroAppOpen, listMicroApps, openMicroApp, pinToDesktop } from './agent-surface.js';
+import { formatToolStepLabel, streamCloudByokAgent, streamDirectByokChat } from './agent-runtime.js';
 import { applyThemePlugin, closeBotStudio, deleteBotById, getActiveBot, getActiveThemePlugin, getBotPlugins, getPrimaryBot, isPluginEnabled, isPluginMountedOnBot, listAutomations, listBots, listGroups, listPlugins, openBotStudio, renderBotSvg, renderGroupAvatarHtml, setActiveBot, startBotLifeEngine, syncToAndroidWidget, toggleBotPlugin, triggerBotMood, updateBotNotify } from './bots.js';
 import { buildEnabledSkillsPrompt, closeConnectAppsView, listAllConnectedMcpPlugins, listConnectedApps, openConnectAppsView } from './connectors.js';
 import { buildMemoryContextForBot, closeImportMemorySheet, extractDocFileText, importMemoryText, listMemories, openImportMemorySheet } from './memory.js';
@@ -23,8 +24,10 @@ const coverUrls = new Map();
 const KIND = { highlight: '划线', excerpt: '摘录', copy: '复制', annotation: '批注' };
 
 function toast(msg, ms = 2200, onUndo = null, actionLabel = '撤销') {
+  const clean = String(msg || '').trim();
+  if (!clean) return;
   const t = $('#toast');
-  t.replaceChildren(document.createTextNode(msg));
+  t.replaceChildren(document.createTextNode(clean));
   t.classList.toggle('has-undo', typeof onUndo === 'function');
   if (typeof onUndo === 'function') {
     const u = document.createElement('button');
@@ -656,7 +659,7 @@ function inTrashZone(x, y) {
   const z = $('#drag-trash-zone');
   if (!z || z.classList.contains('hidden')) return false;
   const r = z.getBoundingClientRect();
-  return x >= r.left - 24 && x <= r.right + 24 && y >= 0 && y <= r.bottom + 26;
+  return x >= r.left - 28 && x <= r.right + 28 && y >= r.top - 22 && y <= window.innerHeight + 10;
 }
 
 function bindShelfBook(el, b, stack, swipeBg, wrap) {
@@ -775,10 +778,11 @@ function bindShelfBook(el, b, stack, swipeBg, wrap) {
         swipeBg.classList.toggle('dir-left', dx < -14);
       }
     } else if (dragging && ghost) {
-      if (Math.hypot(mx, my) > 12) movedDuringDrag = true;
+      const dragDist = Math.hypot(mx, my);
+      if (dragDist > 12) movedDuringDrag = true;
       ghost.style.transform = `translate3d(${e.clientX - ghostOffX}px, ${e.clientY - ghostOffY}px, 0) scale(1.03)`;
-      const trash = inTrashZone(e.clientX, e.clientY);
-      const edge = !trash && inRightEdgeZone(e.clientX);
+      const trash = dragDist >= 48 && inTrashZone(e.clientX, e.clientY);
+      const edge = !trash && dragDist >= 32 && inRightEdgeZone(e.clientX);
       if (trash !== overTrash) {
         overTrash = trash;
         showTrashZone(true, overTrash);
@@ -827,8 +831,9 @@ function bindShelfBook(el, b, stack, swipeBg, wrap) {
       }
     } else if (dragging) {
       const up = e.type === 'pointerup';
-      const droppedTrash = up && (overTrash || inTrashZone(e.clientX, e.clientY));
-      const droppedEdge = up && !droppedTrash && (overEdge || inRightEdgeZone(e.clientX));
+      const dragDist = Math.hypot(e.clientX - sx, e.clientY - sy);
+      const droppedTrash = up && movedDuringDrag && dragDist >= 48 && overTrash && inTrashZone(e.clientX, e.clientY);
+      const droppedEdge = up && !droppedTrash && movedDuringDrag && dragDist >= 32 && (overEdge || inRightEdgeZone(e.clientX));
       const drop = (up && !droppedTrash && !droppedEdge) ? (hoverTarget || findDropTarget(e.clientX, e.clientY, b.id)) : null;
       endDrag();
       held = true;
@@ -1265,10 +1270,11 @@ function bindStackGestures(sec, card, head, actsEl, s, members) {
       card.style.transform = `translate3d(${dx}px, 0, 0)`;
       actsEl?.classList.toggle('show', dx < -18);
     } else if (dragging && ghost) {
-      if (Math.hypot(mx, my) > 12) moved = true;
+      const dragDist = Math.hypot(mx, my);
+      if (dragDist > 12) moved = true;
       ghost.style.transform = `translate3d(${e.clientX - ghostOffX}px, ${e.clientY - ghostOffY}px, 0) scale(1.03)`;
-      const trash = inTrashZone(e.clientX, e.clientY);
-      const edge = !trash && inRightEdgeZone(e.clientX);
+      const trash = dragDist >= 48 && inTrashZone(e.clientX, e.clientY);
+      const edge = !trash && dragDist >= 32 && inRightEdgeZone(e.clientX);
       if (trash !== overTrash) { overTrash = trash; showTrashZone(true, overTrash); if (overTrash) haptic('light'); }
       if (edge !== overEdge) { overEdge = edge; showEdgeDockZone(true, overEdge); if (overEdge) haptic('light'); }
       if (overTrash || overEdge) {
@@ -1298,8 +1304,9 @@ function bindStackGestures(sec, card, head, actsEl, s, members) {
       if (up && curDx <= -48) snapOpen();
       else closeSwipe();
     } else if (dragging) {
-      const droppedTrash = up && (overTrash || inTrashZone(e.clientX, e.clientY));
-      const droppedEdge = up && !droppedTrash && (overEdge || inRightEdgeZone(e.clientX));
+      const dragDist = Math.hypot(e.clientX - sx, e.clientY - sy);
+      const droppedTrash = up && moved && dragDist >= 48 && overTrash && inTrashZone(e.clientX, e.clientY);
+      const droppedEdge = up && !droppedTrash && moved && dragDist >= 32 && (overEdge || inRightEdgeZone(e.clientX));
       const drop = (up && !droppedTrash && !droppedEdge) ? (hoverTarget || findDropTarget(e.clientX, e.clientY, '', s.id)) : null;
       const didMove = moved;
       endDrag();
@@ -2209,6 +2216,13 @@ async function openBook(id) {
   const el = $('#viewer'); el.innerHTML = '';
   const Eng = rec.type === 'epub' ? EpubEngine : rec.type === 'pdf' ? PdfEngine : rec.type === 'booklet' ? BookletEngine : TxtEngine;
   engine = new Eng(el, rec, onRelocate, pdfjsLib);
+  engine.onIframeTap = (_x, y) => {
+    if (!engine || document.body.classList.contains('selecting')) return;
+    const barsOpen = !$('#bars').classList.contains('hidden');
+    if (barsOpen) { setBars(false); return; }
+    const h = window.innerHeight;
+    if (y >= h * 0.22 && y <= h * 0.78) setBars(true);
+  };
   engine.onSelectionChange = () => {
     const sel = engine.getSelection?.();
     if (sel?.text) snap = sel;
@@ -2877,6 +2891,12 @@ function buildSettings() {
     row('行距', ...[[1.5, '紧凑'], [1.8, '适中'], [2.1, '宽松']].map(([v, l]) => btn(l, Math.abs(settings.lh - v) < 0.01, () => { settings.lh = v; apply(); })));
   }
   if (cur?.type === 'epub' && engine?.vertical) row('竖排', btn('原样', !settings.horiz, () => { settings.horiz = false; saveSettings(); reopen(); }), btn('转横排', !!settings.horiz, () => { settings.horiz = true; saveSettings(); reopen(); }));
+  if (cur?.type !== 'pdf') {
+    row('翻页',
+      btn('左右分页', settings.flow !== 'scrolled', async () => { settings.flow = 'paginated'; await applyReaderPrefs(); buildSettings(); }),
+      btn('上下滚动', settings.flow === 'scrolled', async () => { settings.flow = 'scrolled'; if (settings.writing === 'vertical-rl') settings.writing = 'horizontal'; await applyReaderPrefs(); buildSettings(); })
+    );
+  }
   row('主题', ...Object.entries(THEMES).map(([k, t]) => { const b = btn(t.label, settings.theme === k, () => { settings.theme = k; apply(); }, 'swatch'); b.style.background = t.bg; b.style.color = t.fg; return b; }));
 }
 async function reopen() { const id = cur.id; $('#settings').classList.add('hidden'); await closeBook(); await openBook(id); }
@@ -5266,7 +5286,18 @@ function renderChatBox(thread, pendingText = '') {
         row.appendChild(av);
       }
       const bub = document.createElement('div');
-      bub.className = 'chat-bubble';
+      bub.className = 'chat-bubble' + (m.streaming ? ' streaming' : '');
+      if (Array.isArray(m.liveSteps) && m.liveSteps.length) {
+        const stepBar = document.createElement('div');
+        stepBar.className = 'chat-live-steps';
+        for (const st of m.liveSteps) {
+          const pill = document.createElement('span');
+          pill.className = 'chat-step-pill' + (st.done ? ' done' : '');
+          pill.textContent = (st.done ? '✓ ' : '· ') + (st.label || st.tool || '工具');
+          stepBar.appendChild(pill);
+        }
+        bub.appendChild(stepBar);
+      }
       if (Array.isArray(m.attachments) && m.attachments.length) {
         const imgs = m.attachments.filter(a => (a.kind === 'image' && a.dataUrl) || (a.kind === 'video' && a.thumb));
         if (imgs.length) {
@@ -5303,6 +5334,16 @@ function renderChatBox(thread, pendingText = '') {
         renderBubbleRichText(bub, thinkM[2].trim());
       } else if (raw) {
         renderBubbleRichText(bub, raw);
+      } else if (m.streaming) {
+        const waitEl = document.createElement('span');
+        waitEl.className = 'chat-stream-wait';
+        waitEl.textContent = m.statusText || '思考中…';
+        bub.appendChild(waitEl);
+      }
+      if (m.streaming && raw) {
+        const caret = document.createElement('span');
+        caret.className = 'chat-stream-caret';
+        bub.appendChild(caret);
       }
       if (m.needKey) {
         const cta = document.createElement('button');
@@ -5312,7 +5353,7 @@ function renderChatBox(thread, pendingText = '') {
         cta.onclick = () => openAiSettingsDialog();
         bub.appendChild(document.createElement('br'));
         bub.appendChild(cta);
-      } else if (m.role === 'assistant' && !m.pending && raw.length >= 6) {
+      } else if (m.role === 'assistant' && !m.pending && !m.streaming && raw.length >= 6) {
         const targetBot = senderBot || bot;
         const saveBtn = document.createElement('button');
         saveBtn.type = 'button';
@@ -5725,14 +5766,32 @@ async function chatWithActiveBot(text, attachments = []) {
   const memoryCtx = await buildSecondBrainContext(bot.id, q);
   const extPlugs = mountedExtPluginsFor(bot.id);
   const canUseCloudEngine = !hasVisualAtts && (isPluginMountedOnBot(bot.id, 'mcp-bridge') || extPlugs.length > 0) && !!getCloudApi() && (q.length >= 4 || extPlugs.length > 0);
-  renderChatBox(thread, hasVisualAtts ? '正在解析照片/视频内容…' : (canUseCloudEngine ? '云端多步 Agent 思考与按需联网中…' : '思考中…'));
+  const liveDraft = {
+    role: 'assistant',
+    content: '',
+    streaming: true,
+    statusText: hasVisualAtts ? '正在解析照片/视频内容…' : (canUseCloudEngine ? '思考与按需联网中…' : '思考中…'),
+    liveSteps: [],
+    at: Date.now()
+  };
+  thread.messages.push(liveDraft);
+  let rafPending = false;
+  const paintLiveDraft = () => {
+    if (rafPending) return;
+    rafPending = true;
+    requestAnimationFrame(() => {
+      rafPending = false;
+      renderChatBox(thread);
+    });
+  };
+  renderChatBox(thread);
   $('#zone-chat-modal')?.classList.add('thinking');
   try {
     let startIdx = 0;
-    for (let i = thread.messages.length - 1; i >= 0; i--) {
+    for (let i = thread.messages.length - 2; i >= 0; i--) {
       if (thread.messages[i]?.role === 'divider') { startIdx = i + 1; break; }
     }
-    const rawSlice = thread.messages.slice(startIdx).filter(m => !m.needKey && !m.internal && (m.role === 'user' || m.role === 'assistant')).slice(-14);
+    const rawSlice = thread.messages.slice(startIdx).filter(m => m !== liveDraft && !m.needKey && !m.internal && (m.role === 'user' || m.role === 'assistant')).slice(-14);
     const textCtxMsgs = rawSlice.map(m => ({ role: m.role, content: buildApiContentForMsg(m, false) }));
     const visionCtxMsgs = rawSlice.map(m => ({ role: m.role, content: buildApiContentForMsg(m, true) }));
     const otherBots = listBots().filter(b => b.id !== bot.id);
@@ -5746,13 +5805,43 @@ async function chatWithActiveBot(text, attachments = []) {
     let cloudSteps = [];
     let cloudSources = [];
     if (canUseCloudEngine) {
-      const data = await runCloudByokAgent(bot, textCtxMsgs, memoryCtx, extPlugs, combinedRules);
+      const mergedPlugs = [...(extPlugs || []), ...listAllConnectedMcpPlugins()];
+      const connectedApps = listConnectedApps().map(c => ({ id: c.id, token: c.token, extra: c.extra || {} }));
+      const skillBoost = buildEnabledSkillsPrompt();
+      const fullRules = [combinedRules, skillBoost].filter(Boolean).join('\n\n');
+      const data = await streamCloudByokAgent({
+        cloudApi: getCloudApi(),
+        cfg: getAiConfig(),
+        messages: textCtxMsgs,
+        rules: fullRules,
+        memory: memoryCtx || '',
+        extPlugins: mergedPlugs,
+        connectors: connectedApps,
+        maxSteps: 4,
+        onStatus: txt => {
+          if (!liveDraft.content) { liveDraft.statusText = txt; paintLiveDraft(); }
+        },
+        onStepStart: ev => {
+          liveDraft.liveSteps.push({ tool: ev.tool, label: ev.label || formatToolStepLabel(ev.tool, ev.arg), done: false });
+          paintLiveDraft();
+        },
+        onStep: ev => {
+          const hit = [...liveDraft.liveSteps].reverse().find(x => x.tool === ev.tool && !x.done);
+          if (hit) hit.done = true;
+          else liveDraft.liveSteps.push({ tool: ev.tool, label: ev.label || formatToolStepLabel(ev.tool, ev.arg), done: true });
+          paintLiveDraft();
+        },
+        onDelta: (_chunk, acc) => {
+          liveDraft.content = acc;
+          paintLiveDraft();
+        }
+      });
       if (data?.reply) {
         cloudSteps = Array.isArray(data.steps) ? data.steps : [];
         cloudSources = Array.isArray(data.sources) ? data.sources : [];
         if (cloudSteps.length) {
           const trace = cloudSteps.map((st, i) => `${i + 1}. [${st.tool}] ${st.arg}\n${st.preview}`).join('\n\n');
-          ans = `<think>已通过云端多步引擎执行 ${cloudSteps.length} 次真实工具：\n${trace}</think>\n${data.reply}`;
+          ans = `<think>已通过原生工具引擎执行 ${cloudSteps.length} 次真实工具：\n${trace}</think>\n${data.reply}`;
         } else {
           ans = data.reply;
         }
@@ -5765,8 +5854,18 @@ async function chatWithActiveBot(text, attachments = []) {
       ].filter(Boolean).join('\n\n');
       const memBlock = memoryCtx ? `[用户长期知识库与记忆（请自然结合但无需逐条复述）]\n${memoryCtx}` : '';
       const sysContent = [combinedRules, memBlock, skillBlocks].filter(Boolean).join('\n\n');
-      ans = await aiComplete([{ role: 'system', content: sysContent }, ...visionCtxMsgs]);
+      ans = await streamDirectByokChat({
+        cfg: getAiConfig(),
+        messages: [{ role: 'system', content: sysContent }, ...visionCtxMsgs],
+        onDelta: (_chunk, acc) => {
+          liveDraft.content = acc;
+          paintLiveDraft();
+        }
+      });
     }
+    // 移除临时流式占位，落盘正式消息与卡片
+    const draftIdx = thread.messages.indexOf(liveDraft);
+    if (draftIdx >= 0) thread.messages.splice(draftIdx, 1);
     // 处理 Bot 间静默后台通讯（最多 2 次接力，绝不刷屏、绝不死循环）
     const relayParsed = parseBotRelayDirectives(String(ans || ''));
     if (relayParsed.relays.length && otherBots.length) {
@@ -5837,6 +5936,8 @@ async function chatWithActiveBot(text, attachments = []) {
     const headSvg = $('#chat-head-av .bot-glyph');
     if (headSvg) triggerBotMood(headSvg, 'laugh');
   } catch (err) {
+    const draftIdx = thread.messages.indexOf(liveDraft);
+    if (draftIdx >= 0) thread.messages.splice(draftIdx, 1);
     thread.messages.push({ role: 'assistant', content: `连接模型失败：${err?.message || '请检查 API 地址、模型名或密钥'}`, needKey: true, at: Date.now() });
     saveTaskThreads();
     renderChatBox(thread);
@@ -6141,7 +6242,7 @@ function openProfileSheet() {
         <div class="bots-head">
           <div>
             <h3>我的 Zbot</h3>
-            <p>Zbot 5.1 · 跨端云同步 · 自有密钥</p>
+            <p>Zbot 5.2 · 跨端云同步 · 自有密钥</p>
           </div>
           <button type="button" class="bots-close" data-p-act="close">完成</button>
         </div>
@@ -6479,15 +6580,18 @@ async function runAutomationItem(auto, opts = {}) {
     await chatWithActiveBot(auto.prompt);
   }
 }
-const openBotsFromHub = (opts = {}) => openBotStudio({
-  onSelect: (bot, meta) => { openBotConversation(bot, { created: !!meta?.created }); triggerCloudSyncSoon(); },
-  onSelectGroup: grp => { openGroupConversation(grp); triggerCloudSyncSoon(); },
-  onStatus: msg => { renderAgentHub(); if (!$('#zone-chat-modal')?.classList.contains('hidden')) renderChatBox(taskThreads.find(t => t.id === activeThreadId)); toast(msg, 2600); triggerCloudSyncSoon(); },
-  onLaunchPlugin: launchPluginById,
-  onRunAutomation: runAutomationItem,
-  onInspectPlugin: inspectExternalPluginRemote,
-  ...opts
-});
+const openBotsFromHub = (opts = {}) => {
+  $('#toast')?.classList.add('hidden');
+  return openBotStudio({
+    onSelect: (bot, meta) => { $('#toast')?.classList.add('hidden'); openBotConversation(bot, { created: !!meta?.created }); triggerCloudSyncSoon(); },
+    onSelectGroup: grp => { $('#toast')?.classList.add('hidden'); openGroupConversation(grp); triggerCloudSyncSoon(); },
+    onStatus: msg => { renderAgentHub(); if (!$('#zone-chat-modal')?.classList.contains('hidden')) renderChatBox(taskThreads.find(t => t.id === activeThreadId)); if (msg) toast(msg, 2400); triggerCloudSyncSoon(); },
+    onLaunchPlugin: launchPluginById,
+    onRunAutomation: runAutomationItem,
+    onInspectPlugin: inspectExternalPluginRemote,
+    ...opts
+  });
+};
 const openConnectAppsFromHub = () => openConnectAppsView({
   cloudApi: getCloudApi(),
   onInspectPlugin: inspectExternalPluginRemote,

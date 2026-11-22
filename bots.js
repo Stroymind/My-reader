@@ -17,8 +17,8 @@ const DEFAULT_BOTS = [
     name: 'Zbot',
     role: '轻触形象切换样式、写规则、管定时任务与插件',
     rules: '',
-    shape: 'cube',
-    accent: '#111111',
+    shape: 'soot',
+    accent: '#1D2029',
     plugins: ['reading-cosmos', 'mcp-bridge']
   }
 ];
@@ -48,33 +48,44 @@ const THEME_PLUGINS = [
   { id: 'slate-pro', name: '冷灰工坊', bg: '#f2f3f5', accent: '#2563eb', css: ':root{--app-bg:#f2f3f5;--app-elev:#ffffff;--app-accent:#2563eb}' }
 ];
 
-// 保留原版 13 款 Grok 风格雕塑级有机轮廓，仅将双瞳替换为 Zbot 清爽空心圆角矩形眼圈（按轮廓比例自适应缩放，绝不挤边、无发光、无外框、不套娃）
+// 12 款 Blender 5.1 Cycles 超清 512×512 纯毛绒雕塑系列（4 款小绒灵 + 4 款绒毛煤球 + 4 款绒毛小云）
+// 支持 24 款精选色盘 + 1670 万色自由取色器实时全彩换色（煤球换色时自动采用高饱和毛发基底，保持纯白眼圈不偏色）
 const SHAPES = [
-  { id: 'orb', label: '团子', eyeDx: 2, eyeDy: -2, eyeScale: 0.92, tilt: -8, path: 'M50 12 A38 38 0 1 0 50 88 A38 38 0 1 0 50 12 Z' },
-  { id: 'cloud', label: '云朵', eyeDx: 1, eyeDy: 2, eyeScale: 0.80, tilt: -5, path: 'M29 74 C16 74 10 64 13 52 C15 44 21 39 27 38 C29 24 42 18 54 22 C63 25 69 32 71 39 C82 40 89 50 86 61 C84 69 76 74 67 74 Z' },
-  { id: 'cube', label: '方糖', eyeDx: 0, eyeDy: 0, eyeScale: 1.0, tilt: 0, path: 'M26 14 H74 A14 14 0 0 1 88 28 V72 A14 14 0 0 1 74 86 H26 A14 14 0 0 1 12 72 V28 A14 14 0 0 1 26 14 Z' },
-  { id: 'star', label: '星芒', eyeDx: 0, eyeDy: 0, eyeScale: 0.72, tilt: -4, path: 'M50 8 C58 8 60 28 69 35 C78 42 92 42 92 50 C92 58 78 58 69 65 C60 72 58 92 50 92 C42 92 40 72 31 65 C22 58 8 58 8 50 C8 42 22 42 31 35 C40 28 42 8 50 8 Z' },
-  { id: 'clover', label: '四叶', eyeDx: 0, eyeDy: 0, eyeScale: 0.80, tilt: -6, path: 'M50 24 C56 12 76 14 78 30 C90 36 88 58 74 64 C74 80 54 88 44 76 C30 86 14 72 20 56 C10 46 16 26 32 24 C36 14 46 16 50 24 Z' },
-  { id: 'heart', label: '团心', eyeDx: 0, eyeDy: -2, eyeScale: 0.82, tilt: -6, path: 'M50 84 C44 84 14 64 14 40 C14 23 28 14 42 22 C46 24 48 27 50 30 C52 27 54 24 58 22 C72 14 86 23 86 40 C86 64 56 84 50 84 Z' },
-  { id: 'bloom', label: '绒花', eyeDx: 0, eyeDy: -1, eyeScale: 0.84, tilt: -5, path: 'M50 11 C60 11 63 19 71 21 C80 23 86 31 84 40 C89 48 86 60 78 66 C76 76 66 84 56 82 C48 89 35 86 30 78 C20 76 13 66 16 56 C10 48 13 35 22 30 C24 20 34 13 43 16 C45 12 48 11 50 11 Z' },
-  { id: 'drop', label: '水滴', eyeDx: 0, eyeDy: 8, eyeScale: 0.82, tilt: -5, path: 'M50 10 C57 10 83 41 83 59 C83 77 68 89 50 89 C32 89 17 77 17 59 C17 41 43 10 50 10 Z' },
-  { id: 'bean', label: '软豆', eyeDx: 0, eyeDy: 0, eyeScale: 0.78, tilt: -6, path: 'M24 27 H76 A23 23 0 0 1 76 73 H24 A23 23 0 0 1 24 27 Z' },
-  { id: 'onigiri', label: '饭团', eyeDx: 0, eyeDy: 10, eyeScale: 0.78, tilt: 0, path: 'M42 16 C46 9 54 9 58 16 L86 67 C91 76 85 86 75 86 H25 C15 86 9 76 14 67 Z' },
-  { id: 'house', label: '小屋', eyeDx: 0, eyeDy: 5, eyeScale: 0.84, tilt: -5, path: 'M43 14 C47 10 53 10 57 14 L82 36 C86 40 87 45 86 50 L80 76 C78 82 73 86 67 86 H33 C27 86 22 82 20 76 L14 50 C13 45 14 40 18 36 Z' },
-  { id: 'splash', label: '海星', eyeDx: 0, eyeDy: 1, eyeScale: 0.78, tilt: -5, path: 'M49 10 C57 10 58 24 66 26 C74 28 84 20 89 27 C93 34 81 44 83 52 C85 60 95 66 90 74 C85 82 72 75 65 79 C58 83 56 93 48 92 C40 91 40 79 32 76 C24 73 14 80 10 72 C6 64 18 57 17 49 C16 41 6 35 12 27 C18 19 29 27 36 23 C43 19 41 10 49 10 Z' },
-  { id: 'hex', label: '六角', eyeDx: 0, eyeDy: 0, eyeScale: 0.88, tilt: -6, path: 'M44 13 C48 10.5 52 10.5 56 13 L81 27.5 C85 30 87 34 87 38.5 V61.5 C87 66 85 70 81 72.5 L56 87 C52 89.5 48 89.5 44 87 L19 72.5 C15 70 13 66 13 61.5 V38.5 C13 34 15 30 19 27.5 Z' }
+  // 第一排：小绒灵系列（4 款）
+  { id: 'sprite',        family: 'buddy', label: '薰衣草绒灵', nativeAccent: '#969CE4', isDark: false, chromatic: true,  chromaticBaseId: 'sprite',       chromaticBaseHex: '#969CE4' },
+  { id: 'moss',          family: 'buddy', label: '苔绿小绒灵', nativeAccent: '#5D7556', isDark: false, chromatic: true,  chromaticBaseId: 'moss',         chromaticBaseHex: '#5D7556' },
+  { id: 'buddy',         family: 'buddy', label: '焦糖小绒灵', nativeAccent: '#CE8E5E', isDark: false, chromatic: true,  chromaticBaseId: 'buddy',        chromaticBaseHex: '#CE8E5E' },
+  { id: 'sage-spirit',   family: 'buddy', label: '燕麦奶绒灵', nativeAccent: '#E8DEC9', isDark: false, chromatic: false, chromaticBaseId: 'sprite',       chromaticBaseHex: '#969CE4' },
+  // 第二排：绒毛煤球系列（4 款）
+  { id: 'soot',          family: 'soot',  label: '曜墨煤球',   nativeAccent: '#1D2029', isDark: true,  chromatic: false, chromaticBaseId: 'acorn',        chromaticBaseHex: '#DE7D90' },
+  { id: 'acorn',         family: 'soot',  label: '樱莓煤球',   nativeAccent: '#DE7D90', isDark: false, chromatic: true,  chromaticBaseId: 'acorn',        chromaticBaseHex: '#DE7D90' },
+  { id: 'cobalt-pebble', family: 'soot',  label: '釉蓝煤球',   nativeAccent: '#3C68CE', isDark: false, chromatic: true,  chromaticBaseId: 'cobalt-pebble',chromaticBaseHex: '#3C68CE' },
+  { id: 'pebble',        family: 'soot',  label: '抹茶煤球',   nativeAccent: '#698D67', isDark: false, chromatic: true,  chromaticBaseId: 'pebble',       chromaticBaseHex: '#698D67' },
+  // 第三排：绒毛小云系列（4 款）
+  { id: 'butter-cloud',  family: 'cloud', label: '奶油绒云',   nativeAccent: '#F2CE74', isDark: false, chromatic: true,  chromaticBaseId: 'butter-cloud', chromaticBaseHex: '#F2CE74' },
+  { id: 'owl',           family: 'cloud', label: '晴空绒云',   nativeAccent: '#82B3E4', isDark: false, chromatic: true,  chromaticBaseId: 'owl',          chromaticBaseHex: '#82B3E4' },
+  { id: 'terra-cloud',   family: 'cloud', label: '珊瑚绒云',   nativeAccent: '#EE7B5A', isDark: false, chromatic: true,  chromaticBaseId: 'terra-cloud',  chromaticBaseHex: '#EE7B5A' },
+  { id: 'fox',           family: 'cloud', label: '芋泥绒云',   nativeAccent: '#BC9FD9', isDark: false, chromatic: true,  chromaticBaseId: 'fox',          chromaticBaseHex: '#BC9FD9' }
 ];
 
 const LEGACY_SHAPE_MAP = {
-  zbot: 'cube', visor: 'cube', rover: 'bean', eve: 'orb', studio: 'orb',
-  neko: 'star', bear: 'clover', bunny: 'clover', owl: 'house', frog: 'cloud',
-  pocket: 'cube', dome: 'cloud', cozmo: 'hex', halo: 'orb', prism: 'hex',
-  capsule: 'drop', lynx: 'star', antenna: 'splash', monolith: 'cube', shield: 'heart'
+  onigiri: 'soot', cube: 'soot', zbot: 'soot', visor: 'soot', neko: 'soot', monolith: 'soot',
+  heart: 'sprite', rover: 'sprite', bunny: 'sprite',
+  orb: 'soot', eve: 'soot', studio: 'soot', halo: 'soot',
+  bean: 'pebble', pocket: 'pebble', mochi: 'pebble', shield: 'pebble',
+  house: 'acorn', capsule: 'acorn',
+  cloud: 'terra-cloud', dome: 'terra-cloud',
+  bloom: 'moss', frog: 'moss', clover: 'moss',
+  splash: 'butter-cloud', antenna: 'butter-cloud', sprout: 'sage-spirit', drop: 'cobalt-pebble',
+  hex: 'owl', cozmo: 'owl', prism: 'owl', star: 'fox', lynx: 'fox', bear: 'buddy'
 };
 
+// 24 款全谱系高审美毛绒色盘（涵盖莫兰迪、糖果、自然矿石与深邃暗色，另配自定义取色器支持无限色彩）
 const ACCENTS = [
-  '#111111', '#9A6332', '#FF2D46', '#FF6B00', '#F59E0B', '#10B981',
-  '#14B8A6', '#007AFF', '#7C5CFF', '#FF2D87', '#8E8E93'
+  '#1D2029', '#969CE4', '#5D7556', '#CE8E5E', '#E8DEC9', '#DE7D90',
+  '#3C68CE', '#698D67', '#F2CE74', '#82B3E4', '#EE7B5A', '#BC9FD9',
+  '#E85D75', '#FF8A3D', '#E6B800', '#38A87D', '#2997A8', '#5263D8',
+  '#7C52D8', '#C45BA8', '#8C5E3C', '#586370', '#A3B899', '#F4A6B8'
 ];
 
 export function listBots() {
@@ -319,54 +330,68 @@ function hexLuminance(hex) {
   return (r * 299 + g * 587 + b * 114) / 1000;
 }
 
-export function renderBotSvg(shape = 'cube', accent = '#111111', seed = '', opts = {}) {
+function hexToHsl(hex) {
+  const m = String(hex || '').trim().match(/^#([0-9a-f]{6})$/i);
+  if (!m) return { h: 0, s: 0, l: 0.2 };
+  const n = parseInt(m[1], 16);
+  const r = ((n >> 16) & 255) / 255, g = ((n >> 8) & 255) / 255, b = (n & 255) / 255;
+  const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+  const l = (mx + mn) / 2;
+  let h = 0, s = 0;
+  if (mx !== mn) {
+    const d = mx - mn;
+    s = l > 0.5 ? d / (2 - mx - mn) : d / (mx + mn);
+    if (mx === r) h = ((g - b) / d + (g < b ? 6 : 0)) * 60;
+    else if (mx === g) h = ((b - r) / d + 2) * 60;
+    else h = ((r - g) / d + 4) * 60;
+  }
+  return { h, s, l };
+}
+
+function resolvePlushBaseAndTint(spec, accent, forceNative = false) {
+  if (forceNative) return { imgId: spec.id, tint: '' };
+  const cur = String(accent || '').trim().toLowerCase();
+  const nat = String(spec.nativeAccent || '').trim().toLowerCase();
+  if (!cur || cur === nat) return { imgId: spec.id, tint: '' };
+
+  // 若所选颜色恰为同家族某款原生 Blender Cycles 渲染色，直接切换至该原生超清资产（零滤镜损耗！）
+  const exactSibling = SHAPES.find(s => s.family === spec.family && String(s.nativeAccent).toLowerCase() === cur);
+  if (exactSibling) return { imgId: exactSibling.id, tint: '' };
+
+  const a = hexToHsl(cur);
+  // 若目标为极暗曜黑且当前是煤球家族，直接使用原生黑煤球 soot.webp
+  if (a.l < 0.22 && a.s < 0.28) {
+    if (spec.family === 'soot') return { imgId: 'soot', tint: '' };
+    return { imgId: spec.chromaticBaseId || spec.id, tint: 'saturate(0.16) brightness(0.44) contrast(1.10)' };
+  }
+
+  // 采用同家族高饱和度毛绒基底做全彩旋转（例如黑煤球换彩色时自动基于樱莓煤球基底旋转色相，保证白眼圈100%纯白！）
+  const baseId = spec.chromatic ? spec.id : (spec.chromaticBaseId || spec.id);
+  const baseHex = spec.chromatic ? spec.nativeAccent : (spec.chromaticBaseHex || spec.nativeAccent);
+  const n = hexToHsl(baseHex);
+
+  if (a.s < 0.14) {
+    const briGray = Math.max(0.72, Math.min(1.22, a.l / Math.max(0.25, n.l)));
+    return { imgId: baseId, tint: `saturate(0.14) brightness(${briGray.toFixed(2)})` };
+  }
+  let dh = Math.round(a.h - n.h);
+  if (dh > 180) dh -= 360;
+  if (dh < -180) dh += 360;
+  const sat = Math.max(0.68, Math.min(1.62, a.s / Math.max(0.22, n.s)));
+  const bri = Math.max(0.78, Math.min(1.18, a.l / Math.max(0.28, n.l)));
+  return { imgId: baseId, tint: `hue-rotate(${dh}deg) saturate(${sat.toFixed(2)}) brightness(${bri.toFixed(2)})` };
+}
+
+export function renderBotSvg(shape = 'soot', accent = '', seed = '', opts = {}) {
   const mapped = LEGACY_SHAPE_MAP[shape] || shape;
-  const spec = SHAPES.find(s => s.id === mapped) || SHAPES[2];
-  const color = accent || '#111111';
-  const lowHex = color.trim().toLowerCase();
-  const isLightBody = lowHex === '#fff' || hexLuminance(lowHex) > 225;
-  const isDarkBody = lowHex === '#0a0a0c' || lowHex === '#09090b' || lowHex === '#111111' || lowHex === '#000' || lowHex === '#000000';
-  const rimColor = isLightBody ? '#111114' : '#FFFFFF';
-  const sc = spec.eyeScale || 1;
-  const dx = spec.eyeDx || 0;
-  const dy = spec.eyeDy || 0;
-  const rot = spec.tilt || 0;
-  const ew = +(12.6 * sc).toFixed(1);
-  const eh = +(18.0 * sc).toFixed(1);
-  const gap = +(5.8 * sc).toFixed(1);
-  const er = +(4.5 * sc).toFixed(1);
-  const sw = +(2.65 * Math.max(0.86, sc)).toFixed(2);
-  const cx = 50 + dx;
-  const cy = 50 + dy;
-  const ex1 = +(cx - gap / 2 - ew).toFixed(1);
-  const ex2 = +(cx + gap / 2).toFixed(1);
-  const ey = +(cy - eh / 2).toFixed(1);
-  const lx1 = (ex1 - 0.3).toFixed(1), lx2 = (ex1 + ew + 0.3).toFixed(1), lcx = (ex1 + ew / 2).toFixed(1);
-  const rx1 = (ex2 - 0.3).toFixed(1), rx2 = (ex2 + ew + 0.3).toFixed(1), rcx = (ex2 + ew / 2).toFixed(1);
-  const ly = (ey + eh * 0.64).toFixed(1), lcy = (ey + eh * 0.14).toFixed(1);
+  const spec = SHAPES.find(s => s.id === mapped) || SHAPES[0];
+  const color = accent || spec.nativeAccent || '#1D2029';
+  const { imgId, tint } = resolvePlushBaseAndTint(spec, color, !!opts.nativeColor);
+  const isDarkBody = (imgId === 'soot' && !tint) || hexLuminance(color) < 52;
   const timing = animTimingFor(`${seed || ''}:${spec.id}:${color}`);
-  const cls = ['bot-glyph', opts.coalesce ? 'bot-coalescing' : '', opts.static ? 'no-life' : ''].filter(Boolean).join(' ');
-  const dropsMarkup = opts.coalesce ? `
-    <g class="bot-coalesce" filter="url(#zone-gooey)">
-      <circle class="bot-core-drop" cx="50" cy="50" r="14" fill="currentColor" stroke="none"/>
-      ${COALESCE_DROPS.map(d => `<circle class="bot-drop" cx="50" cy="50" r="${d.r}" fill="currentColor" stroke="none" style="--sx:${d.sx};--sy:${d.sy};--dd:${d.del}"/>`).join('')}
-    </g>` : '';
-  return `<svg class="${cls}"${isDarkBody ? ' data-dark-body="1"' : ''} style="color:${color};${timing}" viewBox="0 0 100 100" aria-hidden="true">
-    ${dropsMarkup}
-    <g class="bot-body">
-      <path class="bot-main-shape" d="${spec.path}" fill="currentColor" stroke="none"/>
-      <g class="bot-eyes" transform="rotate(${rot} ${cx} ${cy})">
-        <g class="bot-eyes-norm">
-          <rect class="bot-eye bot-eye-ring bot-eye-l" x="${ex1}" y="${ey}" width="${ew}" height="${eh}" rx="${er}" fill="none" stroke="${rimColor}" stroke-width="${sw}"/>
-          <rect class="bot-eye bot-eye-ring bot-eye-r" x="${ex2}" y="${ey}" width="${ew}" height="${eh}" rx="${er}" fill="none" stroke="${rimColor}" stroke-width="${sw}"/>
-        </g>
-        <g class="bot-eyes-laugh">
-          <path d="M${lx1} ${ly} Q${lcx} ${lcy} ${lx2} ${ly}" fill="none" stroke="${rimColor}" stroke-width="${sw}" stroke-linecap="round"/>
-          <path d="M${rx1} ${ly} Q${rcx} ${lcy} ${rx2} ${ly}" fill="none" stroke="${rimColor}" stroke-width="${sw}" stroke-linecap="round"/>
-        </g>
-      </g>
-    </g>
-  </svg>`;
+  const cls = ['bot-glyph', 'bot-3d', opts.coalesce ? 'bot-coalescing' : '', opts.static ? 'no-life' : ''].filter(Boolean).join(' ');
+  const filterStyle = tint ? `--bot-tint:${tint};` : '';
+  return `<span class="${cls}"${isDarkBody ? ' data-dark-body="1"' : ''} data-bot-shape="${spec.id}" style="color:${color};${filterStyle}${timing}" aria-hidden="true"><span class="bot-body"><img class="bot-3d-img" src="icons/bots/${imgId}.webp" alt="" decoding="async" draggable="false"/></span></span>`;
 }
 
 const MOOD_LIST = ['laugh', 'hop', 'wink', 'curious', 'wiggle'];
@@ -428,8 +453,8 @@ export function openBotStudio({ onSelect, onSelectGroup, onStatus, onLaunchPlugi
   }
   let tab = initialTab;
   let editing = startNew
-    ? { isNew: true, name: '', role: '', rules: '', shape: 'cube', accent: '#111111', plugins: ['mcp-bridge'] }
-    : (editBotId ? (() => { const h = listBots().find(x => x.id === editBotId); return h ? { ...h, shape: LEGACY_SHAPE_MAP[h.shape] || h.shape || 'cube', plugins: Array.isArray(h.plugins) ? [...h.plugins] : ['mcp-bridge'], isNew: false } : null; })() : null);
+    ? { isNew: true, name: '', role: '', rules: '', shape: 'buddy', accent: '#8C92D8', plugins: ['mcp-bridge'] }
+    : (editBotId ? (() => { const h = listBots().find(x => x.id === editBotId); return h ? { ...h, shape: LEGACY_SHAPE_MAP[h.shape] || h.shape || 'sprite', plugins: Array.isArray(h.plugins) ? [...h.plugins] : ['mcp-bridge'], isNew: false } : null; })() : null);
   let editingGroup = startNewGroup
     ? { isNew: true, name: '', memberIds: listBots().slice(0, 3).map(b => b.id) }
     : (editGroupId ? (() => { const g = listGroups().find(x => x.id === editGroupId); return g ? { ...g, memberIds: [...(g.memberIds || [])], isNew: false } : null; })() : null);
@@ -485,7 +510,7 @@ export function openBotStudio({ onSelect, onSelectGroup, onStatus, onLaunchPlugi
       const swBot = mask.querySelector('[data-new-kind="bot"]');
       if (swBot) swBot.onclick = () => {
         editingGroup = null;
-        editing = { isNew: true, name: '', role: '', rules: '', shape: 'onigiri', accent: '#9A6332', plugins: ['mcp-bridge'] };
+        editing = { isNew: true, name: '', role: '', rules: '', shape: 'buddy', accent: '#8C92D8', plugins: ['mcp-bridge'] };
         draw();
       };
       mask.querySelectorAll('[data-grp-mem]').forEach(btn => {
@@ -508,14 +533,14 @@ export function openBotStudio({ onSelect, onSelectGroup, onStatus, onLaunchPlugi
           editingGroup = null;
           mask.classList.add('hidden');
           onSelectGroup?.(grp);
-          onStatus?.(`已创建群聊「${grp.name}」`);
+          onStatus?.('');
           return;
         }
         const grp = updateGroup(editingGroup.id, { name: name || editingGroup.name, memberIds: editingGroup.memberIds });
         editingGroup = null;
         mask.classList.add('hidden');
         if (grp) onSelectGroup?.(grp);
-        onStatus?.('已保存群聊成员与名称');
+        onStatus?.('');
       };
       const delGrp = mask.querySelector('[data-act="del-grp"]');
       if (delGrp) delGrp.onclick = () => {
@@ -545,10 +570,13 @@ export function openBotStudio({ onSelect, onSelectGroup, onStatus, onLaunchPlugi
           <div class="cb-body">
             <input id="bot-f-name" class="cb-name-inp" type="text" placeholder="给你的 Bot 起个名字" value="${esc(editing.name)}">
             <div class="cb-shape-grid">
-              ${SHAPES.map(s => `<button type="button" class="cb-shape-btn ${editing.shape === s.id ? 'on' : ''}" data-shape="${s.id}" title="${s.label}">${renderBotSvg(s.id, editing.accent, s.id, { static: true })}</button>`).join('')}
+              ${SHAPES.map(s => `<button type="button" class="cb-shape-btn ${editing.shape === s.id ? 'on' : ''}" data-shape="${s.id}" title="${s.label}">${renderBotSvg(s.id, s.nativeAccent, s.id, { static: true, nativeColor: true })}</button>`).join('')}
             </div>
             <div class="cb-color-grid">
-              ${ACCENTS.map(c => `<button type="button" class="cb-dot ${editing.accent === c ? 'on' : ''}" style="background:${c}" data-accent="${c}" aria-label="${c}"></button>`).join('')}
+              ${ACCENTS.map(c => `<button type="button" class="cb-dot ${String(editing.accent).toLowerCase() === c.toLowerCase() ? 'on' : ''}" style="background:${c}" data-accent="${c}" aria-label="${c}"></button>`).join('')}
+              <label class="cb-dot cb-custom-wheel ${!ACCENTS.some(c => c.toLowerCase() === String(editing.accent).toLowerCase()) ? 'on' : ''}" title="自由调色盘（任意颜色）" aria-label="自定义任意颜色">
+                <input type="color" id="bot-f-custom-color" value="${esc(editing.accent || '#969CE4')}">
+              </label>
             </div>
             ${showRules
               ? `<textarea id="bot-f-rules" class="cb-rules-inp" rows="3" placeholder="定义它的规则、风格或边界（留空则无预设限制）">${esc(editing.rules)}</textarea>`
@@ -614,12 +642,14 @@ export function openBotStudio({ onSelect, onSelectGroup, onStatus, onLaunchPlugi
         onStatus?.('已删除该 Bot');
         draw();
       };
-      mask.querySelectorAll('[data-shape]').forEach(b => {
+      mask.querySelectorAll('button[data-shape]').forEach(b => {
         b.onclick = () => {
           editing.name = mask.querySelector('#bot-f-name')?.value || '';
           const rEl = mask.querySelector('#bot-f-rules');
           if (rEl) editing.rules = rEl.value;
           editing.shape = b.dataset.shape;
+          const sp = SHAPES.find(x => x.id === editing.shape);
+          if (sp?.nativeAccent) editing.accent = sp.nativeAccent;
           editing.justPicked = true;
           draw();
         };
@@ -634,6 +664,17 @@ export function openBotStudio({ onSelect, onSelectGroup, onStatus, onLaunchPlugi
           draw();
         };
       });
+      const customColInp = mask.querySelector('#bot-f-custom-color');
+      if (customColInp) {
+        customColInp.onchange = () => {
+          editing.name = mask.querySelector('#bot-f-name')?.value || '';
+          const rEl = mask.querySelector('#bot-f-rules');
+          if (rEl) editing.rules = rEl.value;
+          editing.accent = customColInp.value;
+          editing.justPicked = true;
+          draw();
+        };
+      }
       mask.querySelector('[data-act="save"]').onclick = () => {
         const name = (mask.querySelector('#bot-f-name')?.value || '').trim();
         const rules = (mask.querySelector('#bot-f-rules')?.value ?? editing.rules ?? '').trim();
@@ -648,13 +689,13 @@ export function openBotStudio({ onSelect, onSelectGroup, onStatus, onLaunchPlugi
           editing = null;
           mask.classList.add('hidden');
           onSelect?.(item, { created: true });
-          onStatus?.(`已创建「${name}」，可以直接开始对话`);
+          onStatus?.('');
           return;
         } else {
           const idx = nextList.findIndex(x => x.id === editing.id);
           if (idx >= 0) nextList[idx] = { ...nextList[idx], name, role, rules, shape: editing.shape, accent: editing.accent, updatedAt: Date.now() };
           saveBots(nextList);
-          onStatus?.(`已保存「${name}」`);
+          onStatus?.('');
         }
         editing = null;
         mask.classList.add('hidden');
@@ -855,7 +896,7 @@ export function openBotStudio({ onSelect, onSelectGroup, onStatus, onLaunchPlugi
 
     if (tab === 'bots') {
       mask.querySelector('[data-act="new"]').onclick = () => {
-        editing = { isNew: true, name: '', role: '', rules: '', shape: 'onigiri', accent: '#9A6332' };
+        editing = { isNew: true, name: '', role: '', rules: '', shape: 'buddy', accent: '#8C92D8' };
         draw();
       };
       mask.querySelectorAll('[data-pick]').forEach(row => {
@@ -863,7 +904,7 @@ export function openBotStudio({ onSelect, onSelectGroup, onStatus, onLaunchPlugi
           if (e.target.closest('[data-edit]')) return;
           const b = setActiveBot(row.dataset.pick);
           onSelect?.(b);
-          onStatus?.(`已切换为「${b.name}」，直接输入即可对话`);
+          onStatus?.('');
           mask.classList.add('hidden');
         };
       });

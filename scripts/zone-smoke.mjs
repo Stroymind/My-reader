@@ -111,7 +111,7 @@ try {
   // Tap + to verify full-screen Create New Bot (13 shapes 5+5+3 + liquid splash coalescence + settled state)
   await page.click('#btn-hub-newbot');
   await page.waitForFunction(() => !document.querySelector('#zone-bots-mask').classList.contains('hidden'));
-  assert.equal(await page.$$eval('#zone-bots-mask [data-shape]', els => els.length), 13, '13 original Grok-style shapes with crisp Zbot hollow eye rims');
+  assert.equal(await page.$$eval('#zone-bots-mask [data-shape]', els => els.length), 12, '12 UHD 512x512 3D Zbot studio characters');
   assert.equal(await page.$('#zone-bots-mask [data-eyecolor]'), null, 'Original Create Bot layout preserved (zero unrequested eye-color picker)');
   await sleep(170);
   await page.screenshot({ path: path.resolve(root, 'test-results/zone-bot-create-birth.png') });
@@ -232,11 +232,11 @@ try {
   await page.click('#btn-hub-newbot');
   await page.waitForFunction(() => !document.querySelector('#zone-bots-mask').classList.contains('hidden'));
   assert.equal(await page.$eval('#zone-bots-mask .bots-preview', el => el.classList.contains('bot-born')), true, 'new Bot preview plays birth animation');
-  assert.equal(await page.$$eval('#zone-bots-mask .bots-preview .bot-drop', els => els.length), 5, 'new Bot preview coalesces from organic liquid droplets');
-  assert.ok(await page.$('#zone-bots-mask .bots-preview .bot-eyes-laugh'), 'Bot SVG includes happy laughing eyes');
+  assert.equal(await page.$eval('#zone-bots-mask .bots-preview .bot-glyph', el => el.classList.contains('bot-3d') && el.classList.contains('bot-coalescing')), true, 'new Bot preview enters as UHD 3D character');
+  assert.ok(await page.$('#zone-bots-mask .bots-preview .bot-3d-img'), 'Bot preview renders UHD 3D character');
   await page.type('#bot-f-name', '土豆');
-  await page.click('#zone-bots-mask [data-shape="orb"]');
-  await page.click('#zone-bots-mask [data-accent="#FF6B00"]');
+  await page.click('#zone-bots-mask [data-shape="acorn"]');
+  await page.click('#zone-bots-mask [data-accent="#EE7B5A"]');
   await page.click('#zone-bots-mask [data-act="save"]');
   await page.waitForFunction(() => !document.querySelector('#zone-chat-modal').classList.contains('hidden') && document.querySelector('#chat-head-name').textContent === '土豆');
   // Verify 土豆 does NOT inherit Zbot's 阅读器 plugin AND openBotReaderSheet(土豆) is strictly BLOCKED!
@@ -1167,19 +1167,19 @@ try {
   assert.ok(chainRes.highlights >= 1, 'chained excerpt saved');
   assert.ok(chainRes.marksInDom >= 1, 'chained highlight painted in DOM');
 
-  // 5) Dark-mode multi-paragraph highlighting + ultra-clean 3-pill #select-bar + 2-button #bars
+  // 5) Dark-mode multi-paragraph highlighting + ultra-clean 3-pill #select-bar + 3-button #bars (目录/说一句/排版) + 书签
   await page.evaluate(() => window.__app.runCommand('深色模式'));
   const readerChrome = await page.evaluate(() => ({
     selectBtns: [...document.querySelectorAll('#select-bar button')].map(b => b.textContent),
-    barBtns: [...document.querySelectorAll('#bars .btn-row button span')].map(s => s.textContent),
+    barBtns: [...document.querySelectorAll('#bars .btn-row button span:last-child')].map(s => s.textContent),
     readerCmdBar: !!document.querySelector('#reader-cmd-bar'),
-    noBookmarkStar: !document.querySelector('#btn-bm'),
+    hasBookmarkStar: !!document.querySelector('#btn-bm'),
     noPanelCloseX: !document.querySelector('#panel-close')
   }));
   assert.deepEqual(readerChrome.selectBtns, ['划线', '想法', '问 AI']);
-  assert.deepEqual(readerChrome.barBtns, ['目录', '说一句']);
+  assert.deepEqual(readerChrome.barBtns, ['目录', '说一句', '排版']);
   assert.equal(readerChrome.readerCmdBar, true);
-  assert.equal(readerChrome.noBookmarkStar, true, 'star bookmark button removed from reader top bar');
+  assert.equal(readerChrome.hasBookmarkStar, true, 'star bookmark button restored in reader top bar');
   assert.equal(readerChrome.noPanelCloseX, true, 'old X close button removed from spatial reader drawer');
   // Select across 2 paragraphs in dark mode and highlight
   await page.evaluate(() => {
@@ -1356,7 +1356,7 @@ try {
   await page.waitForFunction(() => !document.querySelector('#ai-mask').classList.contains('hidden'));
   const aiGlass = await page.evaluate(() => ({
     isGlass: document.querySelector('#ai-mask')?.classList.contains('ai-glass-mask'),
-    hasBotAv: !!document.querySelector('#ai-bot-av svg'),
+    hasBotAv: !!document.querySelector('#ai-bot-av .bot-3d-img'),
     chips: document.querySelectorAll('#ai-quick-chips .ai-q-chip').length,
     hasToKb: !!document.querySelector('#ai-to-kb')
   }));
@@ -1386,43 +1386,93 @@ try {
     hasForm: !!document.querySelector('#prof-auth-form'),
     hasLoginTab: !!document.querySelector('[data-auth-tab="login"]'),
     hasRegTab: !!document.querySelector('[data-auth-tab="register"]'),
-    hasV5: (document.querySelector('#zone-profile-mask')?.textContent || '').includes('Zbot 5.1')
+    hasV5: (document.querySelector('#zone-profile-mask')?.textContent || '').includes('Zbot 5.2')
   }));
-  assert.deepEqual(acctUi, { hasForm: true, hasLoginTab: true, hasRegTab: true, hasV5: true }, 'Profile sheet exposes Zbot 5.1 cloud account login & cross-device sync');
+  assert.deepEqual(acctUi, { hasForm: true, hasLoginTab: true, hasRegTab: true, hasV5: true }, 'Profile sheet exposes Zbot 5.2 cloud account login & cross-device sync');
   await page.screenshot({ path: path.resolve(root, 'test-results/zone-5-profile-account.png') });
   await page.click('[data-p-act="close"]');
   report.checks.push('Zone 5.0 features verified: unified omni-capsule, inline stack rename (zero popup), swipe-left delete, right-edge dock/undock, AI Explain, Bot reading/stack cards, and Profile Cloud Account Login UI');
 
-  // Zbot 5.1 专项验证：纯白实面无滥用毛玻璃 + 零水波特效 + 无发光正常眼圈 + 无外框线 + 深色模式下黑机身自动可辨识 + 语音Bug#1/#2修复 + 双指垂直拉开/捏合卡片堆 + 批量导入左右交替进场 + 新闻推送内置到Bot对话页
-  const zbot51Ui = await page.evaluate(() => {
-    const heroSvg = document.querySelector('#zone-hero-glyph .bot-glyph');
-    const heroShape = document.querySelector('#zone-hero-glyph .bot-main-shape');
-    const heroRing = document.querySelector('#zone-hero-glyph .bot-eye-ring');
+  // Zbot 5.2 专项验证：超清 512×512 3D 形象加载 + 无方框无发光 + 深色模式对比度 + 建 Bot/群聊零底部黑框提示 + 阅读器工具栏四键（目录/说一句/排版/书签）+ 底部防误删拖拽区 + agent-runtime SSE 解析
+  await page.waitForFunction(() => {
+    const img = document.querySelector('#zone-hero-glyph .bot-3d-img');
+    return img && img.complete && img.naturalWidth >= 512;
+  });
+  const zbot52Ui = await page.evaluate(async () => {
+    const heroEl = document.querySelector('#zone-hero-glyph .bot-glyph');
+    const heroImg = document.querySelector('#zone-hero-glyph .bot-3d-img');
     const aiSheet = document.querySelector('.ai-glass-sheet');
     const intentSheet = document.querySelector('.intent-sheet');
     const darkPrev = document.documentElement.classList.contains('appearance-dark');
     document.documentElement.classList.add('appearance-dark');
-    const darkBodyColor = heroSvg ? getComputedStyle(heroSvg).color : '';
+    const darkImgFilter = heroImg ? getComputedStyle(heroImg).filter : '';
     if (!darkPrev) document.documentElement.classList.remove('appearance-dark');
+
+    // 验证 agent-runtime SSE 分帧解析器
+    const rt = await import('./agent-runtime.js');
+    const parsedSse = [];
+    const parser = rt.createSseParser(d => parsedSse.push(JSON.parse(d)));
+    parser.push('data: {"type":"step_start","tool":"web_search"}\n\ndata: {"type":"del');
+    parser.push('ta","text":"你好"}\n\ndata: [DONE]\n\n');
+    parser.flush();
+
+    // 验证底部删除区位置（远离顶部卡片堆，绝不误删首堆）
+    const tz = document.querySelector('#drag-trash-zone');
+    const prevHidden = tz?.classList.contains('hidden');
+    tz?.classList.remove('hidden');
+    const tzRect = tz?.getBoundingClientRect();
+    if (prevHidden) tz?.classList.add('hidden');
+
     return {
       hasGlowFilter: !!document.querySelector('#zone-eye-glow'),
       glowEls: document.querySelectorAll('.bot-eye-glow').length,
-      bodyStroke: heroShape?.getAttribute('stroke') || '',
-      heroEyeFill: heroRing?.getAttribute('fill') || '',
-      darkBodyColor,
+      heroW: heroImg?.naturalWidth || 0,
+      heroH: heroImg?.naturalHeight || 0,
+      is3d: !!heroEl?.classList.contains('bot-3d'),
+      darkImgFilter,
       aiBlur: aiSheet ? getComputedStyle(aiSheet).backdropFilter : 'none',
       intentBlur: intentSheet ? getComputedStyle(intentSheet).backdropFilter : 'none',
-      rippleCount: document.querySelectorAll('.zone-ripple').length
+      rippleCount: document.querySelectorAll('.zone-ripple').length,
+      sseCount: parsedSse.length,
+      sseToolLbl: rt.formatToolStepLabel('web_search', 'Zbot'),
+      trashTop: Math.round(tzRect?.top || 0),
+      trashBottom: Math.round(tzRect?.bottom || 0),
+      readerHasToc: !!document.querySelector('#btn-toc'),
+      readerHasVoice: !!document.querySelector('#btn-reader-voice'),
+      readerHasAa: !!document.querySelector('#btn-aa'),
+      readerHasBm: !!document.querySelector('#btn-bm')
     };
   });
-  assert.equal(zbot51Ui.hasGlowFilter, false, 'Zero flashy glow SVG filter');
-  assert.equal(zbot51Ui.glowEls, 0, 'Zero glow elements on Bot eyes');
-  assert.equal(zbot51Ui.bodyStroke, 'none', 'Zero outer grey border around Bot body');
-  assert.equal(zbot51Ui.heroEyeFill, 'none', 'Clean hollow normal eye rims');
-  assert.equal(zbot51Ui.darkBodyColor, 'rgb(37, 37, 45)', 'Black Bot auto-lifts to legible deep graphite on dark OLED background');
-  assert.equal(zbot51Ui.aiBlur, 'none', 'AI sheet uses pure solid surface without cloudy glassmorphism');
-  assert.equal(zbot51Ui.intentBlur, 'none', 'Intent sheet uses pure solid surface without cloudy glassmorphism');
-  assert.equal(zbot51Ui.rippleCount, 0, 'Zero water ripple elements present');
+  assert.equal(zbot52Ui.hasGlowFilter, false, 'Zero flashy glow SVG filter');
+  assert.equal(zbot52Ui.glowEls, 0, 'Zero glow elements');
+  assert.equal(zbot52Ui.is3d, true, 'Hero renders crisp UHD 3D character');
+  assert.ok(zbot52Ui.heroW >= 512 && zbot52Ui.heroH >= 512, `Hero UHD 512x512 verified (${zbot52Ui.heroW}x${zbot52Ui.heroH})`);
+  assert.ok(zbot52Ui.darkImgFilter.includes('brightness'), 'Dark OLED mode keeps obsidian 3D character legible');
+  assert.equal(zbot52Ui.aiBlur, 'none', 'AI sheet uses pure solid surface');
+  assert.equal(zbot52Ui.intentBlur, 'none', 'Intent sheet uses pure solid surface');
+  assert.equal(zbot52Ui.rippleCount, 0, 'Zero water ripple elements present');
+  assert.equal(zbot52Ui.sseCount, 2, 'agent-runtime SSE parser handles split chunks cleanly');
+  assert.ok(zbot52Ui.sseToolLbl.includes('联网检索'), 'agent-runtime formats tool labels cleanly');
+  assert.ok(zbot52Ui.trashTop > 650, `Drag-trash dock moved to bottom away from top stack (top=${zbot52Ui.trashTop})`);
+  assert.equal(zbot52Ui.readerHasToc && zbot52Ui.readerHasVoice && zbot52Ui.readerHasAa && zbot52Ui.readerHasBm, true, 'Reader toolbar exposes 目录 / 说一句 / 排版 / 书签');
+
+  // 验证创建 Bot / 群聊后绝不弹出底部黑框提示（零噪点）+ 截取 Zbot 5.2 真实手机首页与创建页
+  await page.evaluate(() => { document.documentElement.classList.remove('legacy-reader-home'); });
+  await sleep(160);
+  await page.screenshot({ path: path.resolve(root, 'test-results/zbot-52-home.png') });
+  await page.click('#btn-hub-newbot');
+  await page.waitForSelector('#bot-f-name');
+  await page.waitForFunction(() => [...document.querySelectorAll('#zone-bots-mask .cb-shape-btn .bot-3d-img')].every(im => im.complete && im.naturalWidth >= 512));
+  await sleep(220);
+  await page.screenshot({ path: path.resolve(root, 'test-results/zbot-52-create-bot.png') });
+  await page.type('#bot-f-name', '绒小灵');
+  await page.click('#bot-f-submit');
+  await page.waitForFunction(() => !document.querySelector('#zone-chat-modal').classList.contains('hidden'));
+  const toastHiddenAfterBot = await page.evaluate(() => document.querySelector('#toast')?.classList.contains('hidden'));
+  assert.equal(toastHiddenAfterBot, true, 'Zero bottom black toast after creating a Bot');
+  await page.click('#btn-chat-back');
+  await page.waitForFunction(() => document.querySelector('#zone-chat-modal').classList.contains('hidden'));
+  await page.evaluate(() => { document.documentElement.classList.add('legacy-reader-home'); });
 
   // Bug #1 回归：自然语言翻页方向转换 & 护眼模式绝不误变成深色/黑色模式
   const bug1 = await page.evaluate(async () => {

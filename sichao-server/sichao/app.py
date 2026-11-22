@@ -15,10 +15,10 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
-from .agent import TOOL_REGISTRY, inspect_external_plugin, run_byok_agent_loop
+from .agent import TOOL_REGISTRY, inspect_external_plugin, run_byok_agent_loop, stream_byok_agent_loop
 from .connectors import verify_connector
 from .db import Database
 from .discovery import build_coverage_map, cluster_unassigned_documents, content_hash, seed_default_sources
@@ -130,7 +130,7 @@ class SyncExchangeReq(BaseModel):
 
 _WEB_ALLOWED_FILES = {
     "index.html", "app.css", "app.js", "db.js", "engines.js", "formats.js",
-    "book-finder.js", "sichao.js", "phone-use.js", "agent-surface.js",
+    "book-finder.js", "phone-use.js", "agent-surface.js", "agent-runtime.js",
     "bots.js", "connectors.js", "memory.js", "sync.js", "importer.js",
     "settings.js", "bilingual.js", "epub-repair.js", "knowledge.js",
     "ai.js", "workspace.js", "stacks.js", "cosmos.js", "command.js",
@@ -543,7 +543,7 @@ def create_app(db_path: str | None = None, enable_scheduler: bool = True) -> Fas
 
     @app.post("/api/agent/run")
     async def agent_run(req: AgentRunReq, request: Request) -> dict[str, Any]:
-        """Zone 手机端 Bot 多步联网工具调用引擎（纯 BYOK：仅透传用户请求头 API Key）。"""
+        """Zbot 手机端 Bot 多步联网工具调用引擎（纯 BYOK：原生 Function Calling 优先 + 自动回退）。"""
         user_gw = ModelGateway.from_user_headers(request.headers)
         return await run_byok_agent_loop(
             user_gw,
@@ -553,6 +553,33 @@ def create_app(db_path: str | None = None, enable_scheduler: bool = True) -> Fas
             ext_plugins=req.ext_plugins,
             connectors=req.connectors,
             max_steps=req.max_steps,
+        )
+
+    @app.post("/api/agent/stream")
+    async def agent_stream(req: AgentRunReq, request: Request) -> StreamingResponse:
+        """Zbot OpenBot 级真实 SSE 流式 Agent 引擎（实时推送 step_start / step / delta / done）。"""
+        user_gw = ModelGateway.from_user_headers(request.headers)
+
+        async def _event_gen():
+            try:
+                async for ev in stream_byok_agent_loop(
+                    user_gw,
+                    req.messages,
+                    rules=req.rules,
+                    memory=req.memory,
+                    ext_plugins=req.ext_plugins,
+                    connectors=req.connectors,
+                    max_steps=req.max_steps,
+                ):
+                    yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
+            except Exception as exc:
+                yield f"data: {json.dumps({'type': 'done', 'ok': False, 'error': 'STREAM_ERROR', 'reply': f'流式执行异常：{exc}', 'steps': [], 'sources': [], 'usage': {'prompt_tokens': 0, 'completion_tokens': 0, 'total_tokens': 0}}, ensure_ascii=False)}\n\n"
+            yield "data: [DONE]\n\n"
+
+        return StreamingResponse(
+            _event_gen(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
     @app.post("/api/mcp/inspect")

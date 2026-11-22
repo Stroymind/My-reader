@@ -176,6 +176,9 @@ def test_parallel_agent_loop_memory_and_usage(tmp_path: Path, monkeypatch) -> No
         def __init__(self) -> None:
             super().__init__(api_key="sk-test-byok", base_url="https://api.example.com/v1", model="test-model")
 
+        async def complete_with_tools(self, messages, tools=None, temperature=0.2):
+            return {"ok": False, "status": 400, "protocol": "openai", "content": "", "tool_calls": [], "tools_unsupported": True, "error": "tools unsupported", "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}}
+
         async def complete_with_usage(self, messages, temperature=0.2):
             turns.append(messages)
             if len(turns) == 1:
@@ -398,5 +401,100 @@ def test_account_auth_cross_device_sync_and_web_client(tmp_path: Path) -> None:
     # PC Web client allowlist serving + traversal protection
     w_idx = client.get("/web/")
     assert w_idx.status_code == 200 and "Zbot" in w_idx.text
+    assert client.get("/web/agent-runtime.js").status_code == 200
+    assert client.get("/web/icons/bots/sprite.webp").status_code == 200
     assert client.get("/web/sichao-server/sichao/app.py").status_code == 404
     assert client.get("/web/render.yaml").status_code == 404
+
+
+def test_native_function_calling_and_sse_stream(tmp_path: Path, monkeypatch) -> None:
+    import json
+    from sichao import agent as agent_mod
+    from sichao.gateway import ModelGateway
+
+    # 1) Schema builder maps built-ins, connectors, and MCP tools with valid OpenAI identifiers
+    schemas, api_map = agent_mod.build_native_tool_schemas(
+        {"notion_search": ({"id": "notion", "token": "ntn_x"}, "搜索 Notion")},
+        {"mcp:docs:query": ("https://mcp.example.com", "query", "", "查询文档", {"type": "object", "properties": {"q": {"type": "string"}}})},
+    )
+    fn_names = [s["function"]["name"] for s in schemas]
+    assert "web_search" in fn_names and "get_current_time" in fn_names
+    assert "notion_search" in fn_names
+    assert any(api_map[n] == "mcp:docs:query" and ":" not in n for n in fn_names)
+
+    # 2) Mock native tool_calls round-trip + SSE streaming endpoint /api/agent/stream
+    async def fake_web(q: str) -> str:
+        return f"- {q} 最新进展\n  URL: https://news.example.com/ai\n  摘要: 原生工具调用实测通过"
+
+    monkeypatch.setitem(agent_mod.TOOL_REGISTRY, "web_search", fake_web)
+
+    calls_seen: list[int] = []
+
+    async def fake_complete_with_tools(self, messages, tools=None, temperature=0.2):
+        calls_seen.append(len(tools or []))
+        if len(calls_seen) == 1:
+            return {
+                "ok": True,
+                "status": 200,
+                "protocol": "openai",
+                "content": "",
+                "reasoning": "",
+                "tool_calls": [
+                    {"id": "tc_1", "name": "web_search", "arguments": {"query": "OpenBot"}},
+                    {"id": "tc_2", "name": "get_current_time", "arguments": {}},
+                ],
+                "raw_assistant_message": {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {"id": "tc_1", "type": "function", "function": {"name": "web_search", "arguments": '{"query":"OpenBot"}'}},
+                        {"id": "tc_2", "type": "function", "function": {"name": "get_current_time", "arguments": "{}"}},
+                    ],
+                },
+                "tools_unsupported": False,
+                "usage": {"prompt_tokens": 100, "completion_tokens": 25, "total_tokens": 125},
+                "error": "",
+            }
+        # Confirm native OpenAI tool result messages were appended
+        assert any(m.get("role") == "tool" and m.get("tool_call_id") == "tc_1" for m in messages)
+        return {
+            "ok": True,
+            "status": 200,
+            "protocol": "openai",
+            "content": "原生工具调用与流式输出均已就绪，参考 https://news.example.com/ai 。",
+            "reasoning": "",
+            "tool_calls": [],
+            "raw_assistant_message": {"role": "assistant", "content": "done"},
+            "tools_unsupported": False,
+            "usage": {"prompt_tokens": 180, "completion_tokens": 45, "total_tokens": 225},
+            "error": "",
+        }
+
+    monkeypatch.setattr(ModelGateway, "complete_with_tools", fake_complete_with_tools)
+
+    app = create_app(db_path=str(tmp_path / "sse.db"), enable_scheduler=False)
+    client = TestClient(app)
+    res = client.post(
+        "/api/agent/stream",
+        headers={"X-User-Api-Key": "sk-test-stream", "X-User-Base-Url": "https://api.openai.com/v1", "X-User-Model": "gpt-4.1-mini"},
+        json={"messages": [{"role": "user", "content": "帮我查一下 OpenBot 最新消息并核对时间"}]},
+    )
+    assert res.status_code == 200
+    assert "text/event-stream" in res.headers.get("content-type", "")
+    events = []
+    for line in res.text.splitlines():
+        if line.startswith("data:"):
+            raw = line[5:].strip()
+            if raw and raw != "[DONE]":
+                events.append(json.loads(raw))
+    ev_types = [e.get("type") for e in events]
+    assert "step_start" in ev_types
+    assert "step" in ev_types
+    assert "delta" in ev_types
+    assert "done" in ev_types
+    done_ev = next(e for e in events if e.get("type") == "done")
+    assert done_ev["ok"] is True
+    assert done_ev["mode"] == "native_tools"
+    assert len(done_ev["steps"]) == 2
+    assert done_ev["usage"]["total_tokens"] == 350
+    assert calls_seen[0] >= 6

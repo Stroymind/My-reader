@@ -1,7 +1,7 @@
 {
   "name": "zone",
   "private": true,
-  "version": "5.1.0",
+  "version": "5.2.0",
   "description": "Zbot：个人智能体工作台与极简知识阅读空间。",
   "scripts": {
     "sync:www": "node scripts/sync-www.mjs",
