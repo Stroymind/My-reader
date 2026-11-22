@@ -8,6 +8,7 @@ import { closeMicroApp, consumeLaunchDeepLink, craftMicroApp, isMicroAppOpen, li
 import { applyThemePlugin, closeBotStudio, deleteBotById, getActiveBot, getActiveThemePlugin, getBotPlugins, getPrimaryBot, isPluginEnabled, isPluginMountedOnBot, listAutomations, listBots, listGroups, listPlugins, openBotStudio, renderBotSvg, renderGroupAvatarHtml, setActiveBot, startBotLifeEngine, syncToAndroidWidget, toggleBotPlugin, triggerBotMood, updateBotNotify } from './bots.js';
 import { buildEnabledSkillsPrompt, closeConnectAppsView, listAllConnectedMcpPlugins, listConnectedApps, openConnectAppsView } from './connectors.js';
 import { buildMemoryContextForBot, closeImportMemorySheet, extractDocFileText, importMemoryText, listMemories, openImportMemorySheet } from './memory.js';
+import { cloudAuthLogin, cloudAuthLogout, cloudAuthRegister, getCloudSession, isCloudSignedIn, pollSyncDelta, recordSyncDeletion, scheduleCloudSync, syncNow } from './sync.js';
 import { BookletEngine, EpubEngine, PdfEngine, TxtEngine } from './engines.js';
 import { aiConfigured, complete as aiComplete, fetchLiveBalance, getAiConfig, getAiUsage, getModelPricing, nativePostJson, recordAiUsage, resetAiUsage, setAiBudget, setRechargeBalance } from './ai.js';
 import { settings, saveSettings, applyBodyTheme, applyAppearance, appearancePref, cycleAppearance, applyCustomFontBlob, FONTS, THEMES } from './settings.js';
@@ -22,7 +23,7 @@ const $ = s => document.querySelector(s);
 const coverUrls = new Map();
 const KIND = { highlight: '划线', excerpt: '摘录', copy: '复制', annotation: '批注' };
 
-function toast(msg, ms = 2200, onUndo = null) {
+function toast(msg, ms = 2200, onUndo = null, actionLabel = '撤销') {
   const t = $('#toast');
   t.replaceChildren(document.createTextNode(msg));
   t.classList.toggle('has-undo', typeof onUndo === 'function');
@@ -30,7 +31,7 @@ function toast(msg, ms = 2200, onUndo = null) {
     const u = document.createElement('button');
     u.type = 'button';
     u.className = 'toast-undo';
-    u.textContent = '撤销';
+    u.textContent = actionLabel || '撤销';
     u.onclick = () => { clearTimeout(toast.t); t.classList.add('hidden'); onUndo(); };
     t.appendChild(u);
   }
@@ -38,6 +39,32 @@ function toast(msg, ms = 2200, onUndo = null) {
   clearTimeout(toast.t);
   toast.t = setTimeout(() => t.classList.add('hidden'), ms);
 }
+function haptic(kind = 'light') {
+  try {
+    if (!navigator.vibrate) return;
+    const map = { light: 10, medium: 18, snap: [12, 24, 16], success: [14, 34, 22], delete: [24, 36, 14] };
+    navigator.vibrate(map[kind] ?? 10);
+  } catch {}
+}
+function spawnRipple(target, x, y) {
+  if (!target || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const r = target.getBoundingClientRect();
+  if (!r.width || !r.height) return;
+  const wave = document.createElement('span');
+  wave.className = 'zone-ripple';
+  const sz = Math.max(r.width, r.height) * 0.9;
+  wave.style.width = sz + 'px';
+  wave.style.height = sz + 'px';
+  wave.style.left = (x - r.left) + 'px';
+  wave.style.top = (y - r.top) + 'px';
+  target.appendChild(wave);
+  setTimeout(() => wave.remove(), 540);
+}
+document.addEventListener('pointerdown', e => {
+  if (e.button != null && e.button !== 0) return;
+  const hit = e.target?.closest?.('.book, .stack-head, .chat-card, .bot-mounted-chip, .ai-foot-pill, .ai-q-chip, .omni-add, .omni-mic, .swipe-pill');
+  if (hit && !e.target?.closest?.('input, textarea')) spawnRipple(hit, e.clientX, e.clientY);
+}, { passive: true });
 function hueFor(s) { let h = 0; for (const c of s) h = (h * 31 + c.codePointAt(0)) % 360; return h; }
 const fmtPct = p => (p == null ? '' : (p * 100).toFixed(p < 0.1 && p > 0 ? 1 : 0) + '%');
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
@@ -145,11 +172,18 @@ $('#confirm-cancel')?.addEventListener('click', () => confirmResolve?.(false));
 $('#confirm-ok')?.addEventListener('click', () => confirmResolve?.(true));
 $('#confirm-mask')?.addEventListener('click', e => { if (e.target === e.currentTarget) confirmResolve?.(false); });
 
-async function deleteBooks(recs) {
+async function deleteBooks(recs, opts = {}) {
   if (!recs.length) return false;
   const title = recs.length === 1 ? `移除《${recs[0].title}》？` : `移除这 ${recs.length} 项？`;
   const sub = '进度、书签、摘录和相关笔记会一起移除。';
   if (!(await confirmSheet(title, sub, '确认移除'))) return false;
+  haptic('delete');
+  if (opts.animatedWrap && !reduceMotion()) {
+    opts.animatedWrap.style.maxHeight = opts.animatedWrap.offsetHeight + 'px';
+    void opts.animatedWrap.offsetHeight;
+    opts.animatedWrap.classList.add('deleting');
+    await wait(240);
+  }
   for (const b of recs) {
     try {
       await deleteBookBundle(b.id);
@@ -300,19 +334,322 @@ async function openBookPeek(book) {
   $('#peek-body').textContent = preview.text;
 }
 
-function findDropTarget(x, y, dragId) {
+let activeSwipeClose = null;
+let jiggleStackId = null;
+let pinchMergingCards = false;
+function closeOpenSwipes() {
+  if (typeof activeSwipeClose === 'function') {
+    const fn = activeSwipeClose;
+    activeSwipeClose = null;
+    try { fn(); } catch {}
+  }
+}
+function clearStackJiggle() {
+  if (!jiggleStackId) return false;
+  jiggleStackId = null;
+  document.querySelectorAll('.stack.jiggling').forEach(s => {
+    s.classList.remove('jiggling');
+    s.querySelector('.stack-x-badge')?.remove();
+  });
+  return true;
+}
+
+/* ---------------- 右缘跨应用吸附阅读把手 + 微信/QQ 公众号式分享 ---------------- */
+const EDGE_DOCK_KEY = 'zone-edge-dock-v1';
+function getEdgeDock() {
+  try { return JSON.parse(localStorage.getItem(EDGE_DOCK_KEY) || 'null'); } catch { return null; }
+}
+function saveEdgeDock(item) {
+  try {
+    if (item) localStorage.setItem(EDGE_DOCK_KEY, JSON.stringify(item));
+    else localStorage.removeItem(EDGE_DOCK_KEY);
+  } catch {}
+}
+function showEdgeDockZone(show, hot = false) {
+  const z = $('#edge-dock-zone');
+  if (!z) return;
+  z.classList.toggle('hidden', !show);
+  z.classList.toggle('hot', !!(show && hot));
+}
+function inRightEdgeZone(x) {
+  return x >= window.innerWidth - 58;
+}
+function showEdgeUndockZone(show, hot = false) {
+  const z = $('#edge-undock-zone');
+  if (!z) return;
+  z.classList.toggle('hidden', !show);
+  z.classList.toggle('hot', !!(show && hot));
+  const sp = z.querySelector('span');
+  if (sp) sp.textContent = hot ? '松手放回原位' : '拖到上方放回原位';
+}
+function inEdgeUndockZone(y) {
+  return y <= 122;
+}
+async function openEdgeDockedItem(item) {
+  if (!item?.id) return;
+  haptic('light');
+  if (item.kind === 'book') {
+    await openBook(item.id);
+    return;
+  }
+  if (item.kind === 'stack') {
+    if (engine) await closeBook();
+    if (!document.documentElement.classList.contains('legacy-reader-home') && !document.documentElement.classList.contains('in-bot-reader')) {
+      await openBotReaderSheet(getActiveBot(), { initialPane: 'shelf', force: true });
+    } else {
+      showPane('shelf', { instant: true });
+    }
+    setStackCollapsed(item.id, false);
+    await renderLibrary({ anchor: 'stack:' + item.id, focus: 'stack:' + item.id, reveal: true });
+  }
+}
+async function dockToRightEdge(item) {
+  if (!item?.id) return false;
+  const payload = {
+    kind: item.kind === 'stack' ? 'stack' : 'book',
+    id: String(item.id),
+    title: String(item.title || '阅读卡片').trim(),
+    subtitle: String(item.subtitle || '').trim(),
+    dockedAt: Date.now()
+  };
+  saveEdgeDock(payload);
+  renderInAppEdgeDock();
+  haptic('snap');
+  const nativeDock = window.Capacitor?.Plugins?.ZoneEdgeDock;
+  if (nativeDock?.dockItem) {
+    try {
+      const res = await nativeDock.dockItem(payload);
+      if (res && res.systemOverlay === false) {
+        toast(`已吸附「${payload.title}」到右缘 · 开启悬浮窗后退出软件也能随时滑出阅读`, 5200, () => {
+          nativeDock.requestOverlayPermission?.().catch(() => {});
+        }, '开启悬浮');
+        return true;
+      }
+    } catch {}
+  }
+  toast(`已吸附「${payload.title}」到右缘 · 左滑随时阅读，拖到上方放回原位`, 3200);
+  return true;
+}
+async function undockFromRightEdge(silent = false) {
+  const prev = getEdgeDock();
+  saveEdgeDock(null);
+  renderInAppEdgeDock();
+  haptic('medium');
+  try { await window.Capacitor?.Plugins?.ZoneEdgeDock?.undockItem?.(); } catch {}
+  if (!silent && prev) toast(`已将「${prev.title}」放回原位`, 2200);
+  return true;
+}
+async function syncEdgeDockFromNative() {
+  const nativeDock = window.Capacitor?.Plugins?.ZoneEdgeDock;
+  if (!nativeDock?.getDockedItem) { renderInAppEdgeDock(); return; }
+  try {
+    const res = await nativeDock.getDockedItem();
+    if (res?.docked && res.id) {
+      saveEdgeDock({ kind: res.kind || 'book', id: res.id, title: res.title || '阅读卡片', subtitle: res.subtitle || '' });
+    } else if (res && res.docked === false) {
+      saveEdgeDock(null);
+    }
+  } catch {}
+  renderInAppEdgeDock();
+}
+function renderInAppEdgeDock() {
+  const el = $('#zone-edge-dock');
+  if (!el) return;
+  const item = getEdgeDock();
+  if (!item?.id) {
+    el.classList.add('hidden');
+    el.replaceChildren();
+    return;
+  }
+  el.classList.toggle('is-stack', item.kind === 'stack');
+  el.classList.remove('hidden');
+  el.setAttribute('aria-label', `右缘吸附：${item.title}，轻点或左滑继续阅读，拖至顶部放回原位`);
+  el.replaceChildren();
+  const dot = document.createElement('span');
+  dot.className = 'zone-edge-dock-dot';
+  dot.setAttribute('aria-hidden', 'true');
+  const lbl = document.createElement('span');
+  lbl.className = 'zone-edge-dock-lbl';
+  lbl.textContent = Array.from(String(item.title || '阅读')).slice(0, 5).join('');
+  el.append(dot, lbl);
+}
+(function bindEdgeDockGestures() {
+  const el = $('#zone-edge-dock');
+  if (!el) return;
+  let sx = 0, sy = 0, pid = null, dragging = false, moved = false, overUndock = false, topPct = 44;
+  el.addEventListener('pointerdown', e => {
+    if (e.button != null && e.button !== 0) return;
+    sx = e.clientX; sy = e.clientY; pid = e.pointerId; dragging = false; moved = false; overUndock = false;
+    try { el.setPointerCapture(e.pointerId); } catch {}
+  });
+  el.addEventListener('pointermove', e => {
+    if (pid !== e.pointerId) return;
+    const dx = e.clientX - sx, dy = e.clientY - sy;
+    if (!dragging && Math.hypot(dx, dy) > 10) {
+      dragging = true;
+      moved = true;
+      el.classList.add('dragging');
+      showEdgeUndockZone(true, false);
+    }
+    if (!dragging) return;
+    el.style.transform = `translate3d(${Math.min(18, dx)}px, ${dy}px, 0)`;
+    const hot = inEdgeUndockZone(e.clientY);
+    if (hot !== overUndock) {
+      overUndock = hot;
+      showEdgeUndockZone(true, hot);
+      if (hot) haptic('medium');
+    }
+  });
+  const end = async e => {
+    if (pid !== e.pointerId) return;
+    pid = null;
+    const dx = e.clientX - sx, dy = e.clientY - sy;
+    const wasDragging = dragging;
+    const droppedUndock = wasDragging && e.type === 'pointerup' && (overUndock || inEdgeUndockZone(e.clientY));
+    dragging = false;
+    overUndock = false;
+    el.classList.remove('dragging');
+    el.style.transform = '';
+    showEdgeUndockZone(false, false);
+    const item = getEdgeDock();
+    if (!item) return;
+    if (droppedUndock) {
+      await undockFromRightEdge(false);
+      return;
+    }
+    if (e.type === 'pointerup' && (!moved || (dx < -34 && Math.abs(dy) < 90))) {
+      await openEdgeDockedItem(item);
+      return;
+    }
+    if (wasDragging && e.type === 'pointerup') {
+      topPct = Math.max(14, Math.min(78, Math.round((e.clientY / Math.max(1, window.innerHeight)) * 100)));
+      el.style.top = topPct + '%';
+    }
+  };
+  el.addEventListener('pointerup', end);
+  el.addEventListener('pointercancel', end);
+  el.addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      const item = getEdgeDock();
+      if (item) openEdgeDockedItem(item);
+    }
+  });
+})();
+
+async function extractReadableExcerpt(book, maxChars = 6000) {
+  try {
+    const file = await db.get('files', book.id);
+    if (file?.blob) {
+      if (book.type === 'txt' || book.type === 'html') {
+        const raw = decodeBlobText(await file.blob.slice(0, 65536).arrayBuffer());
+        const plain = book.type === 'html' ? stripMarkup(raw) : raw.replace(/\r\n?/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+        if (plain) return Array.from(plain).slice(0, maxChars).join('');
+      } else if (book.type === 'booklet') {
+        const raw = decodeBlobText(await file.blob.arrayBuffer());
+        const parsed = JSON.parse(raw);
+        const sections = Array.isArray(parsed?.sections) ? parsed.sections.map(s => `${s.heading || ''}\n${s.body || ''}`).join('\n\n') : '';
+        if (sections.trim()) return Array.from(sections.trim()).slice(0, maxChars).join('');
+      } else if (book.type === 'epub' && window.JSZip) {
+        const prev = await extractBookPreview(book);
+        if (prev?.text) return prev.text;
+      }
+    }
+  } catch {}
+  return String(book.lastSnippet || '').trim();
+}
+
+async function shareReadingItem({ kind = 'stack', id } = {}) {
+  haptic('light');
+  const allBooks = await db.all('books');
+  let title = '';
+  let subtitle = '';
+  let items = [];
+  if (kind === 'stack') {
+    const s = getStack(id);
+    if (!s) { toast('找不到这个卡片堆'); return null; }
+    const members = s.bookIds.map(bid => allBooks.find(b => b.id === bid)).filter(Boolean);
+    title = s.name;
+    subtitle = `来自 Zone 的卡片堆 · 共 ${members.length} 篇阅读卡片`;
+    for (const m of members.slice(0, 12)) {
+      const excerpt = await extractReadableExcerpt(m, 3200);
+      const notes = (m.highlights || []).slice(0, 6).map(h => h.note ? `${h.text} — ${h.note}` : h.text).filter(Boolean);
+      items.push({
+        title: m.title || '未命名',
+        author: m.author || '',
+        type: m.type || 'txt',
+        progress: Number(m.progress || 0),
+        excerpt,
+        notes
+      });
+    }
+  } else {
+    const b = allBooks.find(x => x.id === id);
+    if (!b) { toast('找不到这本书'); return null; }
+    title = b.title || '未命名';
+    subtitle = [b.author, b.type ? String(b.type).toUpperCase() : ''].filter(Boolean).join(' · ') || '来自 Zone 的阅读卡片';
+    const excerpt = await extractReadableExcerpt(b, 12000);
+    const notes = (b.highlights || []).slice(0, 10).map(h => h.note ? `${h.text} — ${h.note}` : h.text).filter(Boolean);
+    items.push({ title, author: b.author || '', type: b.type || 'txt', progress: Number(b.progress || 0), excerpt, notes });
+  }
+
+  let shareUrl = '';
+  const api = getSichaoApi();
+  if (api) {
+    toast('正在生成公众号风格阅读页…', 2400);
+    try {
+      const r = await nativePostJson(`${api}/api/share/create`, {}, {
+        kind,
+        title,
+        subtitle,
+        author: getAuthUser()?.name || 'Zone 读者',
+        items
+      }, 28000);
+      if (r.ok && r.data?.url) shareUrl = r.data.url;
+    } catch {}
+  }
+
+  const shareText = shareUrl
+    ? `【Zone 阅读分享】${title}\n点开即可像公众号文章一样直接阅读：\n${shareUrl}`
+    : `【Zone 阅读卡片】${title}\n${items.map((it, idx) => `${idx + 1}. ${it.title}${it.excerpt ? `\n${it.excerpt.slice(0, 160)}…` : ''}`).join('\n\n')}`;
+
+  const nativeShare = window.Capacitor?.Plugins?.ZoneShortcut?.shareLink;
+  if (nativeShare) {
+    try {
+      await nativeShare({ title, text: shareText, url: shareUrl });
+      haptic('success');
+      return shareUrl || shareText;
+    } catch {}
+  }
+  if (navigator.share) {
+    try {
+      await navigator.share({ title, text: shareText, ...(shareUrl ? { url: shareUrl } : {}) });
+      haptic('success');
+      return shareUrl || shareText;
+    } catch {}
+  }
+  await copyText(shareUrl || shareText);
+  haptic('success');
+  toast(shareUrl ? '已生成公众号式阅读链接并复制，发到微信/QQ即可直接阅读' : '已复制阅读卡片摘要，可粘贴发送到微信/QQ', 3400);
+  return shareUrl || shareText;
+}
+
+function findDropTarget(x, y, dragId, dragStackId = null) {
   const els = document.elementsFromPoint ? document.elementsFromPoint(x, y) : [];
   for (const node of els) {
     if (node.closest?.('.drag-ghost')) continue;
     const bookEl = node.closest?.('.book[data-id]');
     if (bookEl && bookEl.dataset.id !== dragId) {
       const stackSec = bookEl.closest?.('.stack[data-stack]');
+      if (stackSec && stackSec.dataset.stack === dragStackId) continue;
       return stackSec
         ? { kind: 'stack', id: stackSec.dataset.stack, el: stackSec }
         : { kind: 'book', id: bookEl.dataset.id, el: bookEl };
     }
     const stackSec = node.closest?.('.stack[data-stack]');
-    if (stackSec) return { kind: 'stack', id: stackSec.dataset.stack, el: stackSec };
+    if (stackSec && stackSec.dataset.stack !== dragStackId) {
+      return { kind: 'stack', id: stackSec.dataset.stack, el: stackSec };
+    }
   }
   return null;
 }
@@ -332,9 +669,11 @@ function inTrashZone(x, y) {
   return x >= r.left - 24 && x <= r.right + 24 && y >= 0 && y <= r.bottom + 26;
 }
 
-function bindShelfBook(el, b, stack, swipeBg) {
-  let hold = null, sx = 0, sy = 0, pid = null, held = false, swiping = false, dragging = false, dx = 0, movedDuringDrag = false, overTrash = false;
+function bindShelfBook(el, b, stack, swipeBg, wrap) {
+  let hold = null, sx = 0, sy = 0, pid = null, held = false, swiping = false, dragging = false, dx = 0, movedDuringDrag = false, overTrash = false, overEdge = false;
   let ghost = null, ghostOffX = 0, ghostOffY = 0, hoverTarget = null;
+  let swipeOpened = false;
+  const openShift = stack ? -144 : -88;
   const preventTouchScroll = ev => { if (dragging || swiping) ev.preventDefault(); };
   const clearHold = () => { clearTimeout(hold); hold = null; };
   const clearHover = () => {
@@ -344,18 +683,36 @@ function bindShelfBook(el, b, stack, swipeBg) {
     }
     hoverTarget = null;
   };
-  const resetSwipe = () => {
+  const closeSwipe = () => {
     swiping = false;
+    swipeOpened = false;
     dx = 0;
-    el.classList.remove('swiping');
+    el.classList.remove('swiping', 'swipe-open');
+    wrap?.classList.remove('swipe-open');
     el.style.transform = '';
     if (swipeBg) swipeBg.className = 'swipe-bg';
+    window.removeEventListener('touchmove', preventTouchScroll, { passive: false });
+  };
+  const snapOpenSwipe = () => {
+    closeOpenSwipes();
+    swiping = false;
+    swipeOpened = true;
+    dx = openShift;
+    el.classList.remove('swiping');
+    el.classList.add('swipe-open');
+    wrap?.classList.add('swipe-open');
+    el.style.transform = `translate3d(${openShift}px, 0, 0)`;
+    if (swipeBg) swipeBg.className = 'swipe-bg show dir-left open';
+    haptic('light');
+    activeSwipeClose = closeSwipe;
     window.removeEventListener('touchmove', preventTouchScroll, { passive: false });
   };
   const endDrag = () => {
     dragging = false;
     overTrash = false;
+    overEdge = false;
     showTrashZone(false, false);
+    showEdgeDockZone(false, false);
     el.classList.remove('dragging');
     ghost?.remove();
     ghost = null;
@@ -366,10 +723,12 @@ function bindShelfBook(el, b, stack, swipeBg) {
     window.removeEventListener('touchmove', preventTouchScroll, { passive: false });
   };
   const startLiftDrag = (clientX, clientY, pointerId) => {
+    closeOpenSwipes();
     dragging = true;
     held = true;
     movedDuringDrag = false;
     overTrash = false;
+    overEdge = false;
     const rect = el.getBoundingClientRect();
     ghostOffX = clientX - rect.left;
     ghostOffY = clientY - rect.top;
@@ -380,28 +739,31 @@ function bindShelfBook(el, b, stack, swipeBg) {
     document.body.appendChild(ghost);
     el.classList.add('dragging');
     showTrashZone(true, false);
+    showEdgeDockZone(true, false);
     const pane = $('#pane-shelf');
     if (pane) pane.style.overflow = 'hidden';
     document.documentElement.style.touchAction = 'none';
-    try { navigator.vibrate?.(16); } catch {}
+    haptic('medium');
     try { el.setPointerCapture(pointerId); } catch {}
     window.addEventListener('touchmove', preventTouchScroll, { passive: false });
   };
   el.addEventListener('pointerdown', e => {
     if (e.button != null && e.button !== 0) return;
+    if (swipeOpened) { closeOpenSwipes(); held = true; return; }
+    closeOpenSwipes();
     sx = e.clientX; sy = e.clientY; pid = e.pointerId;
     held = false; swiping = false; dragging = false; dx = 0;
     clearHold();
     if (pickMode) return;
-    // 像手机桌面 APP 一样：长按约 320ms 立即浮起卡片；拖到其他卡片自动叠堆、拖到顶部直接删除、原地松手弹出轻量快捷胶囊
+    // 长按 320ms 浮起卡片：拖到其他卡片叠堆、拖到顶部删除、拖到右缘吸附跨应用阅读
     hold = setTimeout(() => {
       hold = null;
-      if (swiping || dragging || pid !== e.pointerId) return;
+      if (swiping || dragging || pinchMergingCards || pid !== e.pointerId) return;
       startLiftDrag(sx, sy, e.pointerId);
     }, 320);
   });
   el.addEventListener('pointermove', e => {
-    if (pid !== e.pointerId || pickMode) return;
+    if (pid !== e.pointerId || pickMode || pinchMergingCards) return;
     const mx = e.clientX - sx, my = e.clientY - sy;
     if (!swiping && !dragging) {
       if (Math.abs(mx) > 10 && Math.abs(mx) > Math.abs(my) * 1.25) {
@@ -415,7 +777,7 @@ function bindShelfBook(el, b, stack, swipeBg) {
       }
     }
     if (swiping) {
-      dx = Math.max(-108, Math.min(108, mx));
+      dx = Math.max(-168, Math.min(108, mx));
       el.style.transform = `translate3d(${dx}px, 0, 0)`;
       if (swipeBg) {
         swipeBg.classList.toggle('show', Math.abs(dx) > 14);
@@ -426,11 +788,18 @@ function bindShelfBook(el, b, stack, swipeBg) {
       if (Math.hypot(mx, my) > 12) movedDuringDrag = true;
       ghost.style.transform = `translate3d(${e.clientX - ghostOffX}px, ${e.clientY - ghostOffY}px, 0) scale(1.03)`;
       const trash = inTrashZone(e.clientX, e.clientY);
+      const edge = !trash && inRightEdgeZone(e.clientX);
       if (trash !== overTrash) {
         overTrash = trash;
         showTrashZone(true, overTrash);
+        if (overTrash) haptic('light');
       }
-      if (overTrash) {
+      if (edge !== overEdge) {
+        overEdge = edge;
+        showEdgeDockZone(true, overEdge);
+        if (overEdge) haptic('light');
+      }
+      if (overTrash || overEdge) {
         clearHover();
       } else {
         const hit = findDropTarget(e.clientX, e.clientY, b.id);
@@ -450,34 +819,39 @@ function bindShelfBook(el, b, stack, swipeBg) {
     pid = null;
     clearHold();
     if (swiping) {
-      const dir = e.type === 'pointerup' ? (dx >= 56 ? 'right' : dx <= -56 ? 'left' : null) : null;
-      resetSwipe();
+      const up = e.type === 'pointerup';
+      const curDx = dx;
       held = true;
       peekSwipedAt = Date.now();
-      if (dir === 'right') {
+      if (up && curDx <= -136) {
+        closeSwipe();
+        await deleteBooks([b], { animatedWrap: wrap });
+      } else if (up && curDx <= -42) {
+        snapOpenSwipe();
+      } else if (up && curDx >= 56) {
+        closeSwipe();
+        haptic('light');
         openBookPeek(b);
-      } else if (dir === 'left') {
-        if (stack) {
-          removeFromStacks([b.id]);
-          const still = getStack(stack.id);
-          toast(still ? `已移出「${stack.name}」` : `「${stack.name}」只剩一项，已散开`);
-          await renderLibrary(still ? { anchor: 'stack:' + stack.id, focus: 'stack:' + stack.id } : { anchor: 'book:' + b.id, focus: 'book:' + b.id });
-        } else {
-          await deleteBooks([b]);
-        }
+      } else {
+        closeSwipe();
       }
     } else if (dragging) {
-      const droppedTrash = e.type === 'pointerup' && (overTrash || inTrashZone(e.clientX, e.clientY));
-      const drop = (e.type === 'pointerup' && !droppedTrash) ? (hoverTarget || findDropTarget(e.clientX, e.clientY, b.id)) : null;
+      const up = e.type === 'pointerup';
+      const droppedTrash = up && (overTrash || inTrashZone(e.clientX, e.clientY));
+      const droppedEdge = up && !droppedTrash && (overEdge || inRightEdgeZone(e.clientX));
+      const drop = (up && !droppedTrash && !droppedEdge) ? (hoverTarget || findDropTarget(e.clientX, e.clientY, b.id)) : null;
       endDrag();
       held = true;
       peekSwipedAt = Date.now();
-      if (droppedTrash) {
-        await deleteBooks([b]);
+      if (droppedEdge) {
+        await dockToRightEdge({ kind: 'book', id: b.id, title: b.title || '未命名', subtitle: b.author || '' });
+      } else if (droppedTrash) {
+        await deleteBooks([b], { animatedWrap: wrap });
       } else if (drop) {
         if (drop.kind === 'stack') {
           const s = addToStack(drop.id, [b.id]);
           if (s) {
+            haptic('success');
             await renderLibrary({ focus: 'stack:' + s.id });
             toast(`已并入「${s.name}」`, 3600, () => { removeFromStacks([b.id]); renderLibrary(); });
           }
@@ -486,6 +860,7 @@ function bindShelfBook(el, b, stack, swipeBg) {
           if (existing) {
             const s = addToStack(existing.id, [b.id]);
             if (s) {
+              haptic('success');
               await renderLibrary({ focus: 'stack:' + s.id });
               toast(`已并入「${s.name}」`, 3600, () => { removeFromStacks([b.id]); renderLibrary(); });
             }
@@ -493,6 +868,7 @@ function bindShelfBook(el, b, stack, swipeBg) {
             const name = defaultStackName(listStacks());
             const s = createStack(name, [drop.id, b.id]);
             if (s) {
+              haptic('success');
               await renderLibrary({ focus: 'stack:' + s.id });
               toast(`已叠合为「${s.name}」`, 3600, () => { dissolveStack(s.id); renderLibrary(); });
             }
@@ -506,6 +882,7 @@ function bindShelfBook(el, b, stack, swipeBg) {
   el.addEventListener('contextmenu', e => e.preventDefault());
   el.onclick = () => {
     if (held) { held = false; return; }
+    if (swipeOpened) { closeOpenSwipes(); return; }
     if (pickMode) togglePick(b.id, el);
     else openBook(b.id);
   };
@@ -598,10 +975,37 @@ function bookRow(b, stack, i = 0) {
   else if (!b.lastOpened) { side = node('span', 'dot'); side.appendChild(node('span', 'sr', '未读')); }
   else side = node('span', 'pct', '');
   const swipeBg = node('div', 'swipe-bg');
-  swipeBg.setAttribute('aria-hidden', 'true');
-  swipeBg.append(node('span', 'swipe-act left-side', '透视'), node('span', 'swipe-act right-side', stack ? '移出堆' : '删除'));
+  swipeBg.appendChild(node('span', 'swipe-act left-side', '透视'));
+  const rightActs = node('div', 'swipe-right-acts');
+  if (stack) {
+    const outPill = node('button', 'swipe-pill out', '移出');
+    outPill.type = 'button';
+    outPill.onclick = ev => {
+      ev.stopPropagation();
+      closeOpenSwipes();
+      haptic('light');
+      removeFromStacks([b.id]);
+      const still = getStack(stack.id);
+      toast(still ? `已移出「${stack.name}」` : `「${stack.name}」只剩一项，已散开`, 3200, () => {
+        if (getStack(stack.id)) addToStack(stack.id, [b.id]);
+        else createStack(stack.name, stack.bookIds);
+        renderLibrary();
+      });
+      renderLibrary(still ? { anchor: 'stack:' + stack.id, focus: 'stack:' + stack.id } : { anchor: 'book:' + b.id, focus: 'book:' + b.id });
+    };
+    rightActs.appendChild(outPill);
+  }
+  const delPill = node('button', 'swipe-pill del', '删除');
+  delPill.type = 'button';
+  delPill.onclick = async ev => {
+    ev.stopPropagation();
+    closeOpenSwipes();
+    await deleteBooks([b], { animatedWrap: wrap });
+  };
+  rightActs.appendChild(delPill);
+  swipeBg.appendChild(rightActs);
   el.append(tick, avatarNode(b), meta, side);
-  bindShelfBook(el, b, stack, swipeBg);
+  bindShelfBook(el, b, stack, swipeBg, wrap);
   wrap.append(swipeBg, el);
   if (stack && !pickMode) {
     const out = node('button', 'row-out');
@@ -634,10 +1038,308 @@ function closeStackMenus(refocus = false) {
   return closed;
 }
 
+function startInlineStackRename(stackId, nameEl = null) {
+  const s = getStack(stackId);
+  if (!s) return false;
+  const target = nameEl || document.querySelector(`.stack[data-stack="${stackId}"] .stack-name`);
+  if (!target || target.parentElement?.querySelector('.stack-inline-input')) return false;
+  const inp = document.createElement('input');
+  inp.type = 'text';
+  inp.className = 'stack-inline-input';
+  inp.maxLength = 40;
+  inp.value = s.name;
+  inp.setAttribute('aria-label', '直接修改卡片堆名称');
+  let finished = false;
+  const commit = async (cancel = false) => {
+    if (finished) return;
+    finished = true;
+    const val = inp.value.trim();
+    if (!cancel && val && val !== s.name) {
+      const updated = renameStack(stackId, val);
+      if (updated) {
+        haptic('light');
+        toast(`已改名为「${updated.name}」`);
+        triggerCloudSyncSoon();
+      }
+    }
+    await renderLibrary({ anchor: 'stack:' + stackId, focus: 'stack:' + stackId });
+  };
+  for (const ev of ['click', 'pointerdown', 'mousedown']) {
+    inp.addEventListener(ev, e => e.stopPropagation());
+  }
+  inp.addEventListener('keydown', e => {
+    e.stopPropagation();
+    if (e.key === 'Enter') { e.preventDefault(); commit(false); }
+    else if (e.key === 'Escape') { e.preventDefault(); commit(true); }
+  });
+  inp.addEventListener('blur', () => commit(false));
+  target.replaceWith(inp);
+  inp.focus();
+  inp.select();
+  return true;
+}
+
+async function dissolveStackWithUndo(s, members, secEl = null) {
+  const snapName = s.name;
+  const snapIds = [...s.bookIds];
+  haptic('delete');
+  if (secEl && !reduceMotion()) {
+    secEl.classList.add('deleting');
+    await wait(220);
+  }
+  jiggleStackId = null;
+  recordSyncDeletion('stacks', s.id);
+  dissolveStack(s.id);
+  triggerCloudSyncSoon();
+  const first = members[0]?.id;
+  await renderLibrary({ anchor: first ? 'book:' + first : null, focus: first ? 'book:' + first : null });
+  toast(`已移除卡片堆「${snapName}」（${members.length} 本书仍在流中）`, 4200, () => {
+    createStack(snapName, snapIds);
+    triggerCloudSyncSoon();
+    renderLibrary();
+  });
+}
+
+async function removeStackLikeApp(s, members, secEl = null) {
+  const ok = await confirmSheet(
+    `移除卡片堆「${s.name}」？`,
+    `会像卸载桌面快捷方式一样移除这一叠，里面的 ${members.length} 本书仍保留在书流中，并支持立即撤销。`,
+    '移除卡片堆'
+  );
+  if (!ok) return false;
+  await dissolveStackWithUndo(s, members, secEl);
+  return true;
+}
+
+async function mergeShelfTargets(t1, t2) {
+  if (!t1 || !t2 || (t1.kind === t2.kind && t1.id === t2.id)) return null;
+  let result = null;
+  let undo = null;
+  let msg = '';
+  if (t1.kind === 'book' && t2.kind === 'book') {
+    const s1 = listStacks().find(st => st.bookIds.includes(t1.id));
+    const s2 = listStacks().find(st => st.bookIds.includes(t2.id));
+    if (s1 && s2 && s1.id === s2.id) return null;
+    if (s1 && !s2) {
+      result = addToStack(s1.id, [t2.id]);
+      msg = `已捏合并入「${result.name}」`;
+      undo = () => { removeFromStacks([t2.id]); triggerCloudSyncSoon(); renderLibrary(); };
+    } else if (s2 && !s1) {
+      result = addToStack(s2.id, [t1.id]);
+      msg = `已捏合并入「${result.name}」`;
+      undo = () => { removeFromStacks([t1.id]); triggerCloudSyncSoon(); renderLibrary(); };
+    } else if (s1 && s2) {
+      const snap2 = { name: s2.name, ids: [...s2.bookIds] };
+      result = addToStack(s1.id, snap2.ids);
+      msg = `已将「${snap2.name}」并入「${result.name}」`;
+      undo = () => { createStack(snap2.name, snap2.ids); triggerCloudSyncSoon(); renderLibrary(); };
+    } else {
+      result = createStack(defaultStackName(listStacks()), [t1.id, t2.id]);
+      msg = `已双指合并为「${result.name}」`;
+      undo = () => { dissolveStack(result.id); triggerCloudSyncSoon(); renderLibrary(); };
+    }
+  } else if (t1.kind === 'stack' && t2.kind === 'book') {
+    result = addToStack(t1.id, [t2.id]);
+    msg = `已并入「${result?.name || '卡片堆'}」`;
+    undo = () => { removeFromStacks([t2.id]); triggerCloudSyncSoon(); renderLibrary(); };
+  } else if (t1.kind === 'book' && t2.kind === 'stack') {
+    result = addToStack(t2.id, [t1.id]);
+    msg = `已并入「${result?.name || '卡片堆'}」`;
+    undo = () => { removeFromStacks([t1.id]); triggerCloudSyncSoon(); renderLibrary(); };
+  } else if (t1.kind === 'stack' && t2.kind === 'stack') {
+    const src = getStack(t2.id);
+    const dst = getStack(t1.id);
+    if (!src || !dst) return null;
+    const snapSrc = { name: src.name, ids: [...src.bookIds] };
+    result = addToStack(dst.id, snapSrc.ids);
+    msg = `已合并两个卡片堆至「${result?.name || dst.name}」`;
+    undo = () => { createStack(snapSrc.name, snapSrc.ids); triggerCloudSyncSoon(); renderLibrary(); };
+  }
+  if (!result) return null;
+  haptic('success');
+  triggerCloudSyncSoon();
+  await renderLibrary({ focus: 'stack:' + result.id });
+  toast(msg, 4000, undo);
+  return result;
+}
+
+function bindStackGestures(sec, card, head, actsEl, s, members) {
+  let hold = null, sx = 0, sy = 0, pid = null, swiping = false, dragging = false, held = false, dx = 0, moved = false;
+  let overTrash = false, overEdge = false, ghost = null, ghostOffX = 0, ghostOffY = 0, hoverTarget = null, swipeOpened = false;
+  const openShift = -148;
+  const preventTouch = ev => { if (swiping || dragging) ev.preventDefault(); };
+  const clearHold = () => { clearTimeout(hold); hold = null; };
+  const clearHover = () => {
+    if (hoverTarget?.el) {
+      hoverTarget.el.classList.remove('drop-target');
+      hoverTarget.el.removeAttribute('data-drop-hint');
+    }
+    hoverTarget = null;
+  };
+  const closeSwipe = () => {
+    swiping = false;
+    swipeOpened = false;
+    dx = 0;
+    card.classList.remove('swiping');
+    card.style.transform = '';
+    actsEl?.classList.remove('show');
+    window.removeEventListener('touchmove', preventTouch, { passive: false });
+  };
+  const snapOpen = () => {
+    closeOpenSwipes();
+    swiping = false;
+    swipeOpened = true;
+    dx = openShift;
+    card.classList.remove('swiping');
+    card.style.transform = `translate3d(${openShift}px, 0, 0)`;
+    actsEl?.classList.add('show');
+    haptic('light');
+    activeSwipeClose = closeSwipe;
+    window.removeEventListener('touchmove', preventTouch, { passive: false });
+  };
+  const endDrag = () => {
+    dragging = false;
+    overTrash = false;
+    overEdge = false;
+    showTrashZone(false, false);
+    showEdgeDockZone(false, false);
+    sec.style.opacity = '';
+    ghost?.remove();
+    ghost = null;
+    clearHover();
+    const pane = $('#pane-shelf');
+    if (pane) pane.style.overflow = '';
+    document.documentElement.style.touchAction = '';
+    window.removeEventListener('touchmove', preventTouch, { passive: false });
+  };
+  const startLift = (cx, cy, pointerId) => {
+    closeOpenSwipes();
+    dragging = true;
+    held = true;
+    moved = false;
+    overTrash = false;
+    overEdge = false;
+    const rect = card.getBoundingClientRect();
+    ghostOffX = cx - rect.left;
+    ghostOffY = cy - rect.top;
+    ghost = card.cloneNode(true);
+    ghost.className = 'stack-card drag-ghost';
+    ghost.style.width = rect.width + 'px';
+    ghost.style.transform = `translate3d(${rect.left}px, ${rect.top}px, 0) scale(1.03)`;
+    document.body.appendChild(ghost);
+    sec.style.opacity = '.38';
+    showTrashZone(true, false);
+    showEdgeDockZone(true, false);
+    const pane = $('#pane-shelf');
+    if (pane) pane.style.overflow = 'hidden';
+    document.documentElement.style.touchAction = 'none';
+    haptic('medium');
+    try { head.setPointerCapture(pointerId); } catch {}
+    window.addEventListener('touchmove', preventTouch, { passive: false });
+  };
+  head.addEventListener('pointerdown', e => {
+    if (e.button != null && e.button !== 0) return;
+    if (swipeOpened) { closeOpenSwipes(); held = true; return; }
+    closeOpenSwipes();
+    sx = e.clientX; sy = e.clientY; pid = e.pointerId;
+    swiping = false; dragging = false; held = false; dx = 0; moved = false;
+    clearHold();
+    if (pickMode) return;
+    hold = setTimeout(() => {
+      hold = null;
+      if (swiping || dragging || pinchMergingCards || pid !== e.pointerId) return;
+      startLift(sx, sy, e.pointerId);
+    }, 340);
+  });
+  head.addEventListener('pointermove', e => {
+    if (pid !== e.pointerId || pickMode || pinchMergingCards) return;
+    const mx = e.clientX - sx, my = e.clientY - sy;
+    if (!swiping && !dragging) {
+      if (mx < -10 && Math.abs(mx) > Math.abs(my) * 1.25) {
+        clearHold();
+        swiping = true;
+        card.classList.add('swiping');
+        try { head.setPointerCapture(e.pointerId); } catch {}
+        window.addEventListener('touchmove', preventTouch, { passive: false });
+      } else if (Math.abs(mx) > 10 || Math.abs(my) > 10) {
+        clearHold();
+      }
+    }
+    if (swiping) {
+      dx = Math.max(-176, Math.min(0, mx));
+      card.style.transform = `translate3d(${dx}px, 0, 0)`;
+      actsEl?.classList.toggle('show', dx < -18);
+    } else if (dragging && ghost) {
+      if (Math.hypot(mx, my) > 12) moved = true;
+      ghost.style.transform = `translate3d(${e.clientX - ghostOffX}px, ${e.clientY - ghostOffY}px, 0) scale(1.03)`;
+      const trash = inTrashZone(e.clientX, e.clientY);
+      const edge = !trash && inRightEdgeZone(e.clientX);
+      if (trash !== overTrash) { overTrash = trash; showTrashZone(true, overTrash); if (overTrash) haptic('light'); }
+      if (edge !== overEdge) { overEdge = edge; showEdgeDockZone(true, overEdge); if (overEdge) haptic('light'); }
+      if (overTrash || overEdge) {
+        clearHover();
+      } else {
+        const hit = findDropTarget(e.clientX, e.clientY, '', s.id);
+        if (hit?.el !== hoverTarget?.el) {
+          clearHover();
+          hoverTarget = hit;
+          if (hoverTarget?.el) {
+            hoverTarget.el.classList.add('drop-target');
+            hoverTarget.el.setAttribute('data-drop-hint', '松手合并');
+          }
+        }
+      }
+    }
+  });
+  const finish = async e => {
+    if (pid !== e.pointerId) return;
+    pid = null;
+    clearHold();
+    const up = e.type === 'pointerup';
+    if (swiping) {
+      const curDx = dx;
+      held = true;
+      peekSwipedAt = Date.now();
+      if (up && curDx <= -48) snapOpen();
+      else closeSwipe();
+    } else if (dragging) {
+      const droppedTrash = up && (overTrash || inTrashZone(e.clientX, e.clientY));
+      const droppedEdge = up && !droppedTrash && (overEdge || inRightEdgeZone(e.clientX));
+      const drop = (up && !droppedTrash && !droppedEdge) ? (hoverTarget || findDropTarget(e.clientX, e.clientY, '', s.id)) : null;
+      const didMove = moved;
+      endDrag();
+      held = true;
+      peekSwipedAt = Date.now();
+      if (droppedEdge) {
+        await dockToRightEdge({ kind: 'stack', id: s.id, title: s.name, subtitle: `${members.length} 本` });
+      } else if (droppedTrash) {
+        await dissolveStackWithUndo(s, members, sec);
+      } else if (drop) {
+        await mergeShelfTargets(drop, { kind: 'stack', id: s.id, el: sec });
+      } else if (up && !didMove) {
+        // 原地长按松手 -> 像删除手机桌面应用/快捷方式一样抖动并露出左上角 × 删除角标
+        jiggleStackId = jiggleStackId === s.id ? null : s.id;
+        haptic('light');
+        await renderLibrary({ anchor: 'stack:' + s.id });
+      }
+    }
+  };
+  head.addEventListener('pointerup', finish);
+  head.addEventListener('pointercancel', finish);
+  head.addEventListener('contextmenu', e => e.preventDefault());
+  head.onclick = () => {
+    if (held) { held = false; return; }
+    if (swipeOpened) { closeOpenSwipes(); return; }
+    if (jiggleStackId) { clearStackJiggle(); return; }
+    toggleStack(s.id, true);
+  };
+}
+
 function stackBlock(s, members, shown, open, q) {
   const sec = node('section', 'stack ' + (open ? 'is-open' : 'is-collapsed'));
   if (open && fanId === s.id) sec.classList.add('fanning');
   if (!open && settleId === s.id) sec.classList.add('settling');
+  if (!open && jiggleStackId === s.id) sec.classList.add('jiggling');
   sec.setAttribute('role', 'listitem');
   sec.dataset.stack = s.id;
   sec.dataset.anchor = 'stack:' + s.id;
@@ -651,7 +1353,17 @@ function stackBlock(s, members, shown, open, q) {
   head.setAttribute('aria-controls', 'stack-items-' + s.id);
   head.setAttribute('aria-label', `卡片堆「${s.name}」，${members.length} 项`);
   const text = node('span', 'stack-text');
-  text.appendChild(node('span', 'stack-name', s.name));
+  const nameSpan = node('span', 'stack-name', s.name);
+  if (open) {
+    nameSpan.dataset.inlineRename = s.id;
+    nameSpan.title = '轻点直接改名';
+    nameSpan.onclick = e => {
+      e.stopPropagation();
+      e.preventDefault();
+      startInlineStackRename(s.id, nameSpan);
+    };
+  }
+  text.appendChild(nameSpan);
   const partial = q && shown.length < members.length;
   let fan = null;
   if (!open) {
@@ -674,7 +1386,6 @@ function stackBlock(s, members, shown, open, q) {
   side.appendChild(count);
   side.insertAdjacentHTML('beforeend', SVG.chev.replace('<svg', '<svg class="stack-chev"'));
   if (fan) head.append(fan, text, side); else head.append(text, side);
-  head.onclick = () => toggleStack(s.id, !open);
   card.appendChild(head);
 
   const items = node('div', 'stack-items');
@@ -683,6 +1394,7 @@ function stackBlock(s, members, shown, open, q) {
   items.setAttribute('aria-labelledby', head.id);
   items.hidden = !open;
   if (open) {
+    head.onclick = () => toggleStack(s.id, false);
     const collapse = node('button', 'stack-collapse', '收起');
     collapse.type = 'button';
     collapse.dataset.focus = 'collapse:' + s.id;
@@ -710,14 +1422,19 @@ function stackBlock(s, members, shown, open, q) {
     };
     item('重命名', 'stack-rename', () => {
       closeStackMenus();
-      openStackDialog({ mode: 'rename', stackId: s.id, returnFocus: 'more:' + s.id });
+      startInlineStackRename(s.id);
+    });
+    item('分享给微信/QQ', 'stack-share', () => {
+      closeStackMenus();
+      shareReadingItem({ kind: 'stack', id: s.id });
+    });
+    item('吸附右缘随时读', 'stack-dock', () => {
+      closeStackMenus();
+      dockToRightEdge({ kind: 'stack', id: s.id, title: s.name, subtitle: `${members.length} 本` });
     });
     item('解散', 'stack-ungroup danger', () => {
       closeStackMenus();
-      dissolveStack(s.id);
-      toast(`已散开「${s.name}」，${members.length} 项都还在`);
-      const first = members[0]?.id;
-      renderLibrary({ anchor: first ? 'book:' + first : null, focus: first ? 'book:' + first : null });
+      dissolveStackWithUndo(s, members, sec);
     });
     more.onclick = () => {
       const show = menu.hidden;
@@ -730,8 +1447,39 @@ function stackBlock(s, members, shown, open, q) {
     card.append(collapse, more, menu);
     shown.forEach((m, i) => items.appendChild(bookRow(m, s, i)));
     if (partial) items.appendChild(node('p', 'stack-more', `另有 ${members.length - shown.length} 项不匹配`));
+    sec.append(card, items);
+  } else {
+    const swipeWrap = node('div', 'stack-swipe-wrap');
+    const actsEl = node('div', 'stack-swipe-acts');
+    const shBtn = node('button', 'swipe-pill share', '分享');
+    shBtn.type = 'button';
+    shBtn.onclick = ev => {
+      ev.stopPropagation();
+      closeOpenSwipes();
+      shareReadingItem({ kind: 'stack', id: s.id });
+    };
+    const delBtn = node('button', 'swipe-pill del', '删除');
+    delBtn.type = 'button';
+    delBtn.onclick = ev => {
+      ev.stopPropagation();
+      closeOpenSwipes();
+      removeStackLikeApp(s, members, sec);
+    };
+    actsEl.append(shBtn, delBtn);
+    swipeWrap.append(actsEl, card);
+    bindStackGestures(sec, card, head, actsEl, s, members);
+    sec.append(swipeWrap, items);
+    if (jiggleStackId === s.id) {
+      const xBadge = node('button', 'stack-x-badge', '×');
+      xBadge.type = 'button';
+      xBadge.setAttribute('aria-label', `删除卡片堆「${s.name}」`);
+      xBadge.onclick = ev => {
+        ev.stopPropagation();
+        removeStackLikeApp(s, members, sec);
+      };
+      sec.appendChild(xBadge);
+    }
   }
-  sec.append(card, items);
   return sec;
 }
 
@@ -1046,13 +1794,101 @@ let command = null;
   lib.addEventListener('pointercancel', () => { pid = null; }, { passive: true });
 })();
 
+// 双指捏合合并卡片 / 卡片堆（两根手指分别按住两张不同卡片或卡片堆向内一捏，自动弹性引力吸附合并；单卡片或空白区捏合仍保留 Z 轴穿层）
+(function bindCardPinchMerge() {
+  const pane = $('#pane-shelf');
+  if (!pane) return;
+  const pts = new Map();
+  let pair = null, d0 = 0, lastRatio = 1, readyBuzz = false;
+  const resolveTarget = node => {
+    if (!node?.closest) return null;
+    const stackEl = node.closest('.stack[data-stack]');
+    if (stackEl && stackEl.classList.contains('is-collapsed')) {
+      return { kind: 'stack', id: stackEl.dataset.stack, el: stackEl, stackId: stackEl.dataset.stack };
+    }
+    const bookEl = node.closest('.book[data-id]');
+    if (bookEl) {
+      return { kind: 'book', id: bookEl.dataset.id, el: bookEl, stackId: stackEl?.dataset.stack || null };
+    }
+    if (stackEl) {
+      return { kind: 'stack', id: stackEl.dataset.stack, el: stackEl, stackId: stackEl.dataset.stack };
+    }
+    return null;
+  };
+  const resetPairVisual = () => {
+    if (pair) {
+      for (const t of pair) {
+        t.el.classList.remove('pinch-merging', 'pinch-merge-ready');
+        t.el.style.transform = '';
+      }
+    }
+    pair = null; d0 = 0; lastRatio = 1; readyBuzz = false;
+    setTimeout(() => { pinchMergingCards = false; }, 120);
+  };
+  pane.addEventListener('pointerdown', e => {
+    if (pickMode || currentPane() !== 'shelf') return;
+    const target = resolveTarget(e.target);
+    pts.set(e.pointerId, { x: e.clientX, y: e.clientY, target });
+    if (pts.size === 2) {
+      const [p1, p2] = [...pts.values()];
+      const t1 = p1.target, t2 = p2.target;
+      const distinct = t1 && t2 && !(t1.kind === t2.kind && t1.id === t2.id)
+        && !(t1.kind === 'book' && t2.kind === 'book' && t1.stackId && t1.stackId === t2.stackId);
+      if (distinct) {
+        pinchMergingCards = true;
+        pair = [t1, t2];
+        d0 = Math.max(12, Math.hypot(p1.x - p2.x, p1.y - p2.y));
+        lastRatio = 1;
+        readyBuzz = false;
+        t1.el.classList.add('pinch-merging');
+        t2.el.classList.add('pinch-merging');
+        haptic('light');
+      }
+    }
+  }, { passive: true });
+  pane.addEventListener('pointermove', e => {
+    const rec = pts.get(e.pointerId);
+    if (!rec) return;
+    rec.x = e.clientX; rec.y = e.clientY;
+    if (!pair || pts.size < 2 || !d0) return;
+    const [p1, p2] = [...pts.values()];
+    const d = Math.hypot(p1.x - p2.x, p1.y - p2.y);
+    const ratio = d / d0;
+    lastRatio = ratio;
+    const pull = Math.max(0, Math.min(0.46, (1 - ratio) * 1.45));
+    const r1 = pair[0].el.getBoundingClientRect();
+    const r2 = pair[1].el.getBoundingClientRect();
+    const midY = ((r1.top + r1.height / 2) + (r2.top + r2.height / 2)) / 2;
+    const sc = (1 - Math.min(0.055, pull * 0.14)).toFixed(3);
+    const shift1 = (midY - (r1.top + r1.height / 2)) * pull;
+    const shift2 = (midY - (r2.top + r2.height / 2)) * pull;
+    pair[0].el.style.transform = `translate3d(0, ${shift1.toFixed(1)}px, 0) scale(${sc})`;
+    pair[1].el.style.transform = `translate3d(0, ${shift2.toFixed(1)}px, 0) scale(${sc})`;
+    const isReady = ratio <= 0.80;
+    pair[0].el.classList.toggle('pinch-merge-ready', isReady);
+    pair[1].el.classList.toggle('pinch-merge-ready', isReady);
+    if (isReady && !readyBuzz) { readyBuzz = true; haptic('medium'); }
+  }, { passive: true });
+  const end = async e => {
+    if (!pts.has(e.pointerId)) return;
+    pts.delete(e.pointerId);
+    if (!pair || pts.size >= 2) return;
+    const shouldMerge = e.type === 'pointerup' && lastRatio <= 0.80;
+    const chosen = pair;
+    resetPairVisual();
+    if (shouldMerge) await mergeShelfTargets(chosen[0], chosen[1]);
+  };
+  pane.addEventListener('pointerup', end, { passive: true });
+  pane.addEventListener('pointercancel', end, { passive: true });
+})();
+
 // Z 轴镜头穿层（Semantic Zoom）：在流 / 知识双指捏合拉远进入更深层（流 -> 知识 -> 星海），双指张开潜入更近层；星海放大到极限自动潜入对应星体笔记
 (function bindSemanticZoom() {
   const lib = $('#library');
   if (!lib) return;
   const pts = new Map();
   let d0 = 0, activePane = null, previewEl = null, previewName = null, lastScale = 1;
-  const blocked = () => pickMode || !lib.classList.contains('active')
+  const blocked = () => pickMode || pinchMergingCards || !lib.classList.contains('active')
     || (!document.documentElement.classList.contains('in-bot-reader') && !document.documentElement.classList.contains('legacy-reader-home'))
     || ['#ai-mask', '#note-mask', '#settings-mask', '#stack-mask', '#intent-mask', '#command-mask', '#peek-mask', '#lib-panel', '#note-editor', '#zone-chat-modal']
       .some(sel => { const el = document.querySelector(sel); return el && !el.classList.contains('hidden'); });
@@ -1173,6 +2009,8 @@ document.addEventListener('keydown', e => {
 });
 document.addEventListener('pointerdown', e => {
   if (!e.target.closest?.('.stack-menu, .stack-more-btn')) closeStackMenus();
+  if (!e.target.closest?.('.swipe-bg, .stack-swipe-acts, .book.swipe-open')) closeOpenSwipes();
+  if (jiggleStackId && !e.target.closest?.('.stack.jiggling, .stack-x-badge')) clearStackJiggle();
 });
 
 $('#search').oninput = () => renderLibrary();
@@ -2015,8 +2853,8 @@ function canAccessReaderSpace(bot = getActiveBot()) {
   return { ok: true, bot: target };
 }
 
-async function openBotReaderSheet(bot = getActiveBot(), { initialPane = 'shelf' } = {}) {
-  const gate = canAccessReaderSpace(bot);
+async function openBotReaderSheet(bot = getActiveBot(), { initialPane = 'shelf', force = false } = {}) {
+  const gate = force ? { ok: true, bot: bot || getActiveBot() } : canAccessReaderSpace(bot);
   if (!gate.ok) {
     toast(gate.reason, 2600);
     return false;
@@ -2354,6 +3192,7 @@ function handleBack() {
   if (dismissAssistant()) return true;
   if (closeStackDialog()) return true;
   if (closeIntent()) return true;
+  if (clearStackJiggle()) return true;
   if (closeStackMenus(true)) return true;
   if (!$('#note-mask').classList.contains('hidden')) { $('#note-mask').classList.add('hidden'); noteSel = null; return true; }
   if (document.body.classList.contains('selecting')) { exitSelect(); return true; }
@@ -3328,6 +4167,16 @@ async function openDeepLink(uri) {
   enterSpatialPortal('', 'guest', 'local');
   const mBook = s.match(/^zone:\/\/open\/book\/(.+)$/);
   if (mBook) { await openBook(decodeURIComponent(mBook[1])); return true; }
+  const mStack = s.match(/^zone:\/\/open\/stack\/(.+)$/);
+  if (mStack) {
+    await openEdgeDockedItem({ kind: 'stack', id: decodeURIComponent(mStack[1]) });
+    return true;
+  }
+  const mUndock = s.match(/^zone:\/\/undock\/(.+)$/);
+  if (mUndock) {
+    await undockFromRightEdge(false);
+    return true;
+  }
   const mApp = s.match(/^zone:\/\/open\/microapp\/(.+)$/);
   if (mApp) { return openMicroApp(decodeURIComponent(mApp[1])); }
   if (s.startsWith('zone://open/voice')) {
@@ -3532,8 +4381,29 @@ function buildApiContentForMsg(m, includeImages = true) {
   ];
 }
 
-function saveTaskThreads() {
+function reloadFromCloudSync() {
+  try {
+    const x = JSON.parse(localStorage.getItem(THREADS_KEY) || '[]');
+    if (Array.isArray(x)) taskThreads = x;
+  } catch {}
+  renderAgentHub();
+  if (!$('#zone-chat-modal')?.classList.contains('hidden')) {
+    const th = activeGroupId
+      ? taskThreads.find(t => t.groupId === activeGroupId)
+      : (taskThreads.find(t => t.id === activeThreadId) || taskThreads.find(t => t.botId === getActiveBot().id && !t.groupId));
+    if (th) renderChatBox(th);
+  }
+  renderLibrary();
+}
+
+function triggerCloudSyncSoon() {
+  if (!isCloudSignedIn()) return;
+  scheduleCloudSync({ apiBase: getSichaoApi(), onApplied: reloadFromCloudSync });
+}
+
+function saveTaskThreads(skipSync = false) {
   try { localStorage.setItem(THREADS_KEY, JSON.stringify(taskThreads.slice(0, 30))); } catch {}
+  if (!skipSync) triggerCloudSyncSoon();
 }
 
 function ensureActiveTaskThread(seedTitle, botId) {
@@ -3587,6 +4457,8 @@ function insertNewTopicDivider() {
 const pendingCardResolvers = new Map();
 
 function cardIconSvg(icon) {
+  if (icon === 'book') return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4.5A2.5 2.5 0 0 1 7.5 2H19v18H7.5A2.5 2.5 0 0 0 5 22z"/><path d="M5 4.5V20"/></svg>';
+  if (icon === 'stack') return '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="10" rx="2.5"/><path d="M6.5 17h11M8.5 20h7"/></svg>';
   if (icon === 'computer') return '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>';
   if (icon === 'phone') return '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="2.5" width="12" height="19" rx="2.5"/><path d="M10.5 18.5h3"/></svg>';
   if (icon === 'shield') return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l7 3v5c0 4.5-3 8.2-7 10-4-1.8-7-5.5-7-10V6l7-3z"/><path d="M9.5 12l1.8 1.8 3.4-3.6"/></svg>';
@@ -3737,7 +4609,141 @@ function parseBotCardDirectives(raw) {
     });
     return '';
   });
+  clean = clean.replace(/\[\[BOOK_CARD:([^\]]+)\]\]/g, (_, query) => {
+    cards.push({ kind: 'book_ref', query: String(query || '').trim() });
+    return '';
+  });
+  clean = clean.replace(/\[\[STACK_CARD:([^\]]+)\]\]/g, (_, query) => {
+    cards.push({ kind: 'stack_ref', query: String(query || '').trim() });
+    return '';
+  });
   return { text: clean.replace(/\n{3,}/g, '\n\n').trim(), cards };
+}
+
+function isBotReadingRequest(q) {
+  const s = String(q || '').trim();
+  if (!s) return false;
+  return /(?:我想看|我想读|想要阅读|想阅读|想看书|想读书|发.*卡片堆|发.*阅读卡片|发.*书卡|发给我.*(?:书|卡片|阅读)|给我.*(?:卡片堆|阅读卡片|书卡)|看.*卡片堆|读.*卡片堆|我的卡片堆|我的书单|推荐.*书卡|(?:想看|想读|阅读|发给我|打开)\s*《[^》]+》)/.test(s);
+}
+
+function makeBookChatCard(b) {
+  const pct = Math.round(Math.min(1, Number(b.progress || 0)) * 100);
+  return {
+    id: `card-${uid()}`,
+    kind: 'book',
+    icon: 'book',
+    provider: '阅读卡片',
+    status: pct > 0 ? `已读 ${pct}%` : '未读',
+    statusTone: pct > 0 ? 'ok' : '',
+    refId: b.id,
+    title: b.title || '未命名',
+    meta: [b.author, b.type ? String(b.type).toUpperCase() : ''].filter(Boolean).join(' · ') || '本地书籍',
+    progress: Number(b.progress || 0),
+    bookType: b.type || 'txt',
+    detail: b.lastSnippet ? String(b.lastSnippet).slice(0, 90) : ''
+  };
+}
+
+function makeStackChatCard(s, allBooks) {
+  const members = s.bookIds.map(id => allBooks.find(b => b.id === id)).filter(Boolean);
+  const memberTitles = members.slice(0, 4).map(m => m.title || '未命名');
+  return {
+    id: `card-${uid()}`,
+    kind: 'stack',
+    icon: 'stack',
+    provider: '卡片堆',
+    status: `${members.length} 本`,
+    statusTone: 'ok',
+    refId: s.id,
+    title: s.name,
+    meta: memberTitles.slice(0, 3).join(' · ') || `${members.length} 项`,
+    memberTitles,
+    count: members.length
+  };
+}
+
+async function findMatchingReadingCards(query) {
+  const allBooks = await db.all('books');
+  const sorted = allBooks.slice();
+  sortBooks(sorted, 'recent');
+  const stacks = reconcileStacks(new Set(sorted.map(b => b.id)));
+  const q = String(query || '').trim();
+  const wantStackOnly = /卡片堆/.test(q) && !/《[^》]+》/.test(q);
+  const bracket = q.match(/《([^》]+)》/)?.[1]?.trim() || '';
+  const cleaned = (bracket || q.replace(/(?:我想看|我想读|想要阅读|想阅读|想看书|想读书|帮我|请|把|发给我|给我|发一张|发个|发|看看|打开|阅读卡片|卡片堆|阅读|书单|书卡|我的书|我的)/g, '')).trim().toLowerCase();
+
+  const cards = [];
+  const usedStack = new Set();
+  const usedBook = new Set();
+
+  if (cleaned) {
+    const matchedStacks = stacks
+      .map(s => {
+        const members = s.bookIds.map(id => sorted.find(b => b.id === id)).filter(Boolean);
+        const hay = `${s.name} ${members.map(m => m.title).join(' ')}`.toLowerCase();
+        const sc = s.name.toLowerCase().includes(cleaned) ? 100 : (hay.includes(cleaned) ? 60 : fuzzyScore(cleaned, s.name));
+        return { s, sc };
+      })
+      .filter(x => x.sc > 0)
+      .sort((a, b) => b.sc - a.sc);
+    for (const { s } of matchedStacks.slice(0, 2)) {
+      usedStack.add(s.id);
+      cards.push(makeStackChatCard(s, sorted));
+    }
+    if (!wantStackOnly) {
+      const matchedBooks = sorted
+        .map(b => {
+          const hay = `${b.title || ''} ${b.author || ''}`.toLowerCase();
+          const sc = (b.title || '').toLowerCase().includes(cleaned) ? 100 : (hay.includes(cleaned) ? 70 : fuzzyScore(cleaned, b.title || ''));
+          return { b, sc };
+        })
+        .filter(x => x.sc > 0)
+        .sort((a, b) => b.sc - a.sc);
+      for (const { b } of matchedBooks.slice(0, 3 - cards.length)) {
+        usedBook.add(b.id);
+        cards.push(makeBookChatCard(b));
+      }
+    }
+  }
+
+  if (!cards.length) {
+    if (wantStackOnly) {
+      for (const s of stacks.slice(0, 3)) cards.push(makeStackChatCard(s, sorted));
+    } else {
+      if (stacks.length) {
+        usedStack.add(stacks[0].id);
+        cards.push(makeStackChatCard(stacks[0], sorted));
+      }
+      for (const b of sorted) {
+        if (cards.length >= 3) break;
+        if (usedBook.has(b.id)) continue;
+        usedBook.add(b.id);
+        cards.push(makeBookChatCard(b));
+      }
+    }
+  }
+  return { cards, totalBooks: sorted.length, totalStacks: stacks.length };
+}
+
+async function resolveBotCardRefs(parsedCards) {
+  if (!parsedCards.length) return [];
+  const allBooks = await db.all('books');
+  const stacks = listStacks();
+  const out = [];
+  for (const c of parsedCards) {
+    if (c.kind === 'book_ref') {
+      const q = (c.query || '').toLowerCase();
+      const b = allBooks.find(x => x.id === c.query || (x.title || '').toLowerCase().includes(q)) || allBooks[0];
+      if (b) out.push(makeBookChatCard(b));
+    } else if (c.kind === 'stack_ref') {
+      const q = (c.query || '').toLowerCase();
+      const s = stacks.find(x => x.id === c.query || x.name.toLowerCase().includes(q)) || stacks[0];
+      if (s) out.push(makeStackChatCard(s, allBooks));
+    } else {
+      out.push({ id: `card-${uid()}`, ...c });
+    }
+  }
+  return out;
 }
 
 function renderBotMountedBar(bot) {
@@ -3791,6 +4797,77 @@ function renderChatCardElement(card, thread) {
   st.textContent = card.status || 'Done';
   head.append(ico, prov, st);
   el.appendChild(head);
+
+  if (card.kind === 'book' || card.kind === 'stack') {
+    el.dataset.readingKind = card.kind;
+    el.dataset.readingRef = card.refId || '';
+    const row = document.createElement('div');
+    row.className = 'chat-reading-card';
+    if (card.kind === 'book') {
+      const av = avatarNode({ id: card.refId || '', title: card.title || '未命名', type: card.bookType || 'txt' }, false);
+      row.appendChild(av);
+    } else {
+      const fan = document.createElement('div');
+      fan.className = 'chat-reading-fan';
+      const titles = (Array.isArray(card.memberTitles) && card.memberTitles.length ? card.memberTitles : [card.title || '卡片堆']).slice(0, 3);
+      titles.forEach((t, idx) => {
+        fan.appendChild(avatarNode({ id: `fan-${idx}`, title: t, type: '' }, true));
+      });
+      row.appendChild(fan);
+    }
+    const info = document.createElement('div');
+    info.className = 'chat-reading-info';
+    const strong = document.createElement('strong');
+    strong.textContent = card.title || (card.kind === 'stack' ? '卡片堆' : '未命名');
+    const sub = document.createElement('span');
+    sub.textContent = card.meta || '';
+    info.append(strong, sub);
+    if (card.kind === 'book' && Number(card.progress || 0) > 0) {
+      const prog = document.createElement('div');
+      prog.className = 'chat-reading-prog';
+      const fill = document.createElement('i');
+      fill.style.width = `${Math.round(Math.min(1, Number(card.progress)) * 100)}%`;
+      prog.appendChild(fill);
+      info.appendChild(prog);
+    }
+    row.appendChild(info);
+    el.appendChild(row);
+    if (card.detail) {
+      const det = document.createElement('p');
+      det.className = 'chat-card-detail';
+      det.textContent = card.detail;
+      el.appendChild(det);
+    }
+    const acts = document.createElement('div');
+    acts.className = 'chat-card-acts';
+    const bShare = document.createElement('button');
+    bShare.type = 'button';
+    bShare.className = 'chat-card-btn';
+    bShare.textContent = '分享';
+    bShare.onclick = () => shareReadingItem({ kind: card.kind, id: card.refId });
+
+    const bDock = document.createElement('button');
+    bDock.type = 'button';
+    bDock.className = 'chat-card-btn';
+    bDock.textContent = '吸附右缘';
+    bDock.onclick = () => dockToRightEdge({
+      kind: card.kind,
+      id: card.refId,
+      title: card.title || '阅读卡片',
+      subtitle: card.meta || ''
+    });
+
+    const bRead = document.createElement('button');
+    bRead.type = 'button';
+    bRead.className = 'chat-card-btn primary';
+    bRead.textContent = card.kind === 'stack' ? '展开阅读' : '立即阅读';
+    bRead.onclick = () => openEdgeDockedItem({ kind: card.kind, id: card.refId, title: card.title });
+
+    acts.append(bShare, bDock, bRead);
+    el.appendChild(acts);
+    wrap.appendChild(el);
+    return wrap;
+  }
 
   if (card.title) {
     const title = document.createElement('div');
@@ -4234,6 +5311,7 @@ async function saveBotInsightToCosmos(bot, text) {
   if (!clean) return null;
   const botName = bot?.name || 'Zone';
   importMemoryText(clean.slice(0, 520), { source: `${botName} 对话`, scope: 'global', kind: 'memory' });
+  triggerCloudSyncSoon();
   toast('已存入知识库（可在知识库一键云端同步）', 2400);
   return true;
 }
@@ -4245,7 +5323,7 @@ function openZoneMemorySheet(defaultScope = 'global') {
     cloudApi: getSichaoApi(),
     onCopyPrompt: txt => copyText(txt),
     onToast: (msg, ms) => toast(msg, ms),
-    onChanged: () => renderAgentHub()
+    onChanged: () => { renderAgentHub(); triggerCloudSyncSoon(); }
   });
 }
 
@@ -4445,6 +5523,37 @@ async function chatWithActiveBot(text, attachments = []) {
     return;
   }
 
+  // 自然语言找书 / 要卡片 / 要卡片堆：任意 Bot 均可直接回复可交互的阅读卡片与卡片堆卡片（支持零 Token 本地秒发）
+  if (!atts.length && isBotReadingRequest(q)) {
+    const { cards, totalBooks } = await findMatchingReadingCards(q);
+    if (cards.length) {
+      thread.messages.push({
+        role: 'assistant',
+        content: `已为你准备好 ${cards.length} 张阅读卡片，轻点就能直接读、吸附屏幕右缘或分享到微信/QQ：`,
+        at: Date.now()
+      });
+      for (const c of cards) {
+        thread.messages.push({ role: 'card', card: c, at: Date.now() });
+      }
+    } else {
+      thread.messages.push({
+        role: 'assistant',
+        content: totalBooks
+          ? '暂时没找到匹配的卡片，可以换个书名或卡片堆名称再发给我。'
+          : '你的阅读库里还没有书，点下方「阅读器」导入书籍或发给我文章链接就能生成阅读卡片啦。',
+        at: Date.now()
+      });
+    }
+    thread.updatedAt = Date.now();
+    saveTaskThreads();
+    renderChatBox(thread);
+    haptic('success');
+    const headSvg = $('#chat-head-av .bot-glyph');
+    if (headSvg) triggerBotMood(headSvg, 'laugh');
+    renderBotRoster();
+    return;
+  }
+
   if (!aiConfigured()) {
     thread.messages.push({
       role: 'assistant',
@@ -4475,7 +5584,7 @@ async function chatWithActiveBot(text, attachments = []) {
     const peerHint = otherBots.length
       ? `你可后台静默联系的其他 Bot：${otherBots.map(b => `${b.name}${b.rules ? `(${b.rules.slice(0, 22)})` : ''}`).join('、')}。如任务需要交给某位 Bot 协同，可输出 [[MSG_BOT:对方Bot名|具体委托内容]]，系统会后台静默通讯并把结果交回给你，不会打扰用户。`
       : '';
-    const cardHint = '如需用户点击卡片确认后再执行关键任务，可在回复末尾另起一行输出 [[CONFIRM:标题|目标或链接|简短说明|确认后指令]]；如产出关键链接/PR/报告卡片，可输出 [[CARD:来源|标题|副标题|详情|https://链接]]。';
+    const cardHint = '如需用户点击卡片确认后再执行关键任务，可在回复末尾另起一行输出 [[CONFIRM:标题|目标或链接|简短说明|确认后指令]]；如产出关键链接/PR/报告卡片，可输出 [[CARD:来源|标题|副标题|详情|https://链接]]；如需发送用户库里的书籍或卡片堆卡片，可输出 [[BOOK_CARD:书名关键词]] 或 [[STACK_CARD:卡片堆名称]]。';
     const combinedRules = [bot.rules || '', peerHint, cardHint].filter(Boolean).join('\n\n');
 
     let ans = '';
@@ -4531,8 +5640,9 @@ async function chatWithActiveBot(text, attachments = []) {
     if (parsed.text) {
       thread.messages.push({ role: 'assistant', content: parsed.text, at: Date.now() });
     }
-    for (const c of parsed.cards) {
-      thread.messages.push({ role: 'card', card: { id: `card-${uid()}`, ...c }, at: Date.now() });
+    const resolvedCards = await resolveBotCardRefs(parsed.cards);
+    for (const c of resolvedCards) {
+      thread.messages.push({ role: 'card', card: c, at: Date.now() });
     }
     if (cloudSteps.length && !parsed.cards.length) {
       const topSrc = cloudSources[0] || null;
@@ -4835,10 +5945,20 @@ function openProfileSheet() {
   }
   let editingRecharge = false;
   let checkingLive = false;
+  let showAuthForm = false;
+  let authMode = 'login';
+  let authBusy = false;
+  let authErr = '';
+  let syncingNow = false;
+  const escHtml = s => String(s || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const webPortalUrl = () => {
+    const api = String(getSichaoApi() || 'https://sichao-v2-server.onrender.com').replace(/\/+$/, '');
+    return `${api}/web/`;
+  };
   const draw = () => {
     const u = getAiUsage();
     const cfg = getAiConfig();
-    const pr = getModelPricing(cfg.model, cfg.baseUrl);
+    const sess = getCloudSession();
     const sym = u.currency === 'USD' ? '$' : '¥';
     const liveSym = u.liveCurrency === 'USD' ? '$' : '¥';
     const spent = Number(u.spentEstimated || 0);
@@ -4854,15 +5974,83 @@ function openProfileSheet() {
       : estRemain != null
         ? `剩余 ${sym}${estRemain.toFixed(2)} · 本月 ${formatTokens(u.monthTokens)} tokens`
         : `今日 ${formatTokens(u.todayTokens)} · 本月 ${formatTokens(u.monthTokens)} tokens`;
+    const syncTimeText = sess?.lastSyncAt ? formatShortTime(sess.lastSyncAt) : '尚未同步';
+    const monogram = sess?.user?.display_name ? Array.from(sess.user.display_name)[0].toUpperCase() : 'Z';
 
     mask.innerHTML = `
       <div class="bots-sheet" role="dialog" aria-label="我的 Zone">
         <div class="bots-head">
           <div>
             <h3>我的 Zone</h3>
-            <p>自有密钥 · 本地隐私</p>
+            <p>Zone 5.0 · 跨端云同步 · 自有密钥</p>
           </div>
           <button type="button" class="bots-close" data-p-act="close">完成</button>
+        </div>
+        <div class="prof-group" id="prof-account-card">
+          ${sess ? `
+            <div class="prof-acct-row">
+              <div class="prof-acct-av signed">${escHtml(monogram)}</div>
+              <div class="prof-row-main">
+                <strong>${escHtml(sess.user.display_name || sess.user.account)}</strong>
+                <span>${escHtml(sess.user.account)} · ${sess.devicesCount || 1} 台设备已连</span>
+              </div>
+              <span class="prof-acct-badge">云同步中</span>
+            </div>
+            <button type="button" class="prof-row" data-p-act="sync-now">
+              <div class="prof-row-main">
+                <strong>${syncingNow ? '正在双向同步…' : '立即双向同步'}</strong>
+                <span>最近同步 ${escHtml(syncTimeText)} · Bot、消息、知识库与卡片堆</span>
+              </div>
+              <span class="prof-row-val">${syncingNow ? '…' : '同步 ›'}</span>
+            </button>
+            <button type="button" class="prof-row" data-p-act="copy-web">
+              <div class="prof-row-main">
+                <strong>电脑端入口</strong>
+                <span>浏览器打开登录同账号，手机端自动出现</span>
+              </div>
+              <span class="prof-row-val">复制链接 ›</span>
+            </button>
+            <button type="button" class="prof-row" data-p-act="auth-logout">
+              <div class="prof-row-main">
+                <strong>退出账号</strong>
+                <span>仅断开云端同步，本机数据完整保留</span>
+              </div>
+              <span class="prof-row-val" style="color:#FF3B30">退出</span>
+            </button>
+          ` : `
+            <button type="button" class="prof-acct-row" data-p-act="toggle-auth">
+              <div class="prof-acct-av">Z</div>
+              <div class="prof-row-main">
+                <strong>登录 Zone 账号</strong>
+                <span>手机与电脑端实时同步 Bot、对话消息与知识库</span>
+              </div>
+              <span class="prof-row-val">${showAuthForm ? '收起' : '登录 ›'}</span>
+            </button>
+            ${showAuthForm ? `
+              <form class="prof-acct-form" id="prof-auth-form">
+                <div class="prof-acct-tabs">
+                  <button type="button" class="${authMode === 'login' ? 'on' : ''}" data-auth-tab="login">登录</button>
+                  <button type="button" class="${authMode === 'register' ? 'on' : ''}" data-auth-tab="register">注册账号</button>
+                </div>
+                <input id="prof-auth-account" type="text" placeholder="账号（邮箱或用户名，至少 3 位）" autocomplete="username" autocapitalize="off" required>
+                <input id="prof-auth-pass" type="password" placeholder="密码（至少 6 位）" autocomplete="${authMode === 'register' ? 'new-password' : 'current-password'}" required>
+                ${authMode === 'register' ? `<input id="prof-auth-name" type="text" placeholder="昵称（选填）" maxlength="32">` : ''}
+                ${authErr ? `<p class="prof-acct-err">${escHtml(authErr)}</p>` : ''}
+                <button type="submit" class="bots-primary" style="height:42px;font-size:14.5px" ${authBusy ? 'disabled' : ''}>
+                  ${authBusy ? '连接云端中…' : (authMode === 'register' ? '创建账号并开启多端同步' : '登录并立即同步')}
+                </button>
+                <p class="prof-acct-hint">电脑端无需安装，浏览器打开即可登录同步：<br>${escHtml(webPortalUrl())}</p>
+              </form>
+            ` : `
+              <button type="button" class="prof-row" data-p-act="copy-web">
+                <div class="prof-row-main">
+                  <strong>电脑端网页入口</strong>
+                  <span>在电脑浏览器打开登录，手机与电脑实时互通</span>
+                </div>
+                <span class="prof-row-val">复制链接 ›</span>
+              </button>
+            `}
+          `}
         </div>
         <div class="prof-group">
           <button type="button" class="prof-row" data-p-act="ai-cfg">
@@ -4947,6 +6135,63 @@ function openProfileSheet() {
       </div>`;
     mask.onclick = e => { if (e.target === mask) closeProfileSheet(); };
     mask.querySelector('[data-p-act="close"]').onclick = () => closeProfileSheet();
+    const toggleAuthBtn = mask.querySelector('[data-p-act="toggle-auth"]');
+    if (toggleAuthBtn) {
+      toggleAuthBtn.onclick = () => { showAuthForm = !showAuthForm; authErr = ''; draw(); };
+    }
+    mask.querySelectorAll('[data-auth-tab]').forEach(btn => {
+      btn.onclick = () => { authMode = btn.dataset.authTab; authErr = ''; draw(); };
+    });
+    const authForm = mask.querySelector('#prof-auth-form');
+    if (authForm) {
+      authForm.onsubmit = async ev => {
+        ev.preventDefault();
+        if (authBusy) return;
+        const account = (mask.querySelector('#prof-auth-account')?.value || '').trim();
+        const password = mask.querySelector('#prof-auth-pass')?.value || '';
+        const displayName = (mask.querySelector('#prof-auth-name')?.value || '').trim();
+        authBusy = true; authErr = ''; draw();
+        const fn = authMode === 'register' ? cloudAuthRegister : cloudAuthLogin;
+        const res = await fn({ apiBase: getSichaoApi(), account, password, displayName });
+        if (!res.ok) {
+          authBusy = false; authErr = res.error || '登录失败'; draw();
+          return;
+        }
+        const sres = await syncNow({ apiBase: getSichaoApi(), onApplied: reloadFromCloudSync });
+        authBusy = false; showAuthForm = false; authErr = '';
+        haptic('success');
+        toast(sres.ok ? '登录成功，已完成手机与电脑端云同步' : '已登录 Zone 账号', 3200);
+        draw();
+      };
+    }
+    const syncBtn = mask.querySelector('[data-p-act="sync-now"]');
+    if (syncBtn) {
+      syncBtn.onclick = async () => {
+        if (syncingNow) return;
+        syncingNow = true; draw();
+        const res = await syncNow({ apiBase: getSichaoApi(), onApplied: reloadFromCloudSync });
+        syncingNow = false;
+        haptic(res.ok ? 'success' : 'light');
+        toast(res.ok ? `双向同步完成（版本 #${res.revision}）` : (res.error || '同步失败，请稍后重试'), 2800);
+        draw();
+      };
+    }
+    const copyWebBtn = mask.querySelector('[data-p-act="copy-web"]');
+    if (copyWebBtn) {
+      copyWebBtn.onclick = async () => {
+        await copyText(webPortalUrl());
+        haptic('light');
+        toast('已复制电脑端网页链接，打开登录同账号即可实时同步', 3200);
+      };
+    }
+    const logoutBtn = mask.querySelector('[data-p-act="auth-logout"]');
+    if (logoutBtn) {
+      logoutBtn.onclick = async () => {
+        await cloudAuthLogout({ apiBase: getSichaoApi() });
+        toast('已退出 Zone 账号（本机数据完整保留）', 2400);
+        draw();
+      };
+    }
     mask.querySelector('[data-p-act="ai-cfg"]').onclick = () => { closeProfileSheet(); openAiSettingsDialog(); };
     mask.querySelector('[data-p-act="edit-recharge"]').onclick = () => { editingRecharge = !editingRecharge; draw(); };
     mask.querySelectorAll('[data-p-cur]').forEach(btn => {
@@ -5072,9 +6317,9 @@ async function runAutomationItem(auto, opts = {}) {
   }
 }
 const openBotsFromHub = (opts = {}) => openBotStudio({
-  onSelect: (bot, meta) => openBotConversation(bot, { created: !!meta?.created }),
-  onSelectGroup: grp => openGroupConversation(grp),
-  onStatus: msg => { renderAgentHub(); if (!$('#zone-chat-modal')?.classList.contains('hidden')) renderChatBox(taskThreads.find(t => t.id === activeThreadId)); toast(msg, 2600); },
+  onSelect: (bot, meta) => { openBotConversation(bot, { created: !!meta?.created }); triggerCloudSyncSoon(); },
+  onSelectGroup: grp => { openGroupConversation(grp); triggerCloudSyncSoon(); },
+  onStatus: msg => { renderAgentHub(); if (!$('#zone-chat-modal')?.classList.contains('hidden')) renderChatBox(taskThreads.find(t => t.id === activeThreadId)); toast(msg, 2600); triggerCloudSyncSoon(); },
   onLaunchPlugin: launchPluginById,
   onRunAutomation: runAutomationItem,
   onInspectPlugin: inspectExternalPluginRemote,
@@ -5083,7 +6328,7 @@ const openBotsFromHub = (opts = {}) => openBotStudio({
 const openConnectAppsFromHub = () => openConnectAppsView({
   cloudApi: getSichaoApi(),
   onInspectPlugin: inspectExternalPluginRemote,
-  onChanged: () => renderAgentHub(),
+  onChanged: () => { renderAgentHub(); triggerCloudSyncSoon(); },
   onToast: (msg, ms) => toast(msg, ms)
 });
 $('#zone-hero-card')?.addEventListener('click', () => openBotConversation(getPrimaryBot()));
@@ -5194,6 +6439,11 @@ $('#zone-chat-form')?.addEventListener('submit', async e => {
     renderAgentHub();
     return;
   }
+  if (!atts.length && isBotReadingRequest(text)) {
+    await chatWithActiveBot(text, atts);
+    renderAgentHub();
+    return;
+  }
   const ops = !atts.length ? parseNaturalCommands(text, { reading: false, pane: currentPane() }) : [];
   if (ops.length && ops[0].op !== 'askAi') {
     await command.run(text);
@@ -5208,5 +6458,20 @@ renderAgentHub();
 startBotLifeEngine();
 consumeLaunchDeepLink(openDeepLink);
 syncToAndroidWidget();
+syncEdgeDockFromNative();
+if (isCloudSignedIn()) {
+  syncNow({ apiBase: getSichaoApi(), onApplied: reloadFromCloudSync }).catch(() => {});
+}
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) {
+    syncEdgeDockFromNative();
+    if (isCloudSignedIn()) pollSyncDelta({ apiBase: getSichaoApi(), onApplied: reloadFromCloudSync }).catch(() => {});
+  }
+});
+setInterval(() => {
+  if (!document.hidden && isCloudSignedIn()) {
+    pollSyncDelta({ apiBase: getSichaoApi(), onApplied: reloadFromCloudSync }).catch(() => {});
+  }
+}, 18000);
 
-window.__app = { db, openBook, closeBook, importFiles, importBlob, importArticleUrl, handleBack, openDeepLink, openMicroApp, closeMicroApp, isMicroAppOpen, pinToDesktop, postChatCard, requestChatConfirm, openBotConversation, openGroupConversation, openBotReaderSheet, relayBotToBotMessage, buildSecondBrainContext, get engine() { return engine; }, renderLibrary, stacks: { list: listStacks }, runCommand: text => command.run(text), openCommand: opts => command.openBar(opts), openPeek: openBookPeek, closePeek: closeBookPeek, openAuthGate, getAuthUser, getOpdsUrl, setOpdsUrl };
+window.__app = { db, openBook, closeBook, importFiles, importBlob, importArticleUrl, handleBack, openDeepLink, openMicroApp, closeMicroApp, isMicroAppOpen, pinToDesktop, postChatCard, requestChatConfirm, openBotConversation, openGroupConversation, openBotReaderSheet, relayBotToBotMessage, buildSecondBrainContext, dockToRightEdge, undockFromRightEdge, shareReadingItem, startInlineStackRename, mergeShelfTargets, openProfileSheet, getCloudSession, syncNow: () => syncNow({ apiBase: getSichaoApi(), onApplied: reloadFromCloudSync }), get engine() { return engine; }, renderLibrary, stacks: { list: listStacks }, runCommand: text => command.run(text), openCommand: opts => command.openBar(opts), openPeek: openBookPeek, closePeek: closeBookPeek, openAuthGate, getAuthUser, getOpdsUrl, setOpdsUrl };

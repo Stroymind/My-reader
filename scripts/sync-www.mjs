@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const dest = path.join(root, 'www');
 const files = [
-  'index.html', 'app.css', 'app.js', 'db.js', 'engines.js', 'formats.js', 'book-finder.js', 'sichao.js', 'phone-use.js', 'agent-surface.js', 'bots.js', 'connectors.js', 'memory.js', 'importer.js',
+  'index.html', 'app.css', 'app.js', 'db.js', 'engines.js', 'formats.js', 'book-finder.js', 'sichao.js', 'phone-use.js', 'agent-surface.js', 'bots.js', 'connectors.js', 'memory.js', 'sync.js', 'importer.js',
   'settings.js', 'bilingual.js', 'epub-repair.js', 'knowledge.js', 'ai.js', 'workspace.js', 'stacks.js', 'cosmos.js', 'command.js',
   'sw.js', 'manifest.webmanifest'
 ];

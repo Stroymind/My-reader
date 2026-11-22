@@ -211,18 +211,38 @@
     </div>
   </form>
 </div>
-<div id="ai-mask" class="note-mask hidden">
-  <div class="note-dialog ai-dialog" role="dialog" aria-labelledby="ai-title">
-    <h3 id="ai-title">AI 解释</h3>
-    <p id="ai-quote" class="quote"></p>
-    <div id="ai-body"></div>
-    <form id="ai-ask" class="ai-ask">
-      <input id="ai-q" type="text" placeholder="围绕这段文字提问" autocomplete="off">
-      <button class="btn primary" type="submit">提问</button>
+<div id="ai-mask" class="ai-glass-mask hidden">
+  <div class="ai-glass-sheet ai-dialog" role="dialog" aria-modal="true" aria-labelledby="ai-title">
+    <div class="ai-glass-grip" id="ai-grip" aria-hidden="true"></div>
+    <div class="ai-glass-head">
+      <div class="ai-glass-who">
+        <span id="ai-bot-av" class="ai-bot-av" aria-hidden="true"></span>
+        <div>
+          <h3 id="ai-title">AI 解读</h3>
+          <span id="ai-sub" class="ai-glass-sub">选中段落 · 深度伴读</span>
+        </div>
+      </div>
+      <button type="button" id="ai-close" class="ai-glass-close" aria-label="关闭">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7L7 17"/></svg>
+      </button>
+    </div>
+    <blockquote id="ai-quote" class="ai-glass-quote quote"></blockquote>
+    <div id="ai-body" class="ai-glass-body"></div>
+    <div id="ai-quick-chips" class="ai-quick-chips" aria-label="快捷追问">
+      <button type="button" class="ai-q-chip" data-ai-q="用生活里的一个具体例子帮我理解这段话">举个例子</button>
+      <button type="button" class="ai-q-chip" data-ai-q="这段话背后的底层逻辑或核心假设是什么？">底层逻辑</button>
+      <button type="button" class="ai-q-chip" data-ai-q="有没有反例或不同流派的质疑视角？">反面视角</button>
+    </div>
+    <form id="ai-ask" class="ai-glass-ask ai-ask">
+      <input id="ai-q" type="text" placeholder="继续追问这段文字…" autocomplete="off">
+      <button class="ai-ask-send" type="submit" aria-label="发送追问">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6"/></svg>
+      </button>
     </form>
-    <div class="note-actions">
-      <button type="button" id="ai-close">关闭</button>
-      <button type="button" id="ai-save" class="btn primary">存为笔记</button>
+    <div class="ai-glass-foot">
+      <button type="button" id="ai-copy" class="ai-foot-pill">复制</button>
+      <button type="button" id="ai-to-kb" class="ai-foot-pill">存入知识库</button>
+      <button type="button" id="ai-save" class="ai-foot-pill primary">存为笔记</button>
     </div>
   </div>
 </div>
@@ -251,19 +271,20 @@
       <button type="button" data-pane="knowledge" role="tab" aria-selected="false"><i aria-hidden="true"></i><span>知识</span></button>
       <button type="button" data-pane="graph" role="tab" aria-selected="false"><i aria-hidden="true"></i><span>星海</span></button>
     </nav>
-    <div class="intent-cmd-row">
-      <button id="intent-cmd-btn" class="intent-cmd-btn" type="button">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12v0M9 8.5v7M12 6v12M15 8.5v7M19 12v0"/></svg>
-        <span>说一句直接做，如「探索星海」「记个想法」</span>
+    <div class="omni-capsule" role="menu" aria-label="导入、搜索与语音合一">
+      <button id="btn-import" class="menu-item omni-add" data-for="shelf" role="menuitem" type="button" aria-label="导入书籍或文档" title="导入">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
       </button>
-      <button id="intent-mic" class="intent-mic" type="button" aria-label="语音指令" title="直接说话">
+      <button id="btn-new-note" class="menu-item omni-add" data-for="knowledge graph" role="menuitem" type="button" aria-label="新建笔记" title="新建笔记">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+      </button>
+      <button id="btn-intent-search" class="menu-item omni-mid" data-for="shelf knowledge graph" role="menuitem" type="button">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.2"/><path d="M19.5 19.5l-4-4"/></svg>
+        <span class="menu-label">搜索、导入或直接说话…</span>
+      </button>
+      <button id="intent-mic" class="omni-mic" type="button" aria-label="语音指令" title="直接说话">
         <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="4" width="6" height="10" rx="3"/><path d="M6.5 11.5a5.5 5.5 0 0 0 11 0M12 17v3.2M9 20.2h6"/></svg>
       </button>
-    </div>
-    <div class="intent-grid" role="menu" aria-label="操作">
-      <button id="btn-import" class="menu-item intent-tile" data-for="shelf" role="menuitem" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4.5v10.5M7.6 10.8 12 15.2l4.4-4.4"/><path d="M5 19.5h14"/></svg><span class="menu-label">导入</span></button>
-      <button id="btn-new-note" class="menu-item intent-tile" data-for="knowledge graph" role="menuitem" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 6v12M6 12h12"/></svg><span class="menu-label">新建笔记</span></button>
-      <button id="btn-intent-search" class="menu-item intent-tile" data-for="shelf knowledge graph" role="menuitem" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.4"/><path d="M20 20l-4.3-4.3"/></svg><span class="menu-label">搜索</span></button>
     </div>
     <div class="intent-foot" role="menu" aria-label="偏好">
       <button id="btn-auth-account" class="menu-item intent-sub" role="menuitem" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8.5" r="3.6"/><path d="M5.5 19.5a6.5 6.5 0 0 1 13 0"/></svg><span class="menu-label" id="intent-auth-label">登录 / 账号</span></button>
@@ -426,6 +447,9 @@
     </filter>
   </defs>
 </svg>
+<div id="edge-dock-zone" class="edge-dock-zone hidden" aria-hidden="true"><span>吸附右缘</span></div>
+<div id="edge-undock-zone" class="edge-undock-zone hidden" aria-hidden="true"><span>拖到上方放回原位</span></div>
+<div id="zone-edge-dock" class="zone-edge-dock hidden" role="button" tabindex="0" aria-label="右缘吸附的阅读卡片"></div>
 <div id="toast" class="toast hidden" role="status"></div>
 <script type="module" src="app.js"></script>
 </body>

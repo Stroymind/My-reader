@@ -1,9 +1,12 @@
 """思潮 V2.0 持久化数据库层（SQLite WAL，表结构兼容 PostgreSQL）。"""
 from __future__ import annotations
 
+import hashlib
 import json
+import secrets
 import sqlite3
 import time
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -187,6 +190,43 @@ class Database:
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_kb_space_upd ON kb_items(space_hash, deleted, updated_at DESC);
+
+                CREATE TABLE IF NOT EXISTS shared_decks (
+                    share_id TEXT PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    subtitle TEXT NOT NULL DEFAULT '',
+                    kind TEXT NOT NULL DEFAULT 'stack',
+                    payload_json TEXT NOT NULL,
+                    created_at REAL NOT NULL,
+                    views INTEGER NOT NULL DEFAULT 0
+                );
+
+                CREATE TABLE IF NOT EXISTS users (
+                    user_id TEXT PRIMARY KEY,
+                    account TEXT NOT NULL UNIQUE,
+                    display_name TEXT NOT NULL,
+                    password_hash TEXT NOT NULL,
+                    salt TEXT NOT NULL,
+                    created_at REAL NOT NULL,
+                    updated_at REAL NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS user_sessions (
+                    token TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    device_name TEXT NOT NULL DEFAULT '',
+                    created_at REAL NOT NULL,
+                    last_seen_at REAL NOT NULL,
+                    FOREIGN KEY(user_id) REFERENCES users(user_id) ON DELETE CASCADE
+                );
+
+                CREATE TABLE IF NOT EXISTS user_sync_state (
+                    user_id TEXT PRIMARY KEY,
+                    state_json TEXT NOT NULL DEFAULT '{}',
+                    revision INTEGER NOT NULL DEFAULT 0,
+                    updated_at REAL NOT NULL,
+                    FOREIGN KEY(user_id) REFERENCES users(user_id) ON DELETE CASCADE
+                );
                 """
             )
 
@@ -431,3 +471,349 @@ class Database:
             }
             for r in rows
         ]
+
+    def create_shared_deck(self, share_id: str, title: str, subtitle: str, kind: str, payload: dict[str, Any]) -> None:
+        now = time.time()
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO shared_decks(share_id, title, subtitle, kind, payload_json, created_at, views)
+                VALUES(?, ?, ?, ?, ?, ?, 0)
+                """,
+                (share_id, title[:120], subtitle[:200], kind[:16], json.dumps(payload, ensure_ascii=False), now),
+            )
+
+    def get_shared_deck(self, share_id: str) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            row = conn.execute("SELECT * FROM shared_decks WHERE share_id = ?", (share_id,)).fetchone()
+            if not row:
+                return None
+            conn.execute("UPDATE shared_decks SET views = views + 1 WHERE share_id = ?", (share_id,))
+            d = dict(row)
+            d["views"] = int(d.get("views") or 0) + 1
+            try:
+                d["payload"] = json.loads(d.get("payload_json") or "{}")
+            except Exception:
+                d["payload"] = {}
+            return d
+
+    @staticmethod
+    def _hash_password(password: str, salt: str) -> str:
+        return hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 120_000).hex()
+
+    @staticmethod
+    def _merge_by_id(
+        base_list: list[dict[str, Any]],
+        inc_list: list[dict[str, Any]],
+        deleted_ids: set[str],
+        cap: int = 200,
+    ) -> list[dict[str, Any]]:
+        merged: dict[str, dict[str, Any]] = {}
+        order: list[str] = []
+        for item in base_list:
+            if not isinstance(item, dict) or not item.get("id"):
+                continue
+            iid = str(item["id"])
+            if iid in deleted_ids:
+                continue
+            merged[iid] = dict(item)
+            order.append(iid)
+        for item in inc_list:
+            if not isinstance(item, dict) or not item.get("id"):
+                continue
+            iid = str(item["id"])
+            if iid in deleted_ids:
+                merged.pop(iid, None)
+                continue
+            if iid not in merged:
+                merged[iid] = dict(item)
+                order.append(iid)
+            else:
+                old_ts = float(merged[iid].get("updatedAt") or merged[iid].get("createdAt") or 0)
+                new_ts = float(item.get("updatedAt") or item.get("createdAt") or 0)
+                if new_ts >= old_ts:
+                    merged[iid] = {**merged[iid], **item}
+        out = [merged[iid] for iid in order if iid in merged]
+        return out[:cap]
+
+    @staticmethod
+    def _msg_key(m: dict[str, Any]) -> str:
+        role = str(m.get("role") or "")
+        at = int(m.get("at") or 0)
+        card = m.get("card") if isinstance(m.get("card"), dict) else None
+        if card and card.get("id"):
+            return f"card:{card['id']}"
+        content = str(m.get("content") or "")[:96]
+        bot_id = str(m.get("botId") or "")
+        return f"{role}:{at}:{bot_id}:{content}"
+
+    @classmethod
+    def _merge_threads(
+        cls,
+        base_threads: list[dict[str, Any]],
+        inc_threads: list[dict[str, Any]],
+        deleted_ids: set[str],
+    ) -> list[dict[str, Any]]:
+        def thread_key(t: dict[str, Any]) -> str:
+            if t.get("groupId"):
+                return f"grp:{t['groupId']}"
+            if t.get("botId"):
+                return f"bot:{t['botId']}"
+            return f"id:{t.get('id') or ''}"
+
+        bucket: dict[str, dict[str, Any]] = {}
+        for src in (base_threads, inc_threads):
+            for t in src:
+                if not isinstance(t, dict) or not t.get("id"):
+                    continue
+                if str(t["id"]) in deleted_ids:
+                    continue
+                k = thread_key(t)
+                if k not in bucket:
+                    bucket[k] = {
+                        **t,
+                        "messages": list(t.get("messages") or [])[-120:],
+                    }
+                    continue
+                cur = bucket[k]
+                seen: dict[str, dict[str, Any]] = {}
+                for m in list(cur.get("messages") or []) + list(t.get("messages") or []):
+                    if not isinstance(m, dict):
+                        continue
+                    mk = cls._msg_key(m)
+                    if mk not in seen:
+                        seen[mk] = m
+                    else:
+                        # 保留较新更新状态（如确认卡片 resolved 或 inCosmos 标记）
+                        prev = seen[mk]
+                        if m.get("inCosmos") and not prev.get("inCosmos"):
+                            seen[mk] = {**prev, "inCosmos": True}
+                        if isinstance(m.get("card"), dict) and m["card"].get("resolved"):
+                            seen[mk] = m
+                msgs = sorted(seen.values(), key=lambda x: float(x.get("at") or 0))[-120:]
+                cur["messages"] = msgs
+                cur["updatedAt"] = max(float(cur.get("updatedAt") or 0), float(t.get("updatedAt") or 0))
+                if t.get("title"):
+                    cur["title"] = t["title"]
+        out = sorted(bucket.values(), key=lambda x: float(x.get("updatedAt") or 0), reverse=True)
+        return out[:40]
+
+    def register_user(self, account: str, password: str, display_name: str = "", device_name: str = "") -> dict[str, Any]:
+        acct = account.strip().lower()
+        now = time.time()
+        user_id = f"u-{uuid.uuid4().hex[:12]}"
+        salt = secrets.token_hex(16)
+        pw_hash = self._hash_password(password, salt)
+        dname = (display_name or "").strip()[:32] or (acct.split("@")[0] if "@" in acct else acct)[:32]
+        token = secrets.token_urlsafe(32)
+        with self.connect() as conn:
+            exists = conn.execute("SELECT user_id FROM users WHERE account = ?", (acct,)).fetchone()
+            if exists:
+                raise ValueError("ACCOUNT_EXISTS")
+            conn.execute(
+                """
+                INSERT INTO users(user_id, account, display_name, password_hash, salt, created_at, updated_at)
+                VALUES(?, ?, ?, ?, ?, ?, ?)
+                """,
+                (user_id, acct, dname, pw_hash, salt, now, now),
+            )
+            conn.execute(
+                """
+                INSERT INTO user_sessions(token, user_id, device_name, created_at, last_seen_at)
+                VALUES(?, ?, ?, ?, ?)
+                """,
+                (token, user_id, device_name[:64], now, now),
+            )
+            conn.execute(
+                """
+                INSERT INTO user_sync_state(user_id, state_json, revision, updated_at)
+                VALUES(?, '{}', 0, ?)
+                """,
+                (user_id, now),
+            )
+        return {
+            "token": token,
+            "user": {"user_id": user_id, "account": acct, "display_name": dname},
+            "revision": 0,
+            "devices_count": 1,
+        }
+
+    def login_user(self, account: str, password: str, device_name: str = "") -> dict[str, Any] | None:
+        acct = account.strip().lower()
+        now = time.time()
+        with self.connect() as conn:
+            row = conn.execute("SELECT * FROM users WHERE account = ?", (acct,)).fetchone()
+            if not row:
+                return None
+            expected = self._hash_password(password, row["salt"])
+            if not secrets.compare_digest(expected, row["password_hash"]):
+                return None
+            token = secrets.token_urlsafe(32)
+            conn.execute(
+                """
+                INSERT INTO user_sessions(token, user_id, device_name, created_at, last_seen_at)
+                VALUES(?, ?, ?, ?, ?)
+                """,
+                (token, row["user_id"], device_name[:64], now, now),
+            )
+            st = conn.execute("SELECT revision FROM user_sync_state WHERE user_id = ?", (row["user_id"],)).fetchone()
+            cnt = conn.execute("SELECT COUNT(*) AS c FROM user_sessions WHERE user_id = ?", (row["user_id"],)).fetchone()["c"]
+        return {
+            "token": token,
+            "user": {"user_id": row["user_id"], "account": row["account"], "display_name": row["display_name"]},
+            "revision": int(st["revision"]) if st else 0,
+            "devices_count": int(cnt or 1),
+        }
+
+    def get_session_user(self, token: str) -> dict[str, Any] | None:
+        tok = (token or "").strip()
+        if not tok:
+            return None
+        now = time.time()
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT u.user_id, u.account, u.display_name, s.device_name
+                FROM user_sessions s
+                JOIN users u ON u.user_id = s.user_id
+                WHERE s.token = ?
+                """,
+                (tok,),
+            ).fetchone()
+            if not row:
+                return None
+            conn.execute("UPDATE user_sessions SET last_seen_at = ? WHERE token = ?", (now, tok))
+            cnt = conn.execute("SELECT COUNT(*) AS c FROM user_sessions WHERE user_id = ?", (row["user_id"],)).fetchone()["c"]
+        return {
+            "user_id": row["user_id"],
+            "account": row["account"],
+            "display_name": row["display_name"],
+            "devices_count": int(cnt or 1),
+        }
+
+    def logout_session(self, token: str) -> None:
+        tok = (token or "").strip()
+        if not tok:
+            return
+        with self.connect() as conn:
+            conn.execute("DELETE FROM user_sessions WHERE token = ?", (tok,))
+
+    def get_user_sync_state(self, user_id: str) -> dict[str, Any]:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT state_json, revision, updated_at FROM user_sync_state WHERE user_id = ?",
+                (user_id,),
+            ).fetchone()
+            cnt = conn.execute("SELECT COUNT(*) AS c FROM user_sessions WHERE user_id = ?", (user_id,)).fetchone()["c"]
+        if not row:
+            return {"state": {}, "revision": 0, "updated_at": 0.0, "devices_count": int(cnt or 1)}
+        try:
+            state = json.loads(row["state_json"] or "{}")
+        except Exception:
+            state = {}
+        return {
+            "state": state if isinstance(state, dict) else {},
+            "revision": int(row["revision"] or 0),
+            "updated_at": float(row["updated_at"] or 0.0),
+            "devices_count": int(cnt or 1),
+        }
+
+    def exchange_user_sync_state(self, user_id: str, incoming: dict[str, Any]) -> dict[str, Any]:
+        now = time.time()
+        deleted = incoming.get("deletedIds") if isinstance(incoming.get("deletedIds"), dict) else {}
+        del_bots = {str(x) for x in (deleted.get("bots") or [])}
+        del_groups = {str(x) for x in (deleted.get("groups") or [])}
+        del_threads = {str(x) for x in (deleted.get("threads") or [])}
+        del_stacks = {str(x) for x in (deleted.get("stacks") or [])}
+
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT state_json, revision FROM user_sync_state WHERE user_id = ?",
+                (user_id,),
+            ).fetchone()
+            base: dict[str, Any] = {}
+            rev = 0
+            if row:
+                rev = int(row["revision"] or 0)
+                try:
+                    parsed = json.loads(row["state_json"] or "{}")
+                    if isinstance(parsed, dict):
+                        base = parsed
+                except Exception:
+                    base = {}
+
+            merged_bots = self._merge_by_id(
+                base.get("bots") if isinstance(base.get("bots"), list) else [],
+                incoming.get("bots") if isinstance(incoming.get("bots"), list) else [],
+                del_bots,
+                cap=60,
+            )
+            merged_groups = self._merge_by_id(
+                base.get("groups") if isinstance(base.get("groups"), list) else [],
+                incoming.get("groups") if isinstance(incoming.get("groups"), list) else [],
+                del_groups,
+                cap=40,
+            )
+            merged_threads = self._merge_threads(
+                base.get("threads") if isinstance(base.get("threads"), list) else [],
+                incoming.get("threads") if isinstance(incoming.get("threads"), list) else [],
+                del_threads,
+            )
+            merged_memories = self._merge_by_id(
+                base.get("memories") if isinstance(base.get("memories"), list) else [],
+                incoming.get("memories") if isinstance(incoming.get("memories"), list) else [],
+                set(),
+                cap=400,
+            )
+            merged_stacks = self._merge_by_id(
+                base.get("stacks") if isinstance(base.get("stacks"), list) else [],
+                incoming.get("stacks") if isinstance(incoming.get("stacks"), list) else [],
+                del_stacks,
+                cap=80,
+            )
+            merged_plugins = self._merge_by_id(
+                base.get("plugins") if isinstance(base.get("plugins"), list) else [],
+                incoming.get("plugins") if isinstance(incoming.get("plugins"), list) else [],
+                set(),
+                cap=80,
+            )
+            merged_autos = self._merge_by_id(
+                base.get("automations") if isinstance(base.get("automations"), list) else [],
+                incoming.get("automations") if isinstance(incoming.get("automations"), list) else [],
+                set(),
+                cap=60,
+            )
+            base_bp = base.get("botPlugins") if isinstance(base.get("botPlugins"), dict) else {}
+            inc_bp = incoming.get("botPlugins") if isinstance(incoming.get("botPlugins"), dict) else {}
+            merged_bp = {**base_bp, **inc_bp}
+
+            merged_state = {
+                "bots": merged_bots,
+                "groups": merged_groups,
+                "threads": merged_threads,
+                "memories": merged_memories,
+                "stacks": merged_stacks,
+                "plugins": merged_plugins,
+                "botPlugins": merged_bp,
+                "automations": merged_autos,
+                "activeBotId": incoming.get("activeBotId") or base.get("activeBotId") or "",
+            }
+            new_rev = rev + 1
+            conn.execute(
+                """
+                INSERT INTO user_sync_state(user_id, state_json, revision, updated_at)
+                VALUES(?, ?, ?, ?)
+                ON CONFLICT(user_id) DO UPDATE SET
+                    state_json = excluded.state_json,
+                    revision = excluded.revision,
+                    updated_at = excluded.updated_at
+                """,
+                (user_id, json.dumps(merged_state, ensure_ascii=False), new_rev, now),
+            )
+            cnt = conn.execute("SELECT COUNT(*) AS c FROM user_sessions WHERE user_id = ?", (user_id,)).fetchone()["c"]
+        return {
+            "state": merged_state,
+            "revision": new_rev,
+            "updated_at": now,
+            "devices_count": int(cnt or 1),
+        }

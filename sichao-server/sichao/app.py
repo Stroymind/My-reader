@@ -3,15 +3,19 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import html
 import json
 import os
+import secrets
 import time
 import uuid
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
 from .agent import TOOL_REGISTRY, inspect_external_plugin, run_byok_agent_loop
@@ -89,6 +93,135 @@ class ByokChatReq(BaseModel):
 
 class KbSyncReq(BaseModel):
     items: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class ShareDeckReq(BaseModel):
+    title: str = Field(..., min_length=1, max_length=120)
+    subtitle: str = ""
+    kind: str = "stack"
+    items: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class AuthRegisterReq(BaseModel):
+    account: str = Field(..., min_length=3, max_length=80)
+    password: str = Field(..., min_length=6, max_length=128)
+    display_name: str = ""
+    device_name: str = ""
+
+
+class AuthLoginReq(BaseModel):
+    account: str = Field(..., min_length=3, max_length=80)
+    password: str = Field(..., min_length=1, max_length=128)
+    device_name: str = ""
+
+
+class SyncExchangeReq(BaseModel):
+    bots: list[dict[str, Any]] = Field(default_factory=list)
+    groups: list[dict[str, Any]] = Field(default_factory=list)
+    threads: list[dict[str, Any]] = Field(default_factory=list)
+    memories: list[dict[str, Any]] = Field(default_factory=list)
+    stacks: list[dict[str, Any]] = Field(default_factory=list)
+    plugins: list[dict[str, Any]] = Field(default_factory=list)
+    botPlugins: dict[str, Any] = Field(default_factory=dict)
+    automations: list[dict[str, Any]] = Field(default_factory=list)
+    activeBotId: str = ""
+    deletedIds: dict[str, list[str]] = Field(default_factory=dict)
+
+
+_WEB_ALLOWED_FILES = {
+    "index.html", "app.css", "app.js", "db.js", "engines.js", "formats.js",
+    "book-finder.js", "sichao.js", "phone-use.js", "agent-surface.js",
+    "bots.js", "connectors.js", "memory.js", "sync.js", "importer.js",
+    "settings.js", "bilingual.js", "epub-repair.js", "knowledge.js",
+    "ai.js", "workspace.js", "stacks.js", "cosmos.js", "command.js",
+    "sw.js", "manifest.webmanifest",
+}
+_WEB_ALLOWED_DIRS = ("fonts", "icons", "vendor")
+_WEB_ALLOWED_EXTS = {
+    ".html", ".css", ".js", ".mjs", ".json", ".webmanifest",
+    ".svg", ".png", ".jpg", ".jpeg", ".webp", ".woff2", ".woff", ".ttf", ".otf", ".bcmap", ".pfb",
+}
+_ZONE_WEB_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _render_shared_article_html(rec: dict[str, Any]) -> str:
+    title = html.escape(str(rec.get("title") or "Zone 阅读卡片"))
+    subtitle = html.escape(str(rec.get("subtitle") or "来自 Zone 分享的精选卡片堆，点开即可直接阅读"))
+    payload = rec.get("payload") or {}
+    items = payload.get("items") if isinstance(payload.get("items"), list) else []
+    views = int(rec.get("views") or 1)
+    cards_html = []
+    for idx, it in enumerate(items[:24]):
+        t = html.escape(str(it.get("title") or f"卡片 {idx + 1}"))
+        au = html.escape(str(it.get("author") or ""))
+        tp = html.escape(str(it.get("type") or "").upper())
+        pct = int(round(float(it.get("progress") or 0) * 100))
+        meta = " · ".join([x for x in [au, tp, f"已读 {pct}%" if pct > 0 else ""] if x])
+        raw_content = str(it.get("content") or it.get("excerpt") or "").strip()
+        paras = [f"<p>{html.escape(p.strip())}</p>" for p in raw_content.splitlines() if p.strip()][:60]
+        notes = it.get("notes") if isinstance(it.get("notes"), list) else []
+        notes_html = "".join(
+            f"<blockquote>{html.escape(str(n.get('quote') or ''))}"
+            + (f"<small>{html.escape(str(n.get('body') or ''))}</small>" if n.get("body") else "")
+            + "</blockquote>"
+            for n in notes[:12]
+            if isinstance(n, dict) and (n.get("quote") or n.get("body"))
+        )
+        body_inner = "".join(paras) + notes_html
+        if not body_inner:
+            body_inner = "<p class='muted'>（该书目为本地原书，分享者附带了书单索引，可在 Zone 中继续深读）</p>"
+        opened = " open" if (len(items) == 1 or idx == 0) else ""
+        cards_html.append(
+            f"<details class='card'{opened}><summary>"
+            f"<span class='idx'>{idx + 1:02d}</span>"
+            f"<span class='head'><strong>{t}</strong>"
+            + (f"<em>{meta}</em>" if meta else "")
+            + "</span><span class='chev'>›</span></summary>"
+            f"<div class='article'>{body_inner}</div></details>"
+        )
+    body_all = "".join(cards_html) or "<p class='muted'>暂无内容</p>"
+    return f"""<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>{title} · Zone</title>
+<meta property="og:title" content="{title}">
+<meta property="og:description" content="{subtitle}">
+<meta name="description" content="{subtitle}">
+<style>
+:root{{--bg:#f8f6f1;--card:#ffffff;--fg:#1d1d1f;--muted:#6e6e73;--line:rgba(0,0,0,.08);--accent:#007aff}}
+@media(prefers-color-scheme:dark){{:root{{--bg:#141416;--card:#1e1e21;--fg:#f2f2f7;--muted:#98989f;--line:rgba(255,255,255,.1);--accent:#0a84ff}}}}
+*{{box-sizing:border-box}}body{{margin:0;background:var(--bg);color:var(--fg);font:16px/1.85 -apple-system,BlinkMacSystemFont,"PingFang SC","Noto Serif SC","Songti SC",serif;-webkit-font-smoothing:antialiased}}
+.prog{{position:fixed;top:0;left:0;height:3px;width:0;background:var(--accent);z-index:20;transition:width .1s}}
+main{{max-width:680px;margin:0 auto;padding:28px 18px 72px}}
+.kicker{{display:inline-flex;align-items:center;gap:6px;padding:4px 11px;border-radius:999px;background:var(--card);box-shadow:0 0 0 .5px var(--line);font:500 12px/1 -apple-system,sans-serif;color:var(--muted)}}
+h1{{margin:14px 0 8px;font:700 26px/1.32 -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif;letter-spacing:-.02em}}
+.sub{{margin:0 0 24px;font:400 14px/1.6 -apple-system,sans-serif;color:var(--muted)}}
+.card{{margin:0 0 14px;border-radius:20px;background:var(--card);box-shadow:0 0 0 .5px var(--line),0 6px 24px rgba(0,0,0,.04);overflow:hidden}}
+.card summary{{list-style:none;display:flex;align-items:center;gap:12px;padding:16px 18px;cursor:pointer}}
+.card summary::-webkit-details-marker{{display:none}}
+.idx{{flex:none;font:600 12px/1 ui-monospace,monospace;color:var(--muted);padding:6px 8px;border-radius:9px;background:var(--bg)}}
+.head{{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}}
+.head strong{{font:650 16px/1.35 -apple-system,sans-serif;color:var(--fg)}}
+.head em{{font:400 12.5px/1.3 -apple-system,sans-serif;color:var(--muted)}}
+.chev{{font:600 20px/1 sans-serif;color:var(--muted);transition:transform .2s}}
+.card[open] .chev{{transform:rotate(90deg)}}
+.article{{padding:4px 20px 22px;border-top:.5px solid var(--line)}}
+.article p{{margin:14px 0;text-align:justify}}
+.article blockquote{{margin:16px 0;padding:10px 14px;border-left:3px solid var(--accent);background:var(--bg);border-radius:0 12px 12px 0;font-size:15px}}
+.article blockquote small{{display:block;margin-top:6px;color:var(--muted);font-family:-apple-system,sans-serif}}
+.muted{{color:var(--muted);font-family:-apple-system,sans-serif;font-size:14px}}
+footer{{margin-top:36px;text-align:center;font:400 12.5px/1.6 -apple-system,sans-serif;color:var(--muted)}}
+</style></head><body>
+<div class="prog" id="prog"></div>
+<main>
+  <span class="kicker">Zone · 卡片堆阅读</span>
+  <h1>{title}</h1>
+  <p class="sub">{subtitle} · 共 {len(items)} 项 · 阅读 {views}</p>
+  {body_all}
+  <footer>由 Zone 生成 · 微信 / QQ / 浏览器直接打开即读</footer>
+</main>
+<script>window.addEventListener('scroll',()=>{{const h=document.documentElement;const p=(h.scrollTop/Math.max(1,h.scrollHeight-h.clientHeight))*100;document.getElementById('prog').style.width=Math.min(100,p)+'%';}},{{passive:true}});</script>
+</body></html>"""
 
 
 def _space_hash(request: Request) -> str:
@@ -238,7 +371,7 @@ def create_app(db_path: str | None = None, enable_scheduler: bool = True) -> Fas
     def health() -> dict[str, Any]:
         return {
             "status": "ok",
-            "version": "2.4.0",
+            "version": "2.6.0",
             "byok_mode": True,
             "platform_token_used": False,
             "agent_tools": sorted(TOOL_REGISTRY.keys()),
@@ -247,8 +380,141 @@ def create_app(db_path: str | None = None, enable_scheduler: bool = True) -> Fas
             "byok_chat_proxy": True,
             "cloud_kb": True,
             "app_connectors": True,
+            "share_article": True,
+            "account_sync": True,
+            "web_client": (_ZONE_WEB_ROOT / "index.html").is_file(),
             "runtime_paused": runtime.paused,
         }
+
+    def _extract_auth_token(request: Request) -> str:
+        auth = (request.headers.get("authorization") or "").strip()
+        if auth.lower().startswith("bearer "):
+            return auth[7:].strip()
+        return (request.headers.get("x-zone-token") or "").strip()
+
+    def _require_auth_user(request: Request) -> dict[str, Any]:
+        tok = _extract_auth_token(request)
+        user = db.get_session_user(tok)
+        if not user:
+            raise HTTPException(status_code=401, detail="登录已失效，请重新登录 Zone 账号")
+        return user
+
+    @app.post("/api/auth/register")
+    def auth_register(req: AuthRegisterReq) -> dict[str, Any]:
+        acct = req.account.strip().lower()
+        if len(acct) < 3 or any(ch.isspace() for ch in acct):
+            raise HTTPException(status_code=400, detail="账号至少 3 个字符且不能包含空格")
+        if len(req.password) < 6:
+            raise HTTPException(status_code=400, detail="密码至少 6 位")
+        try:
+            res = db.register_user(acct, req.password, req.display_name, req.device_name)
+        except ValueError:
+            raise HTTPException(status_code=409, detail="该账号已注册，请直接登录")
+        return {"ok": True, **res}
+
+    @app.post("/api/auth/login")
+    def auth_login(req: AuthLoginReq) -> dict[str, Any]:
+        res = db.login_user(req.account, req.password, req.device_name)
+        if not res:
+            raise HTTPException(status_code=401, detail="账号或密码不正确")
+        return {"ok": True, **res}
+
+    @app.post("/api/auth/logout")
+    def auth_logout(request: Request) -> dict[str, Any]:
+        tok = _extract_auth_token(request)
+        if tok:
+            db.logout_session(tok)
+        return {"ok": True}
+
+    @app.get("/api/auth/me")
+    def auth_me(request: Request) -> dict[str, Any]:
+        user = _require_auth_user(request)
+        st = db.get_user_sync_state(user["user_id"])
+        return {
+            "ok": True,
+            "user": {
+                "user_id": user["user_id"],
+                "account": user["account"],
+                "display_name": user["display_name"],
+            },
+            "devices_count": st["devices_count"],
+            "revision": st["revision"],
+            "updated_at": st["updated_at"],
+        }
+
+    @app.post("/api/sync/exchange")
+    def sync_exchange(req: SyncExchangeReq, request: Request) -> dict[str, Any]:
+        user = _require_auth_user(request)
+        res = db.exchange_user_sync_state(user["user_id"], req.model_dump())
+        return {"ok": True, **res}
+
+    @app.get("/api/sync/state")
+    def sync_state(request: Request, since_revision: int = -1) -> dict[str, Any]:
+        user = _require_auth_user(request)
+        st = db.get_user_sync_state(user["user_id"])
+        if since_revision >= 0 and st["revision"] <= since_revision:
+            return {
+                "ok": True,
+                "changed": False,
+                "revision": st["revision"],
+                "updated_at": st["updated_at"],
+                "devices_count": st["devices_count"],
+            }
+        return {"ok": True, "changed": True, **st}
+
+    @app.get("/web")
+    def zone_web_redirect() -> RedirectResponse:
+        return RedirectResponse(url="/web/", status_code=302)
+
+    @app.get("/web/{asset_path:path}")
+    def zone_web_asset(asset_path: str) -> FileResponse:
+        rel = (asset_path or "").strip().lstrip("/") or "index.html"
+        parts = Path(rel).parts
+        if not parts or ".." in parts or any(p.startswith(".") for p in parts):
+            raise HTTPException(status_code=404, detail="Not found")
+        if len(parts) == 1:
+            if parts[0] not in _WEB_ALLOWED_FILES:
+                raise HTTPException(status_code=404, detail="Not found")
+        else:
+            if parts[0] not in _WEB_ALLOWED_DIRS:
+                raise HTTPException(status_code=404, detail="Not found")
+        target = (_ZONE_WEB_ROOT / rel).resolve()
+        try:
+            target.relative_to(_ZONE_WEB_ROOT.resolve())
+        except Exception:
+            raise HTTPException(status_code=404, detail="Not found")
+        if not target.is_file() or target.suffix.lower() not in _WEB_ALLOWED_EXTS:
+            raise HTTPException(status_code=404, detail="Not found")
+        headers = {"Cache-Control": "no-cache"} if target.suffix.lower() in {".html", ".js", ".mjs", ".css"} else {}
+        return FileResponse(target, headers=headers)
+
+    @app.post("/api/share/create")
+    def share_create(req: ShareDeckReq, request: Request) -> dict[str, Any]:
+        """生成公开可阅读的卡片堆/文章分享页（微信/QQ 点开即像公众号文章一样直接阅读）。"""
+        sid = secrets.token_urlsafe(6).replace("-", "").replace("_", "")[:8]
+        slim_items = []
+        for it in req.items[:24]:
+            if not isinstance(it, dict):
+                continue
+            slim_items.append({
+                "title": str(it.get("title") or "未命名")[:120],
+                "author": str(it.get("author") or "")[:80],
+                "type": str(it.get("type") or "")[:12],
+                "progress": float(it.get("progress") or 0),
+                "excerpt": str(it.get("excerpt") or "")[:2000],
+                "content": str(it.get("content") or "")[:16000],
+                "notes": (it.get("notes") if isinstance(it.get("notes"), list) else [])[:12],
+            })
+        db.create_shared_deck(sid, req.title, req.subtitle, req.kind, {"items": slim_items})
+        base_url = str(request.base_url).rstrip("/")
+        return {"ok": True, "share_id": sid, "url": f"{base_url}/s/{sid}"}
+
+    @app.get("/s/{share_id}", response_class=HTMLResponse)
+    def share_view(share_id: str) -> HTMLResponse:
+        rec = db.get_shared_deck(share_id)
+        if not rec:
+            return HTMLResponse("<h1>分享链接已失效或不存在</h1>", status_code=404)
+        return HTMLResponse(_render_shared_article_html(rec))
 
     @app.post("/api/connectors/verify")
     async def connectors_verify(req: ConnectorVerifyReq) -> dict[str, Any]:

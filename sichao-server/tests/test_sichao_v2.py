@@ -285,3 +285,104 @@ def test_connectors_verify_and_array_429_error_extraction(tmp_path: Path) -> Non
     r_ok = client.post("/api/connectors/verify", json={"connector_id": "feishu", "token": "https://open.feishu.cn/open-apis/bot/v2/hook/demo-token"})
     assert r_ok.status_code == 200 and r_ok.json()["ok"] is True
     assert any(t["name"] == "feishu_send_message" for t in r_ok.json()["tools"])
+
+    # /api/share/create & /s/{id} WeChat/QQ article-style Card Stack share page
+    r_sh = client.post(
+        "/api/share/create",
+        json={
+            "title": "历史与复杂系统卡片堆",
+            "subtitle": "3 本精选书目",
+            "kind": "stack",
+            "items": [
+                {"title": "大分流 <script>alert(1)</script>", "author": "彭慕兰", "type": "epub", "progress": 0.45, "content": "现代世界经济的形成。\n\n为什么欧洲与中国走上不同道路？"},
+                {"title": "规模", "author": "杰弗里·韦斯特", "type": "epub", "progress": 0.1, "notes": [{"quote": "城市像生物一样遵循超线性缩放律", "body": "核心洞察"}]},
+            ],
+        },
+    )
+    assert r_sh.status_code == 200 and r_sh.json()["ok"] is True
+    sid = r_sh.json()["share_id"]
+    page_res = client.get(f"/s/{sid}")
+    assert page_res.status_code == 200
+    assert "历史与复杂系统卡片堆" in page_res.text
+    assert "<script>alert(1)</script>" not in page_res.text  # XSS escaped
+    assert "城市像生物一样遵循超线性缩放律" in page_res.text
+
+
+def test_account_auth_cross_device_sync_and_web_client(tmp_path: Path) -> None:
+    app = create_app(db_path=str(tmp_path / "sync.db"), enable_scheduler=False)
+    client = TestClient(app)
+
+    health = client.get("/api/health").json()
+    assert health["version"] == "2.6.0"
+    assert health["account_sync"] is True
+    assert health["web_client"] is True
+
+    # PC registers account and pushes a newly downloaded/created Bot + message
+    reg = client.post(
+        "/api/auth/register",
+        json={"account": "alice@zone.dev", "password": "secret-password", "display_name": "Alice", "device_name": "PC Chrome"},
+    )
+    assert reg.status_code == 200 and reg.json()["ok"] is True
+    pc_token = reg.json()["token"]
+    pc_h = {"Authorization": f"Bearer {pc_token}"}
+
+    # Duplicate register rejected
+    dup = client.post("/api/auth/register", json={"account": "alice@zone.dev", "password": "secret-password"})
+    assert dup.status_code == 409
+
+    # PC syncs a newly created Bot ("小土豆") + chat message
+    ex1 = client.post(
+        "/api/sync/exchange",
+        headers=pc_h,
+        json={
+            "bots": [{"id": "bot-pc-1", "name": "电脑小土豆", "shape": "potato", "accent": "#FF9500", "updatedAt": 1000}],
+            "threads": [{
+                "id": "th-bot-pc-1",
+                "botId": "bot-pc-1",
+                "title": "电脑小土豆",
+                "updatedAt": 1005,
+                "messages": [{"role": "user", "content": "我在电脑端发的第一条消息", "at": 1001}],
+            }],
+        },
+    )
+    assert ex1.status_code == 200 and ex1.json()["revision"] == 1
+
+    # Phone logs into the SAME account (wrong password rejected first)
+    bad = client.post("/api/auth/login", json={"account": "alice@zone.dev", "password": "wrong"})
+    assert bad.status_code == 401
+    ph_login = client.post("/api/auth/login", json={"account": "alice@zone.dev", "password": "secret-password", "device_name": "Android Zone"})
+    assert ph_login.status_code == 200 and ph_login.json()["devices_count"] == 2
+    ph_h = {"Authorization": f"Bearer {ph_login.json()['token']}"}
+
+    # Phone exchanges its local state -> receives PC Bot + PC message AND adds Phone reply
+    ex2 = client.post(
+        "/api/sync/exchange",
+        headers=ph_h,
+        json={
+            "bots": [{"id": "bot-phone-2", "name": "手机紫薯", "shape": "triangle", "accent": "#7E67F8", "updatedAt": 1100}],
+            "threads": [{
+                "id": "th-phone-1",
+                "botId": "bot-pc-1",
+                "title": "电脑小土豆",
+                "updatedAt": 1105,
+                "messages": [{"role": "user", "content": "手机端同步接力回复", "at": 1102}],
+            }],
+        },
+    )
+    assert ex2.status_code == 200 and ex2.json()["revision"] == 2
+    merged = ex2.json()["state"]
+    assert {b["id"] for b in merged["bots"]} == {"bot-pc-1", "bot-phone-2"}
+    pc_thread = next(t for t in merged["threads"] if t["botId"] == "bot-pc-1")
+    assert [m["content"] for m in pc_thread["messages"]] == ["我在电脑端发的第一条消息", "手机端同步接力回复"]
+
+    # PC polls delta with since_revision=1 -> sees revision=2; polling since_revision=2 -> changed=False
+    st_new = client.get("/api/sync/state?since_revision=1", headers=pc_h).json()
+    assert st_new["changed"] is True and st_new["revision"] == 2
+    st_same = client.get("/api/sync/state?since_revision=2", headers=pc_h).json()
+    assert st_same["changed"] is False
+
+    # PC Web client allowlist serving + traversal protection
+    w_idx = client.get("/web/")
+    assert w_idx.status_code == 200 and "Zone" in w_idx.text
+    assert client.get("/web/sichao-server/sichao/app.py").status_code == 404
+    assert client.get("/web/render.yaml").status_code == 404

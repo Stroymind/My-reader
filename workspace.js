@@ -1,5 +1,7 @@
 // 书库之外的工作台：知识列表、笔记编辑、图谱、AI 面板。
 import { AI_PRESETS, aiConfigured, askText, clearAiKey, explainText, getAiConfig, saveAiConfig, testAi } from './ai.js';
+import { getActiveBot, renderBotSvg, triggerBotMood } from './bots.js';
+import { importMemoryText } from './memory.js';
 import {
   createNote, deleteNote, extractKeyPoints, linkNotes, listLinks, listNotes,
   makeTitle, parseTags, saveNote, suggestTags, unlinkPair
@@ -824,31 +826,43 @@ export function openAssistant(opts) {
   const quote = String(opts?.quote || '').trim();
   if (!quote) { api.toast('没有可以解释的文字'); return; }
   const token = ++aiToken;
+  const bot = getActiveBot();
   state.ai = { ...opts, quote, answer: '', points: extractKeyPoints(quote), token };
-  $('#ai-title').textContent = 'AI 解释';
-  $('#ai-quote').textContent = quote.length > 280 ? quote.slice(0, 280) + '…' : quote;
+  $('#ai-title').textContent = `${bot?.name || 'Zone'} · AI 解读`;
+  const sub = $('#ai-sub');
+  if (sub) sub.textContent = opts?.context ? String(opts.context).slice(0, 34) : '选中段落 · 深度伴读';
+  const av = $('#ai-bot-av');
+  if (av && bot) av.innerHTML = renderBotSvg(bot.shape, bot.accent, bot.id);
+  $('#ai-quote').textContent = quote.length > 260 ? quote.slice(0, 260) + '…' : quote;
   const body = $('#ai-body');
   body.replaceChildren();
   const list = h('ul', 'points');
   for (const point of state.ai.points) list.append(h('li', '', point));
   if (!aiConfigured()) {
-    body.append(h('p', 'ai-banner', '还没有配置模型。下面是这台设备直接抽出的要点，不需要密钥，也不会把文字发出去。'));
-    const open = h('button', 'btn ghost', '打开 AI 设置');
+    body.append(h('p', 'ai-banner', '尚未配置 AI 密钥，以下是离线提炼的要点。配置你自己的 API Key 即可获得深度伴读解析。'));
+    const open = h('button', 'ai-foot-pill primary', '配置 API Key');
     open.type = 'button';
     open.onclick = () => { mask.classList.add('hidden'); openAiSettings(); };
     body.append(open);
   } else {
-    const wait = h('p', 'ai-wait', '正在请模型解释…');
-    body.append(wait);
+    const skel = h('div', 'ai-skel');
+    skel.innerHTML = '<i></i><i></i><i></i>';
+    body.append(skel);
+    mask.classList.add('thinking');
     explainText(quote, opts.context || '').then(text => {
       if (token !== aiToken) return;
-      wait.remove();
+      mask.classList.remove('thinking');
+      skel.remove();
       state.ai.answer = text;
       const ans = h('div', 'ai-answer', text);
       body.prepend(ans);
+      const svg = $('#ai-bot-av .bot-glyph');
+      if (svg) triggerBotMood(svg, 'laugh');
+      try { navigator.vibrate?.([10, 24, 12]); } catch {}
     }).catch(err => {
       if (token !== aiToken) return;
-      wait.textContent = '模型没有完成解释：' + (err.message || err) + '。下面仍是本地要点。';
+      mask.classList.remove('thinking');
+      skel.replaceWith(h('p', 'ai-wait', '解读暂未完成：' + (err.message || err)));
     });
   }
   if (state.ai.points.length) {
@@ -1044,6 +1058,42 @@ export function initWorkspace(nextApi) {
   $('#btn-ai-settings')?.addEventListener('click', () => openAiSettings());
   $('#ai-close')?.addEventListener('click', () => dismissAssistant());
   $('#ai-save')?.addEventListener('click', () => saveAssistantNote());
+  $('#ai-copy')?.addEventListener('click', async () => {
+    const txt = [state.ai?.quote ? `「${state.ai.quote}」` : '', state.ai?.answer || (state.ai?.points || []).join('\n')].filter(Boolean).join('\n\n');
+    if (!txt) return;
+    await api.copyText?.(txt);
+    api.toast('已复制解读内容');
+  });
+  $('#ai-to-kb')?.addEventListener('click', () => {
+    const txt = [state.ai?.quote ? `摘录：${state.ai.quote.slice(0, 140)}` : '', state.ai?.answer || (state.ai?.points || []).join('；')].filter(Boolean).join('\n');
+    if (!txt) return;
+    importMemoryText(txt.slice(0, 560), { source: state.ai?.bookTitle ? `《${state.ai.bookTitle}》AI 解读` : 'AI 解读', scope: 'global', kind: 'memory' });
+    api.toast('已存入云端知识库');
+  });
+  $('#ai-quick-chips')?.addEventListener('click', e => {
+    const btn = e.target.closest('[data-ai-q]');
+    if (!btn) return;
+    const qInp = $('#ai-q');
+    if (qInp) {
+      qInp.value = btn.dataset.aiQ || '';
+      $('#ai-ask')?.requestSubmit();
+    }
+  });
+  // 下滑 Liquid-Glass AI 解读顶条关闭
+  (() => {
+    const sheet = $('#ai-mask .ai-glass-sheet');
+    if (!sheet) return;
+    let sy = 0, active = false;
+    sheet.addEventListener('pointerdown', e => {
+      if (!e.target.closest('.ai-glass-grip, .ai-glass-head')) return;
+      sy = e.clientY; active = true;
+    }, { passive: true });
+    sheet.addEventListener('pointerup', e => {
+      if (!active) return;
+      active = false;
+      if (e.clientY - sy > 64) dismissAssistant();
+    }, { passive: true });
+  })();
   $('#ai-ask')?.addEventListener('submit', async e => {
     e.preventDefault();
     const question = $('#ai-q').value.trim();

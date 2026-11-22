@@ -48,6 +48,28 @@ public class ZoneShortcutPlugin extends Plugin {
     }
 
     @PluginMethod
+    public void shareLink(PluginCall call) {
+        String title = call.getString("title", "Zone 分享");
+        String text = call.getString("text", "");
+        String url = call.getString("url", "");
+        String body = (text != null && !text.isEmpty() ? text + "\n" : "") + (url != null ? url : "");
+        try {
+            Intent send = new Intent(Intent.ACTION_SEND);
+            send.setType("text/plain");
+            send.putExtra(Intent.EXTRA_SUBJECT, title);
+            send.putExtra(Intent.EXTRA_TEXT, body.trim());
+            Intent chooser = Intent.createChooser(send, "分享到微信、QQ 或其他应用");
+            chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            getContext().startActivity(chooser);
+            JSObject ret = new JSObject();
+            ret.put("ok", true);
+            call.resolve(ret);
+        } catch (Exception e) {
+            call.reject("调用系统分享失败: " + e.getMessage());
+        }
+    }
+
+    @PluginMethod
     public void pinShortcut(PluginCall call) {
         Context ctx = getContext();
         String id = call.getString("id", "zone-shortcut-" + System.currentTimeMillis());

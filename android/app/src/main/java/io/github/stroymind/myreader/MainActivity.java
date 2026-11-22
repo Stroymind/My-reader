@@ -44,6 +44,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(ZoneVoicePlugin.class);
         registerPlugin(ZonePhoneUsePlugin.class);
         registerPlugin(ZoneShortcutPlugin.class);
+        registerPlugin(ZoneEdgeDockPlugin.class);
         captureDeepLink(getIntent(), false);
         super.onCreate(savedInstanceState);
         WebView web = getBridge() != null ? getBridge().getWebView() : null;

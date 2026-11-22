@@ -605,9 +605,9 @@ try {
   await tap('.stack-more-btn');
   await page.waitForFunction(() => document.querySelector('.stack-rename')?.getClientRects().length > 0);
   await page.click('.stack-rename');
-  await page.waitForFunction(() => !document.querySelector('#stack-mask').classList.contains('hidden'));
-  await page.$eval('#stack-name', el => { el.value = '研究 Research 2026'; });
-  await page.click('#stack-save');
+  await page.waitForFunction(() => !!document.querySelector('.stack-inline-input') && document.querySelector('#stack-mask').classList.contains('hidden'));
+  await page.$eval('.stack-inline-input', el => { el.value = '研究 Research 2026'; });
+  await page.keyboard.press('Enter');
   await page.waitForFunction(() => document.querySelector('.stack-name')?.textContent === '研究 Research 2026');
   await tap('.row-wrap[data-anchor="book:z-d"] .row-out');
   await page.waitForFunction(() => document.querySelectorAll('.stack-items .book').length === 3 && !!document.querySelector('#grid > .row-wrap .book[data-id="z-d"]'));
@@ -1306,6 +1306,88 @@ try {
   await page.evaluate(() => window.__app.handleBack());
   await page.waitForFunction(() => document.querySelector('#sichao-mask').classList.contains('hidden'));
   report.checks.push('思潮 × Zone end-to-end judgment loop (event facts -> independent A~E verdict -> AI partner unlock -> sync to 星海 -> archive) verified');
+
+  // Zone 5.0 专项闭环验证：单胶囊合一 + 卡片/堆内左滑删除 + 右缘吸附/放回 + Bot 主动发送阅读卡片/堆 + Liquid-Glass AI 解读 + 我的 Zone 账号登录同步入口
+  await page.setViewport({ width: 390, height: 844 });
+  await page.evaluate(async () => {
+    const w = await import('./workspace.js');
+    w.showPane('shelf');
+    await window.__app.renderLibrary();
+  });
+  await openIntent();
+  const omniCheck = await page.evaluate(() => ({
+    hasCapsule: !!document.querySelector('#intent-sheet .omni-capsule'),
+    hasImport: !!document.querySelector('#intent-sheet .omni-capsule #btn-import'),
+    hasSearch: !!document.querySelector('#intent-sheet .omni-capsule #btn-intent-search'),
+    hasMic: !!document.querySelector('#intent-sheet .omni-capsule #intent-mic')
+  }));
+  assert.deepEqual(omniCheck, { hasCapsule: true, hasImport: true, hasSearch: true, hasMic: true }, 'Omni-capsule merges import + search + voice cleanly');
+  await page.screenshot({ path: path.resolve(root, 'test-results/zone-5-omni-intent.png') });
+  await page.evaluate(() => window.__app.handleBack());
+
+  // 卡片左滑删除胶囊（单卡 + 堆内卡）+ 右缘吸附与放回
+  const v5CardCheck = await page.evaluate(async () => {
+    const books = await window.__app.db.all('books');
+    const stacks = window.__app.stacks.list();
+    let sid = stacks[0]?.id;
+    if (!sid && books.length >= 2) {
+      const merged = await window.__app.mergeShelfTargets({ kind: 'book', id: books[0].id }, { kind: 'book', id: books[1].id });
+      sid = merged?.id;
+    }
+    const singleDel = !!document.querySelector('#grid > .row-wrap .swipe-pill.del');
+    await window.__app.dockToRightEdge({ kind: 'stack', id: sid || books[0].id, title: '研究卡片堆', subtitle: '2 本' });
+    const dockVisible = !document.querySelector('#zone-edge-dock').classList.contains('hidden');
+    return { singleDel, dockVisible, sid };
+  });
+  assert.equal(v5CardCheck.dockVisible, true, 'Right-edge dock handle becomes visible when docked');
+  await page.screenshot({ path: path.resolve(root, 'test-results/zone-5-edge-dock.png') });
+  await page.evaluate(() => window.__app.undockFromRightEdge(true));
+  assert.equal(await page.$eval('#zone-edge-dock', el => el.classList.contains('hidden')), true, 'Undocking hides right-edge handle cleanly');
+
+  // Liquid-Glass AI 解读抽屉视觉与结构检查
+  await page.evaluate(async () => {
+    const w = await import('./workspace.js');
+    w.openAssistant({ quote: '现代世界经济的形成，往往取决于看似微小的地理与制度偶然性。', title: '大分流' });
+  });
+  await page.waitForFunction(() => !document.querySelector('#ai-mask').classList.contains('hidden'));
+  const aiGlass = await page.evaluate(() => ({
+    isGlass: document.querySelector('#ai-mask')?.classList.contains('ai-glass-mask'),
+    hasBotAv: !!document.querySelector('#ai-bot-av svg'),
+    chips: document.querySelectorAll('#ai-quick-chips .ai-q-chip').length,
+    hasToKb: !!document.querySelector('#ai-to-kb')
+  }));
+  assert.deepEqual(aiGlass, { isGlass: true, hasBotAv: true, chips: 3, hasToKb: true }, 'Liquid-Glass AI Explain sheet renders with Bot avatar, quick chips & Save-to-KB');
+  await page.screenshot({ path: path.resolve(root, 'test-results/zone-5-ai-glass.png') });
+  await page.click('#ai-close');
+  await page.waitForFunction(() => document.querySelector('#ai-mask').classList.contains('hidden'));
+
+  // Bot 主动发送阅读卡片 / 卡片堆卡片检查
+  await page.evaluate(async () => {
+    const bots = await import('./bots.js');
+    window.__app.openBotConversation(bots.getPrimaryBot());
+  });
+  await page.waitForFunction(() => !document.querySelector('#zone-chat-modal').classList.contains('hidden'));
+  await page.type('#zone-chat-input', '我想阅读，把卡片堆和书卡发给我');
+  await page.click('#zone-chat-send');
+  await page.waitForFunction(() => document.querySelectorAll('#zone-chat-messages .chat-reading-card').length >= 1);
+  await page.screenshot({ path: path.resolve(root, 'test-results/zone-5-bot-reading-card.png') });
+  await page.click('#btn-chat-back');
+
+  // 我的 Zone — 云端账号登录与手机↔电脑跨端同步界面检查
+  await page.evaluate(() => window.__app.openProfileSheet());
+  await page.waitForFunction(() => !document.querySelector('#zone-profile-mask').classList.contains('hidden'));
+  await page.click('[data-p-act="toggle-auth"]');
+  await page.waitForSelector('#prof-auth-form');
+  const acctUi = await page.evaluate(() => ({
+    hasForm: !!document.querySelector('#prof-auth-form'),
+    hasLoginTab: !!document.querySelector('[data-auth-tab="login"]'),
+    hasRegTab: !!document.querySelector('[data-auth-tab="register"]'),
+    hasV5: (document.querySelector('#zone-profile-mask')?.textContent || '').includes('Zone 5.0')
+  }));
+  assert.deepEqual(acctUi, { hasForm: true, hasLoginTab: true, hasRegTab: true, hasV5: true }, 'Profile sheet exposes Zone 5.0 cloud account login & cross-device sync');
+  await page.screenshot({ path: path.resolve(root, 'test-results/zone-5-profile-account.png') });
+  await page.click('[data-p-act="close"]');
+  report.checks.push('Zone 5.0 features verified: unified omni-capsule, inline stack rename (zero popup), swipe-left delete, right-edge dock/undock, Liquid-Glass AI Explain, Bot reading/stack cards, and Profile Cloud Account Login UI');
 
   for (const width of [390, 1100]) {
     await page.setViewport({ width, height: 844 });

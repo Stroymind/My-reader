@@ -289,7 +289,9 @@ html.appearance-dark .stack-fan .avatar.sm{box-shadow:0 2px 8px rgba(0,0,0,.5),i
 .intent-sub svg{flex:none;width:16px;height:16px;color:var(--app-muted)}
 @media (hover:hover){.intent-tile:hover,.intent-sub:hover,.intent-cmd-btn:hover,.intent-mic:hover{background:color-mix(in srgb,var(--app-fg) 9%,transparent)}}
 #library.cosmos-on ~ #intent-mask .intent-sheet{background:rgba(11,18,36,.88);color:#f4ecd8;box-shadow:0 0 0 .5px rgba(244,232,204,.14),0 24px 64px rgba(0,0,0,.55)}
-#library.cosmos-on ~ #intent-mask .intent-spaces,#library.cosmos-on ~ #intent-mask .intent-tile,#library.cosmos-on ~ #intent-mask .intent-cmd-btn,#library.cosmos-on ~ #intent-mask .intent-mic{background:rgba(244,234,210,.08);color:rgba(244,236,218,.92)}
+#library.cosmos-on ~ #intent-mask .intent-spaces,#library.cosmos-on ~ #intent-mask .intent-tile,#library.cosmos-on ~ #intent-mask .intent-cmd-btn,#library.cosmos-on ~ #intent-mask .intent-mic,#library.cosmos-on ~ #intent-mask .omni-capsule{background:rgba(244,234,210,.09);color:rgba(244,236,218,.92);box-shadow:0 0 0 .5px rgba(244,234,210,.14)}
+#library.cosmos-on ~ #intent-mask .omni-add,#library.cosmos-on ~ #intent-mask .omni-mic{background:rgba(244,234,210,.12);color:#fff8ea}
+#library.cosmos-on ~ #intent-mask .omni-mid{color:rgba(232,224,204,.78)}
 #library.cosmos-on ~ #intent-mask .intent-cmd-btn{color:rgba(232,224,204,.7)}
 #library.cosmos-on ~ #intent-mask .intent-spaces button.on{background:rgba(244,234,210,.18);color:#fff8ea}
 #library.cosmos-on ~ #intent-mask .intent-sub,#library.cosmos-on ~ #intent-mask .intent-tile svg,#library.cosmos-on ~ #intent-mask .intent-sub svg{color:rgba(222,216,198,.72)}
@@ -564,6 +566,7 @@ body[data-type=pdf] #stage{padding:calc(env(safe-area-inset-top) + 30px) 4px cal
 .seg button.swatch.on{box-shadow:0 0 0 2px var(--accent)}
 .toast{position:fixed;left:50%;bottom:calc(env(safe-area-inset-bottom) + 44px);transform:translateX(-50%);display:inline-flex;align-items:center;gap:10px;background:rgba(28,28,30,.92);color:#fff;padding:9px 16px;border-radius:999px;font-size:13.5px;font-weight:560;z-index:80;max-width:88%;text-align:center;box-shadow:0 10px 30px rgba(0,0,0,.22);pointer-events:none;animation:pop .3s var(--spring)}
 #command-mask:not(.hidden) ~ .toast{bottom:calc(env(safe-area-inset-bottom) + 84px)}
+#intent-mask:not(.hidden) ~ .toast{bottom:auto;top:calc(env(safe-area-inset-top) + 18px)}
 .toast.has-undo{pointer-events:auto;padding-right:10px}
 .toast-undo{padding:3px 9px;border-radius:999px;background:rgba(255,255,255,.16);color:#fff;font-size:12.5px;font-weight:650;pointer-events:auto}
 html.appearance-dark .toast{background:rgba(245,245,247,.94);color:#1d1d1f}
@@ -1280,6 +1283,138 @@ html.legacy-reader-home #pane-shelf,html.in-bot-reader #pane-shelf{padding-botto
 html.in-bot-reader #empty.empty-quiet:not(.hidden){display:flex!important;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:120px 24px;text-align:center;color:var(--app-muted)}
 html.in-bot-reader #empty.empty-quiet:not(.hidden)::before{content:"长按卡片拖叠自动建堆 · 双指捏合切近中远景（流 / 知识 / 星海）";max-width:270px;font-size:13.5px;line-height:1.6}
 html.in-bot-reader #empty.empty-quiet #btn-empty-import{position:static;width:auto;height:36px;clip:auto;overflow:visible;padding:0 16px;border-radius:999px;background:var(--app-fill);color:var(--app-fg);font-size:13.5px;font-weight:600}
+
+/* === 下一代空间流体阅读 + Liquid-Glass AI 解读 + 跨应用右缘吸附 + 触觉水波 === */
+/* 1. 万能单胶囊（导入 + 搜索 + 语音合一） */
+.omni-capsule{display:flex;align-items:center;gap:8px;height:50px;padding:0 6px;border-radius:999px;background:var(--app-elev);box-shadow:0 0 0 .5px var(--app-line),0 6px 20px rgba(0,0,0,.055);margin:8px 0 12px}
+.omni-add,.omni-mic{flex:none;width:38px;height:38px;padding:0;border-radius:50%;display:grid;place-items:center;background:var(--app-fill);color:var(--app-fg);transition:transform .18s var(--spring),background-color .16s}
+.omni-add:active,.omni-mic:active{transform:scale(.9)}
+.omni-add svg,.omni-mic svg{width:18px;height:18px;stroke-width:2}
+.omni-add[hidden]{display:none!important}
+.omni-mid{flex:1;min-width:0;height:100%;display:flex;align-items:center;gap:8px;padding:0 4px;background:transparent;color:var(--app-muted);font-size:14.5px;text-align:left}
+.omni-mid svg{width:16px;height:16px;stroke-width:1.9;flex:none}
+.omni-mid span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* 2. 卡片左滑显示删除 / 移出 + 卡片堆左滑分享/删除 + 弹性删除塌缩 */
+.row-wrap{position:relative;overflow:hidden;border-radius:18px;transition:max-height .32s var(--spring),opacity .26s,transform .28s var(--spring)}
+.row-wrap.deleting{opacity:0;transform:translateX(-48px) scale(.94);max-height:0!important;margin:0!important;pointer-events:none}
+.book.swiping,.book.swipe-open{z-index:2;background:var(--app-bg)}
+.book.swiping{transition:none}
+.row-out{position:relative;z-index:2}
+.row-wrap.swipe-open .row-out{opacity:0;pointer-events:none}
+.swipe-bg{z-index:1;padding:0 12px 0 18px;pointer-events:none}
+.swipe-bg.open{opacity:1;pointer-events:auto;background:color-mix(in srgb,var(--app-fill) 74%,var(--app-bg))}
+.swipe-right-acts{display:flex;align-items:center;gap:6px;margin-left:auto;opacity:0;transform:scale(.92);transition:opacity .16s,transform .22s var(--spring);pointer-events:none}
+.swipe-bg.dir-left .swipe-right-acts{opacity:1;transform:scale(1)}
+.swipe-bg.open .swipe-right-acts{opacity:1;transform:scale(1);pointer-events:auto}
+.swipe-bg.open .swipe-act.left-side{opacity:0}
+.swipe-pill{height:34px;padding:0 13px;border-radius:999px;font-size:13px;font-weight:620;color:#fff;white-space:nowrap;transition:transform .16s var(--spring),opacity .16s}
+.swipe-pill:active{transform:scale(.92)}
+.swipe-pill.del{background:#FF3B30;box-shadow:0 3px 10px rgba(255,59,48,.28)}
+.swipe-pill.out{background:#8E8E93}
+.swipe-pill.share{background:#007AFF;box-shadow:0 3px 10px rgba(0,122,255,.26)}
+.stack-swipe-wrap{position:relative;border-radius:22px}
+.stack-swipe-acts{position:absolute;inset:0;display:flex;align-items:center;justify-content:flex-end;gap:8px;padding:0 14px;border-radius:22px;background:color-mix(in srgb,var(--app-fill) 78%,var(--app-bg));opacity:0;pointer-events:none;transition:opacity .18s}
+.stack-swipe-acts.show{opacity:1;pointer-events:auto}
+.stack.is-collapsed .stack-card{position:relative;z-index:2;transition:transform .28s var(--spring)}
+.stack.is-collapsed .stack-card.swiping{transition:none}
+.stack.deleting{opacity:0;transform:scale(.88) translateY(-18px);transition:opacity .24s,transform .28s var(--spring);pointer-events:none}
+
+/* 3. 卡片堆顶部直接行内改名（零弹窗） */
+.stack.is-open .stack-name[data-inline-rename]{display:inline-block;max-width:100%;cursor:text;border-radius:8px;padding:1px 6px 1px 4px;margin-left:-4px;transition:background-color .16s}
+.stack.is-open .stack-name[data-inline-rename]:hover{background:var(--app-fill)}
+.stack-inline-input{width:100%;max-width:210px;height:28px;border:0;border-radius:10px;background:var(--app-elev);box-shadow:0 0 0 1.2px var(--app-fg);padding:0 9px;font-size:15px;font-weight:660;color:var(--app-fg);outline:none}
+
+/* 4. 像删除桌面应用/快捷方式一样长按抖动 + 左上角 × 删除卡片堆 */
+.stack.jiggling{animation:stackJiggle .26s ease-in-out infinite alternate}
+@keyframes stackJiggle{0%{transform:rotate(-.95deg) scale(1.008)}100%{transform:rotate(.95deg) scale(1.008)}}
+.stack-x-badge{position:absolute;top:-7px;left:-6px;z-index:12;width:24px;height:24px;padding:0;border-radius:50%;background:rgba(28,28,30,.88);color:#fff;font-size:15px;line-height:1;display:grid;place-items:center;box-shadow:0 2px 8px rgba(0,0,0,.25);animation:pop .2s var(--spring)}
+.stack-x-badge:active{transform:scale(.85)}
+
+/* 5. 双指捏合合并卡片/堆弹性视觉 */
+.pinch-merging{transition:none!important;z-index:20!important;box-shadow:0 0 0 2px var(--app-accent),0 14px 32px rgba(0,122,255,.16)!important}
+.pinch-merge-ready{box-shadow:0 0 0 2.5px #34C759,0 16px 36px rgba(52,199,89,.24)!important}
+
+/* 6. 水波涟漪与触觉缩放特效 */
+.book,.stack-head,.chat-card,.bot-mounted-chip,.ai-foot-pill,.ai-q-chip{position:relative;overflow:hidden}
+.book:active,.stack-head:active{transform:scale(.976)}
+.zone-ripple{position:absolute;border-radius:50%;pointer-events:none;background:radial-gradient(circle,color-mix(in srgb,var(--app-fg) 15%,transparent) 0%,transparent 72%);transform:translate(-50%,-50%) scale(0);animation:zoneRippleWave .52s cubic-bezier(.22,.61,.36,1) forwards;z-index:9}
+@keyframes zoneRippleWave{0%{transform:translate(-50%,-50%) scale(0);opacity:.72}100%{transform:translate(-50%,-50%) scale(3.4);opacity:0}}
+
+/* 7. 右缘跨应用吸附区 + 悬浮把手 + 顶部放回原位区 */
+.edge-dock-zone{position:fixed;top:24%;right:0;bottom:24%;width:64px;z-index:220;display:flex;align-items:center;justify-content:center;border-radius:26px 0 0 26px;background:linear-gradient(90deg,transparent,color-mix(in srgb,var(--app-accent) 18%,transparent));border-left:1.5px dashed color-mix(in srgb,var(--app-accent) 52%,transparent);pointer-events:none;transition:width .2s var(--spring),background .2s}
+.edge-dock-zone span{writing-mode:vertical-rl;font-size:12.5px;font-weight:660;letter-spacing:.12em;color:var(--app-accent)}
+.edge-dock-zone.hot{width:84px;background:linear-gradient(90deg,color-mix(in srgb,var(--app-accent) 10%,transparent),color-mix(in srgb,var(--app-accent) 34%,transparent));border-left:2px solid var(--app-accent)}
+.edge-undock-zone{position:fixed;top:calc(env(safe-area-inset-top) + 14px);left:50%;transform:translateX(-50%);z-index:235;height:40px;padding:0 20px;border-radius:999px;display:flex;align-items:center;justify-content:center;background:var(--glass-strong);backdrop-filter:saturate(180%) blur(22px);-webkit-backdrop-filter:saturate(180%) blur(22px);box-shadow:0 0 0 .5px var(--app-line),0 8px 26px rgba(0,0,0,.12);font-size:13.5px;font-weight:620;color:var(--app-fg);pointer-events:none;transition:transform .2s var(--spring),background-color .2s,color .2s}
+.edge-undock-zone.hot{background:var(--app-fg);color:var(--app-bg);transform:translateX(-50%) scale(1.06)}
+.zone-edge-dock{position:fixed;right:0;top:44%;z-index:210;display:flex;flex-direction:column;align-items:center;gap:5px;padding:11px 7px 11px 10px;border-radius:20px 0 0 20px;background:var(--glass-strong);backdrop-filter:saturate(200%) blur(24px);-webkit-backdrop-filter:saturate(200%) blur(24px);box-shadow:-4px 6px 24px rgba(0,0,0,.14),0 0 0 .5px var(--app-line);cursor:grab;touch-action:none;user-select:none;transition:transform .26s var(--spring),opacity .2s}
+.zone-edge-dock.dragging{transition:none;border-radius:20px;transform:scale(1.06)}
+.zone-edge-dock-dot{width:6px;height:6px;border-radius:50%;background:var(--app-accent)}
+.zone-edge-dock.is-stack .zone-edge-dock-dot{background:#FF9500}
+.zone-edge-dock-lbl{writing-mode:vertical-rl;max-height:74px;overflow:hidden;font-size:12px;font-weight:660;letter-spacing:.08em;color:var(--app-fg);line-height:1.2}
+
+/* 8. Bot 对话内嵌可交互阅读卡片 & 卡片堆卡片 */
+.chat-reading-card{display:flex;align-items:center;gap:12px;padding:4px 0 2px}
+.chat-reading-card .avatar{width:46px;height:62px;border-radius:10px;flex:none}
+.chat-reading-fan{position:relative;width:54px;height:62px;flex:none}
+.chat-reading-fan .avatar{position:absolute;top:0;left:0;width:44px;height:60px;border-radius:9px;box-shadow:0 3px 10px rgba(0,0,0,.14)}
+.chat-reading-fan .avatar:nth-child(2){transform:translate(5px,2px) rotate(4deg);opacity:.92}
+.chat-reading-fan .avatar:nth-child(3){transform:translate(9px,4px) rotate(8deg);opacity:.82}
+.chat-reading-info{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px}
+.chat-reading-info strong{font-size:15px;font-weight:660;color:var(--app-fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chat-reading-info span{font-size:12.5px;color:var(--app-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chat-reading-prog{height:4px;border-radius:999px;background:var(--app-fill);overflow:hidden;margin-top:2px}
+.chat-reading-prog i{display:block;height:100%;border-radius:999px;background:var(--app-accent)}
+
+/* 9. 2026 Liquid-Glass AI 解读抽屉（彻底告别旧时代灰弹窗） */
+.ai-glass-mask{position:fixed;inset:0;z-index:190;display:flex;align-items:flex-end;justify-content:center;background:rgba(0,0,0,.22);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);animation:fadeIn .2s ease}
+.ai-glass-sheet{width:100%;max-width:520px;max-height:84dvh;display:flex;flex-direction:column;gap:12px;padding:10px 18px calc(env(safe-area-inset-bottom) + 18px);border-radius:30px 30px 0 0;background:color-mix(in srgb,var(--app-elev) 84%,transparent);backdrop-filter:saturate(210%) blur(34px);-webkit-backdrop-filter:saturate(210%) blur(34px);box-shadow:0 -1px 0 rgba(255,255,255,.45) inset,0 -14px 44px rgba(0,0,0,.14);animation:sheetSlideUp .3s var(--spring)}
+@keyframes sheetSlideUp{from{transform:translateY(42px);opacity:0}to{transform:translateY(0);opacity:1}}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+.ai-glass-grip{width:38px;height:4.5px;border-radius:999px;background:color-mix(in srgb,var(--app-fg) 20%,transparent);margin:2px auto 2px;flex:none}
+.ai-glass-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex:none}
+.ai-glass-who{display:flex;align-items:center;gap:10px;min-width:0}
+.ai-bot-av{width:34px;height:34px;flex:none;display:grid;place-items:center}
+.ai-bot-av .bot-glyph{width:34px;height:34px}
+.ai-glass-mask.thinking .ai-bot-av .bot-glyph{animation:botSquish 1.1s ease-in-out infinite}
+.ai-glass-head h3{margin:0;font-size:16px;font-weight:680;color:var(--app-fg);letter-spacing:-.01em}
+.ai-glass-sub{display:block;font-size:12px;color:var(--app-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:220px}
+.ai-glass-close{width:32px;height:32px;padding:0;border-radius:50%;background:var(--app-fill);color:var(--app-fg);display:grid;place-items:center;flex:none}
+.ai-glass-close svg{width:15px;height:15px;stroke-width:2.1}
+.ai-glass-quote{margin:0;padding:10px 13px;border-left:2.5px solid var(--app-accent);border-radius:0 14px 14px 0;background:color-mix(in srgb,var(--app-fill) 72%,transparent);font-size:13.5px;line-height:1.58;color:var(--app-muted);max-height:92px;overflow:auto;flex:none}
+.ai-glass-body{flex:1;min-height:48px;overflow-y:auto;display:flex;flex-direction:column;gap:10px;font-size:15px;line-height:1.72;color:var(--app-fg);padding-right:2px}
+.ai-glass-body .ai-answer{padding:12px 14px;border-radius:18px;background:var(--app-elev);box-shadow:0 0 0 .5px var(--app-line);white-space:pre-wrap;word-break:break-word}
+.ai-glass-body .ai-banner,.ai-glass-body .ai-wait{margin:0;font-size:13.5px;color:var(--app-muted);line-height:1.55}
+.ai-glass-body .points-label{margin:4px 0 0;font-size:12px;font-weight:620;color:var(--app-muted);letter-spacing:.04em}
+.ai-glass-body .points{margin:0;padding-left:18px;font-size:14px;line-height:1.62;color:var(--app-fg)}
+.ai-skel{display:flex;flex-direction:column;gap:8px;padding:12px 14px;border-radius:18px;background:var(--app-elev);box-shadow:0 0 0 .5px var(--app-line)}
+.ai-skel i{display:block;height:12px;border-radius:999px;background:linear-gradient(90deg,var(--app-fill) 25%,color-mix(in srgb,var(--app-fg) 10%,var(--app-fill)) 50%,var(--app-fill) 75%);background-size:200% 100%;animation:aiShimmer 1.3s ease infinite}
+.ai-skel i:nth-child(2){width:86%}.ai-skel i:nth-child(3){width:64%}
+@keyframes aiShimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
+.ai-quick-chips{display:flex;align-items:center;gap:7px;overflow-x:auto;flex:none;scrollbar-width:none}
+.ai-quick-chips::-webkit-scrollbar{display:none}
+.ai-q-chip{flex:none;height:30px;padding:0 12px;border-radius:999px;background:var(--app-elev);box-shadow:0 0 0 .5px var(--app-line);font-size:12.5px;font-weight:580;color:var(--app-fg);white-space:nowrap}
+.ai-glass-ask{display:flex;align-items:center;gap:8px;height:44px;padding:0 5px 0 14px;border-radius:999px;background:var(--app-elev);box-shadow:0 0 0 .5px var(--app-line),0 3px 12px rgba(0,0,0,.04);flex:none}
+.ai-glass-ask #ai-q,.ai-glass-ask input{flex:1;min-width:0;height:100%;border:0;border-radius:0;background:transparent;padding:0;font-size:14.5px;color:var(--app-fg);outline:none}
+.ai-ask-send{width:34px;height:34px;padding:0;border-radius:50%;background:var(--app-fg);color:var(--app-bg);display:grid;place-items:center;flex:none}
+.ai-ask-send svg{width:16px;height:16px;stroke-width:2.3}
+.ai-glass-foot{display:flex;align-items:center;gap:8px;flex:none}
+.ai-foot-pill{flex:1;height:38px;border-radius:999px;background:var(--app-fill);color:var(--app-fg);font-size:13.5px;font-weight:600}
+.ai-foot-pill.primary{background:var(--app-fg);color:var(--app-bg)}
+.toast-action{margin-left:8px;padding:3px 10px;border-radius:999px;background:rgba(255,255,255,.18);color:inherit;font-size:12.5px;font-weight:620}
+
+/* 10. 我的 Zone — Apple ID 风格云端账号与跨端同步卡片 */
+.prof-acct-row{display:flex;align-items:center;gap:12px;width:100%;padding:13px 14px;text-align:left;background:transparent;color:var(--app-fg)}
+.prof-acct-av{width:44px;height:44px;border-radius:50%;flex:none;display:grid;place-items:center;background:linear-gradient(145deg,#1c1c1e,#3a3a3c);color:#fff;font-size:17px;font-weight:700;letter-spacing:-.01em}
+.prof-acct-av.signed{background:linear-gradient(145deg,#007AFF,#5856D6)}
+.prof-acct-badge{display:inline-flex;align-items:center;gap:4px;height:22px;padding:0 9px;border-radius:999px;background:color-mix(in srgb,#34c759 15%,var(--app-bg));color:#1f9d45;font-size:11.5px;font-weight:620;white-space:nowrap}
+.prof-acct-form{padding:4px 14px 14px;display:flex;flex-direction:column;gap:9px;border-top:.5px solid var(--app-line)}
+.prof-acct-tabs{display:grid;grid-template-columns:1fr 1fr;gap:4px;padding:3px;border-radius:12px;background:var(--app-fill);margin-top:8px}
+.prof-acct-tabs button{height:32px;border-radius:9px;font-size:13.5px;font-weight:600;color:var(--app-muted)}
+.prof-acct-tabs button.on{background:var(--app-elev);color:var(--app-fg);box-shadow:0 1px 4px rgba(0,0,0,.08)}
+.prof-acct-form input{width:100%;height:42px;border:0;border-radius:12px;background:var(--app-fill);padding:0 13px;font-size:14.5px;color:var(--app-fg);outline:none}
+.prof-acct-err{margin:0;font-size:12.5px;color:#FF3B30;line-height:1.4}
+.prof-acct-hint{margin:0;font-size:12px;color:var(--app-muted);line-height:1.5}
 
 @media (prefers-reduced-motion:reduce){
   *,*::before,*::after{animation:none!important;transition:none!important}

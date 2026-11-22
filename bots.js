@@ -98,6 +98,13 @@ export function deleteBotById(botId) {
   if (list.length <= 1) return false;
   const next = list.filter(b => b.id !== botId);
   saveBots(next);
+  try {
+    const d = JSON.parse(localStorage.getItem('zone-sync-deleted-v1') || '{}');
+    const arr = Array.isArray(d.bots) ? d.bots : [];
+    if (!arr.includes(botId)) arr.push(String(botId));
+    d.bots = arr.slice(-80);
+    localStorage.setItem('zone-sync-deleted-v1', JSON.stringify(d));
+  } catch {}
   if (getActiveBot().id === botId) setActiveBot(next[0].id);
   return true;
 }
