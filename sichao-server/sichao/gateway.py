@@ -37,13 +37,15 @@ _NEEDS_V1_RE = re.compile(
     r"^https?://(api\.openai\.com|api\.siliconflow\.cn|api\.moonshot\.cn|api\.x\.ai|openrouter\.ai/api|api\.groq\.com/openai|dashscope\.aliyuncs\.com/compatible-mode)$",
     re.IGNORECASE,
 )
+_NO_TEMP_MODEL_RE = re.compile(r"(?:^|/)(?:o1|o3|o4|gpt-5|codex)", re.IGNORECASE)
+_RESPONSES_ONLY_RE = re.compile(r"(?:^|/).*codex", re.IGNORECASE)
 
 
-def resolve_chat_endpoint(raw_base: str) -> tuple[str, str]:
-    """智能规范化接口地址，返回 (endpoint_url, protocol['openai'|'anthropic'])。"""
+def resolve_chat_endpoint(raw_base: str, model: str = "") -> tuple[str, str]:
+    """智能规范化接口地址，返回 (endpoint_url, protocol['openai'|'openai-responses'|'anthropic'])。"""
     base = re.sub(r"[\s\u200b\u200c\u200d\ufeff]+", "", str(raw_base or "")).rstrip("/")
     if not base:
-        base = "https://api.openai.com/v1"
+        base = "https://generativelanguage.googleapis.com/v1beta/openai"
     if not re.match(r"^https?://", base, re.IGNORECASE):
         base = "https://" + base
     low = base.lower()
@@ -53,6 +55,21 @@ def resolve_chat_endpoint(raw_base: str) -> tuple[str, str]:
         if low.endswith("/v1"):
             return f"{base}/messages", "anthropic"
         return f"{base}/v1/messages", "anthropic"
+    if "generativelanguage.googleapis.com" in low:
+        if low.endswith("/chat/completions"):
+            return base, "openai"
+        if low.endswith("/openai"):
+            return f"{base}/chat/completions", "openai"
+        if low.endswith("/v1beta") or low.endswith("/v1"):
+            return f"{base}/openai/chat/completions", "openai"
+        return f"{base}/v1beta/openai/chat/completions", "openai"
+    if low.endswith("/responses"):
+        return base, "openai-responses"
+    if "api.openai.com" in low and _RESPONSES_ONLY_RE.search(str(model or "")):
+        root_base = re.sub(r"/chat/completions$", "", base, flags=re.IGNORECASE)
+        if not root_base.lower().endswith("/v1"):
+            root_base = f"{root_base}/v1"
+        return f"{root_base}/responses", "openai-responses"
     if low.endswith("/chat/completions"):
         return base, "openai"
     if _NEEDS_V1_RE.match(base):
@@ -105,11 +122,59 @@ class ModelGateway:
         zero = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
         if not self.configured:
             return {"ok": False, "status": 400, "error": "尚未提供 API Key", "usage": zero}
-        endpoint, proto = resolve_chat_endpoint(self.base_url)
+        endpoint, proto = resolve_chat_endpoint(self.base_url, self.model)
         if _is_private_target(endpoint):
             return {"ok": False, "status": 400, "error": "云端中转仅支持公网接口地址；局域网地址请用手机直连", "usage": zero}
         try:
             async with httpx.AsyncClient(timeout=50.0) as client:
+                if proto == "openai-responses":
+                    sys_parts_r: list[str] = []
+                    inp_msgs: list[dict[str, Any]] = []
+                    for m in messages:
+                        role = m.get("role", "user")
+                        raw_c = m.get("content")
+                        if role == "system":
+                            sys_parts_r.append(str(raw_c or ""))
+                        else:
+                            inp_msgs.append({"role": "assistant" if role == "assistant" else "user", "content": str(raw_c or "")})
+                    r_body: dict[str, Any] = {"model": self.model, "input": inp_msgs or [{"role": "user", "content": "你好"}]}
+                    if sys_parts_r:
+                        r_body["instructions"] = "\n\n".join(sys_parts_r)
+                    res = await client.post(
+                        endpoint,
+                        headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
+                        json=r_body,
+                    )
+                    try:
+                        data = res.json()
+                    except Exception:
+                        data = {}
+                    if not res.is_success:
+                        err_msg = extract_api_error_text(data, res.text[:200])
+                        return {"ok": False, "status": res.status_code, "error": err_msg or f"请求失败（HTTP {res.status_code}）", "usage": zero}
+                    text = str(data.get("output_text") or "").strip()
+                    if not text:
+                        parts_out: list[str] = []
+                        for item in (data.get("output") or []):
+                            if isinstance(item, dict):
+                                if isinstance(item.get("text"), str):
+                                    parts_out.append(item["text"])
+                                for c in (item.get("content") or []):
+                                    if isinstance(c, dict) and isinstance(c.get("text"), str):
+                                        parts_out.append(c["text"])
+                        text = "\n".join(parts_out).strip()
+                    raw_u = data.get("usage") or {}
+                    pt = int(raw_u.get("input_tokens") or 0)
+                    ct = int(raw_u.get("output_tokens") or 0)
+                    tt = int(raw_u.get("total_tokens") or (pt + ct))
+                    return {
+                        "ok": bool(text),
+                        "status": res.status_code,
+                        "content": text,
+                        "reasoning": "",
+                        "usage": {"prompt_tokens": pt, "completion_tokens": ct, "total_tokens": tt},
+                        "error": "" if text else "模型没有返回文字",
+                    }
                 if proto == "anthropic":
                     sys_parts: list[str] = []
                     user_msgs: list[dict[str, Any]] = []
@@ -176,6 +241,9 @@ class ModelGateway:
 
                 res = None
                 data: Any = {}
+                req_payload: dict[str, Any] = {"model": self.model, "messages": messages}
+                if not _NO_TEMP_MODEL_RE.search(self.model):
+                    req_payload["temperature"] = temperature
                 for attempt in range(2):
                     res = await client.post(
                         endpoint,
@@ -183,7 +251,7 @@ class ModelGateway:
                             "Authorization": f"Bearer {self.api_key}",
                             "Content-Type": "application/json",
                         },
-                        json={"model": self.model, "temperature": temperature, "messages": messages},
+                        json=req_payload,
                     )
                     try:
                         data = res.json()

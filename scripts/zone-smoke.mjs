@@ -25,8 +25,8 @@ try {
   await page.setViewport({ width: 390, height: 844, isMobile: true, hasTouch: true });
   await page.goto(server.base);
   await page.waitForFunction(() => window.__app);
-  assert.equal(await page.title(), 'Zone');
-  assert.equal(await page.$eval('h1', el => el.textContent), 'Zone');
+  assert.equal(await page.title(), 'Zbot');
+  assert.equal(await page.$eval('h1', el => el.textContent), 'Zbot');
   // First-launch Zero-Button Spatial Portal (zero inputs, zero buttons)
   assert.equal(await page.$eval('#auth-gate', el => el.classList.contains('hidden')), false, 'spatial portal greets first-time user');
   assert.equal(await page.evaluate(() => document.querySelectorAll('#auth-gate input, #auth-gate button').length), 0, 'spatial portal has zero inputs and zero buttons');
@@ -65,15 +65,22 @@ try {
     const a = await import('./ai.js');
     return {
       openai: a.resolveChatEndpoint('https://api.openai.com').url,
+      codexResp: a.resolveChatEndpoint('https://api.openai.com/v1', 'gpt-5.1-codex-mini'),
+      geminiNorm: a.resolveChatEndpoint('https://generativelanguage.googleapis.com').url,
       deepseekFull: a.resolveChatEndpoint('https://api.deepseek.com/v1/chat/completions/').url,
       sf: a.resolveChatEndpoint('https://api.siliconflow.cn').url,
-      claude: a.resolveChatEndpoint('https://api.anthropic.com')
+      claude: a.resolveChatEndpoint('https://api.anthropic.com'),
+      presets: a.AI_PRESETS.map(p => p.id)
     };
   });
   assert.equal(epChecks.openai, 'https://api.openai.com/v1/chat/completions');
+  assert.equal(epChecks.codexResp.url, 'https://api.openai.com/v1/responses');
+  assert.equal(epChecks.codexResp.proto, 'openai-responses');
+  assert.equal(epChecks.geminiNorm, 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions');
   assert.equal(epChecks.deepseekFull, 'https://api.deepseek.com/v1/chat/completions');
   assert.equal(epChecks.sf, 'https://api.siliconflow.cn/v1/chat/completions');
   assert.equal(epChecks.claude.proto, 'anthropic');
+  assert.ok(epChecks.presets[0] === 'gemini' && epChecks.presets.includes('codex') && epChecks.presets.includes('claude') && epChecks.presets.includes('codex-cli'), `International-first AI presets: ${JSON.stringify(epChecks.presets)}`);
   // Open Durable Cloud Knowledge Base from Profile, paste real memories, verify Sync Code & Bot context injection
   await page.click('#zone-profile-mask [data-p-act="import-mem"]');
   await page.waitForFunction(() => !document.querySelector('#zone-memory-mask').classList.contains('hidden'));
@@ -104,10 +111,12 @@ try {
   // Tap + to verify full-screen Create New Bot (13 shapes 5+5+3 + liquid splash coalescence + settled state)
   await page.click('#btn-hub-newbot');
   await page.waitForFunction(() => !document.querySelector('#zone-bots-mask').classList.contains('hidden'));
-  assert.equal(await page.$$eval('#zone-bots-mask [data-shape]', els => els.length), 13, '13 sculpted shapes including hex');
+  assert.equal(await page.$$eval('#zone-bots-mask [data-shape]', els => els.length), 13, '13 original Grok-style shapes with crisp Zbot hollow eye rims');
+  assert.equal(await page.$('#zone-bots-mask [data-eyecolor]'), null, 'Original Create Bot layout preserved (zero unrequested eye-color picker)');
   await sleep(170);
   await page.screenshot({ path: path.resolve(root, 'test-results/zone-bot-create-birth.png') });
   await sleep(1080);
+  await page.screenshot({ path: path.resolve(root, 'test-results/zbot-51-create-bot.png') });
   await page.screenshot({ path: path.resolve(root, 'test-results/zone-bot-create.png') });
   await page.click('#zone-bots-mask [data-act="cancel"]');
   await page.waitForFunction(() => document.querySelector('#zone-bots-mask').classList.contains('hidden'));
@@ -133,7 +142,7 @@ try {
   await page.click('#zone-hero-card');
   await page.waitForFunction(() => !document.querySelector('#zone-chat-modal').classList.contains('hidden'));
   assert.equal(await page.$('#btn-chat-new'), null, 'top-right 新话题 removed cleanly');
-  assert.equal(await page.$('#btn-chat-reader'), null, '阅读器 not cluttered into Bot chat until mounted for this Bot');
+  assert.equal(await page.$eval('#btn-chat-reader', el => getComputedStyle(el).display !== 'none'), true, '阅读器 pluggable entry preserved by default on main Zbot');
   // Bottom-left + opens pure media & files sheet (照片 / 拍照 / 视频 / 文件), ZERO duplicate plugin loader
   await page.click('#btn-chat-plugins');
   await page.waitForFunction(() => !document.querySelector('#zone-attach-mask').classList.contains('hidden'));
@@ -141,7 +150,7 @@ try {
   assert.deepEqual(attTiles, ['照片', '拍照', '视频', '文件']);
   await page.click('#zone-attach-mask [data-att-act="close"]');
   await page.waitForFunction(() => document.querySelector('#zone-attach-mask').classList.contains('hidden'));
-  // Tap ⋯ top-right -> verify exact 4 Grok-style items -> tap 查看资料 -> opens full-screen Bot Profile Page -> mount 阅读器
+  // Tap ⋯ top-right -> verify exact 4 items -> tap 查看资料 -> opens full-screen Bot Profile Page -> verify one-switch unmount & remount of 阅读器
   await page.click('#btn-chat-more');
   await page.waitForFunction(() => !document.querySelector('#zone-chat-more-menu').classList.contains('hidden'));
   const moreItems = await page.$$eval('#zone-chat-more-menu .chat-more-item span', els => els.map(e => e.textContent));
@@ -155,6 +164,10 @@ try {
   await page.click('#zone-bot-profile-view [data-bpp-act="plugins"]');
   await page.waitForFunction(() => !document.querySelector('#zone-bot-plugins-mask').classList.contains('hidden'));
   assert.equal(await page.$('#zone-bot-plugins-mask [data-bp-act="cosmos"]'), null, 'ZERO backdoor 星海 button inside Bot plugins sheet');
+  // Toggle 阅读器 OFF -> cleanly unmounts entry with zero conflict; toggle back ON -> cleanly restores
+  await page.click('#zone-bot-plugins-mask label.ios-switch:has([data-bp-toggle="reading-cosmos"])');
+  await sleep(120);
+  assert.equal(await page.$('#btn-chat-reader'), null, 'one-switch unmount hides 阅读器 entry cleanly');
   await page.click('#zone-bot-plugins-mask label.ios-switch:has([data-bp-toggle="reading-cosmos"])');
   await sleep(160);
   await page.click('#zone-bot-plugins-mask [data-bp-act="close"]');
@@ -226,8 +239,8 @@ try {
   await page.click('#zone-bots-mask [data-accent="#FF6B00"]');
   await page.click('#zone-bots-mask [data-act="save"]');
   await page.waitForFunction(() => !document.querySelector('#zone-chat-modal').classList.contains('hidden') && document.querySelector('#chat-head-name').textContent === '土豆');
-  // Verify 土豆 does NOT inherit Zone's 阅读器 plugin AND openBotReaderSheet(土豆) is strictly BLOCKED!
-  assert.equal(await page.$('#btn-chat-reader'), null, '阅读器 mounted on Zone does NOT leak to 土豆');
+  // Verify 土豆 does NOT inherit Zbot's 阅读器 plugin AND openBotReaderSheet(土豆) is strictly BLOCKED!
+  assert.equal(await page.$('#btn-chat-reader'), null, '阅读器 mounted on Zbot does NOT leak to 土豆');
   const blockedPotatoReader = await page.evaluate(async () => {
     const botsMod = await import('./bots.js');
     const potato = botsMod.listBots().find(b => b.name === '土豆');
@@ -248,7 +261,7 @@ try {
   await page.click('#zone-bots-mask [data-act="save-grp"]');
   await page.waitForFunction(() => !document.querySelector('#zone-chat-modal').classList.contains('hidden') && document.querySelector('#chat-head-name').textContent.includes('产品研发群'));
   const mentionChips = await page.$$eval('#zone-chat-plugins-bar .group-mention-chip', els => els.map(e => e.textContent));
-  assert.ok(mentionChips.includes('@所有人') && mentionChips.includes('@Zone') && mentionChips.includes('@土豆'), `Group mention chips: ${JSON.stringify(mentionChips)}`);
+  assert.ok(mentionChips.includes('@所有人') && mentionChips.includes('@Zbot') && mentionChips.includes('@土豆'), `Group mention chips: ${JSON.stringify(mentionChips)}`);
   await page.type('#zone-chat-input', '@土豆 汇总下最新进度');
   await page.keyboard.press('Enter');
   await page.waitForFunction(() => document.querySelectorAll('#zone-chat-messages .chat-row').length >= 2);
@@ -261,12 +274,12 @@ try {
     const botsMod = await import('./bots.js');
     const all = botsMod.listBots();
     const potato = all.find(b => b.name === '土豆');
-    const zone = all.find(b => b.name === 'Zone');
+    const zone = all.find(b => b.name === 'Zbot');
     await window.__app.relayBotToBotMessage(potato, zone, '帮我检查 PR #5');
     const rosterSub = [...document.querySelectorAll('#zone-bot-roster .roster-item')].map(el => el.textContent).join(' | ');
     return { rosterSub };
   });
-  assert.ok(relayCheck.rosterSub.includes('➤ 已发消息给 Zone'), `Roster shows silent bot-to-bot handoff: ${relayCheck.rosterSub}`);
+  assert.ok(relayCheck.rosterSub.includes('➤ 已发消息给 Zbot'), `Roster shows silent bot-to-bot handoff: ${relayCheck.rosterSub}`);
   await sleep(160);
   await page.screenshot({ path: path.resolve(root, 'test-results/zone-agent-home.png') });
   report.checks.push('Mobile startup, Spatial Z Portal, pure Apple Zone Agent Home, Profile/API Usage, Per-Bot Plugin Isolation, Grok-style Confirmation & Link Cards, Async Bot Animations + Birth Animation, Multi-Bot Group Chat, and Silent Bot-to-Bot Relay');
@@ -1294,18 +1307,9 @@ try {
   assert.deepEqual(formatCheck.cmdStyleUi, { op: 'styleUi', prompt: '把背景变成浅墨绿' });
   report.checks.push('All-format offline importers (MOBI/AZW3, DOCX, Markdown, SRT/VTT transcripts, PNG/JPG visual booklets) + Voice Stack control + Direct Voice-to-AI + Live UI Styling verified');
 
-  // 「思潮 × Zone」独立判断闭环端到端验证：语音打开 -> 选事件 -> 独立判断 -> 解锁 AI 视角 -> 沉淀判断星 -> 判断档案
-  await page.evaluate(() => window.__app.runCommand('今日思潮'));
-  await page.waitForFunction(() => !document.querySelector('#sichao-mask').classList.contains('hidden') && document.querySelectorAll('.sc-card').length >= 3);
-  await page.click('.sc-card');
-  await page.waitForSelector('.sc-opt[data-v="D"]');
-  await page.click('.sc-opt[data-v="D"]');
-  await page.click('#sc-submit');
-  await page.waitForSelector('.sc-ai');
-  await page.screenshot({ path: path.resolve(root, 'test-results/zone-sichao.png') });
-  await page.evaluate(() => window.__app.handleBack());
-  await page.waitForFunction(() => document.querySelector('#sichao-mask').classList.contains('hidden'));
-  report.checks.push('思潮 × Zone end-to-end judgment loop (event facts -> independent A~E verdict -> AI partner unlock -> sync to 星海 -> archive) verified');
+  // 确认原「思潮」项目已彻底删除去除（无 #sichao-mask）
+  assert.equal(await page.$('#sichao-mask'), null, 'Trends (思潮) frontend project completely removed');
+  report.checks.push('Trends (思潮) project cleanly removed from Zbot frontend');
 
   // Zone 5.0 专项闭环验证：单胶囊合一 + 卡片/堆内左滑删除 + 右缘吸附/放回 + Bot 主动发送阅读卡片/堆 + Liquid-Glass AI 解读 + 我的 Zone 账号登录同步入口
   await page.setViewport({ width: 390, height: 844 });
@@ -1382,12 +1386,154 @@ try {
     hasForm: !!document.querySelector('#prof-auth-form'),
     hasLoginTab: !!document.querySelector('[data-auth-tab="login"]'),
     hasRegTab: !!document.querySelector('[data-auth-tab="register"]'),
-    hasV5: (document.querySelector('#zone-profile-mask')?.textContent || '').includes('Zone 5.0')
+    hasV5: (document.querySelector('#zone-profile-mask')?.textContent || '').includes('Zbot 5.1')
   }));
-  assert.deepEqual(acctUi, { hasForm: true, hasLoginTab: true, hasRegTab: true, hasV5: true }, 'Profile sheet exposes Zone 5.0 cloud account login & cross-device sync');
+  assert.deepEqual(acctUi, { hasForm: true, hasLoginTab: true, hasRegTab: true, hasV5: true }, 'Profile sheet exposes Zbot 5.1 cloud account login & cross-device sync');
   await page.screenshot({ path: path.resolve(root, 'test-results/zone-5-profile-account.png') });
   await page.click('[data-p-act="close"]');
-  report.checks.push('Zone 5.0 features verified: unified omni-capsule, inline stack rename (zero popup), swipe-left delete, right-edge dock/undock, Liquid-Glass AI Explain, Bot reading/stack cards, and Profile Cloud Account Login UI');
+  report.checks.push('Zone 5.0 features verified: unified omni-capsule, inline stack rename (zero popup), swipe-left delete, right-edge dock/undock, AI Explain, Bot reading/stack cards, and Profile Cloud Account Login UI');
+
+  // Zbot 5.1 专项验证：纯白实面无滥用毛玻璃 + 零水波特效 + 无发光正常眼圈 + 无外框线 + 深色模式下黑机身自动可辨识 + 语音Bug#1/#2修复 + 双指垂直拉开/捏合卡片堆 + 批量导入左右交替进场 + 新闻推送内置到Bot对话页
+  const zbot51Ui = await page.evaluate(() => {
+    const heroSvg = document.querySelector('#zone-hero-glyph .bot-glyph');
+    const heroShape = document.querySelector('#zone-hero-glyph .bot-main-shape');
+    const heroRing = document.querySelector('#zone-hero-glyph .bot-eye-ring');
+    const aiSheet = document.querySelector('.ai-glass-sheet');
+    const intentSheet = document.querySelector('.intent-sheet');
+    const darkPrev = document.documentElement.classList.contains('appearance-dark');
+    document.documentElement.classList.add('appearance-dark');
+    const darkBodyColor = heroSvg ? getComputedStyle(heroSvg).color : '';
+    if (!darkPrev) document.documentElement.classList.remove('appearance-dark');
+    return {
+      hasGlowFilter: !!document.querySelector('#zone-eye-glow'),
+      glowEls: document.querySelectorAll('.bot-eye-glow').length,
+      bodyStroke: heroShape?.getAttribute('stroke') || '',
+      heroEyeFill: heroRing?.getAttribute('fill') || '',
+      darkBodyColor,
+      aiBlur: aiSheet ? getComputedStyle(aiSheet).backdropFilter : 'none',
+      intentBlur: intentSheet ? getComputedStyle(intentSheet).backdropFilter : 'none',
+      rippleCount: document.querySelectorAll('.zone-ripple').length
+    };
+  });
+  assert.equal(zbot51Ui.hasGlowFilter, false, 'Zero flashy glow SVG filter');
+  assert.equal(zbot51Ui.glowEls, 0, 'Zero glow elements on Bot eyes');
+  assert.equal(zbot51Ui.bodyStroke, 'none', 'Zero outer grey border around Bot body');
+  assert.equal(zbot51Ui.heroEyeFill, 'none', 'Clean hollow normal eye rims');
+  assert.equal(zbot51Ui.darkBodyColor, 'rgb(37, 37, 45)', 'Black Bot auto-lifts to legible deep graphite on dark OLED background');
+  assert.equal(zbot51Ui.aiBlur, 'none', 'AI sheet uses pure solid surface without cloudy glassmorphism');
+  assert.equal(zbot51Ui.intentBlur, 'none', 'Intent sheet uses pure solid surface without cloudy glassmorphism');
+  assert.equal(zbot51Ui.rippleCount, 0, 'Zero water ripple elements present');
+
+  // Bug #1 回归：自然语言翻页方向转换 & 护眼模式绝不误变成深色/黑色模式
+  const bug1 = await page.evaluate(async () => {
+    const cmd = await import('./command.js');
+    return {
+      toRight: cmd.parseNaturalCommands('从上下翻页变成左右翻页', { reading: true }),
+      toDown: cmd.parseNaturalCommands('从左右翻页变成上下翻页', { reading: true }),
+      darkToEye: cmd.parseNaturalCommands('从深色变成护眼模式', { reading: true }),
+      nightEye: cmd.parseNaturalCommands('夜间开护眼模式', { reading: true }),
+      batch: cmd.parseNaturalCommands('帮我批量导入')
+    };
+  });
+  assert.deepEqual(bug1.toRight, [{ op: 'flow', value: 'paginated' }], '从上下翻页变成左右翻页 -> paginated');
+  assert.deepEqual(bug1.toDown, [{ op: 'flow', value: 'scrolled' }], '从左右翻页变成上下翻页 -> scrolled');
+  assert.ok(bug1.darkToEye.some(o => o.op === 'readTheme' && o.value === 'sepia'), '从深色变成护眼模式 sets sepia');
+  assert.equal(bug1.darkToEye.some(o => o.value === 'dark' || o.value === 'night'), false, '从深色变成护眼模式 NEVER sets dark/night');
+  assert.deepEqual(bug1.nightEye, [{ op: 'readTheme', value: 'sepia' }], '夜间开护眼模式 sets sepia and NEVER dark/night');
+  assert.equal(bug1.batch[0]?.op, 'batchImport', '批量导入 parsed cleanly');
+
+  // Bug #2 回归：TXT 上下滚动偏移后语音切「从上下翻页变成左右翻页，开护眼模式，字大一点」不丢失下半屏文字
+  const bug2 = await page.evaluate(async () => {
+    const s = await import('./settings.js');
+    await window.__app.openBook('z-v');
+    await window.__app.runCommand('上下翻页');
+    const tp = document.querySelector('.txtpage');
+    if (tp) tp.scrollTop = 180;
+    await window.__app.runCommand('从上下翻页变成左右翻页，开护眼模式，字大一点');
+    const tpAfter = document.querySelector('.txtpage');
+    const colsAfter = document.querySelector('.txtcols');
+    const res = {
+      flow: s.settings.flow,
+      theme: s.settings.theme,
+      scrollTop: tpAfter ? tpAfter.scrollTop : -1,
+      colsH: colsAfter ? colsAfter.clientHeight : 0,
+      pageH: tpAfter ? tpAfter.clientHeight : 0
+    };
+    await window.__app.closeBook();
+    return res;
+  });
+  assert.equal(bug2.flow, 'paginated', 'Bug #2: flow switched to paginated');
+  assert.equal(bug2.theme, 'sepia', 'Bug #2: theme switched to warm sepia');
+  assert.equal(bug2.scrollTop, 0, 'Bug #2: lingering scrollTop reset to 0 on paginated switch');
+  assert.ok(bug2.colsH >= bug2.pageH - 4 && bug2.pageH > 400, `Bug #2: full viewport height preserved (${bug2.colsH}/${bug2.pageH})`);
+
+  // 批量导入左右交叉叠压进场动画 + 双指垂直向外拉开/向内捏合卡片堆
+  const stackAndBatch = await page.evaluate(async () => {
+    const books = await window.__app.db.all('books');
+    const ids = books.slice(0, 4).map(b => b.id);
+    window.__app.markNewlyImported(ids);
+    await window.__app.renderLibrary();
+    const dealDirs = ids.map(id => {
+      const w = document.querySelector(`.row-wrap[data-anchor="book:${id}"]`);
+      if (!w) return 'in-stack';
+      return w.classList.contains('deal-left') ? 'L' : w.classList.contains('deal-right') ? 'R' : 'none';
+    });
+    const stList = window.__app.stacks.list();
+    let spreadExpanded = false, pinchCollapsed = false;
+    if (stList.length) {
+      const sid = stList[0].id;
+      await window.__app.toggleStack(sid, false);
+      const stEl = document.querySelector(`.stack[data-stack="${sid}"]`);
+      if (stEl) {
+        const r = stEl.getBoundingClientRect();
+        const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+        stEl.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 11, clientX: cx, clientY: cy - 10, bubbles: true }));
+        stEl.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 12, clientX: cx, clientY: cy + 10, bubbles: true }));
+        stEl.dispatchEvent(new PointerEvent('pointermove', { pointerId: 11, clientX: cx, clientY: cy - 70, bubbles: true }));
+        stEl.dispatchEvent(new PointerEvent('pointermove', { pointerId: 12, clientX: cx, clientY: cy + 70, bubbles: true }));
+        stEl.dispatchEvent(new PointerEvent('pointerup', { pointerId: 11, clientX: cx, clientY: cy - 70, bubbles: true }));
+        stEl.dispatchEvent(new PointerEvent('pointerup', { pointerId: 12, clientX: cx, clientY: cy + 70, bubbles: true }));
+        await new Promise(ok => setTimeout(ok, 260));
+        spreadExpanded = !!document.querySelector(`.stack[data-stack="${sid}"]`)?.classList.contains('is-open');
+        const openEl = document.querySelector(`.stack[data-stack="${sid}"]`);
+        if (openEl && spreadExpanded) {
+          const r2 = openEl.getBoundingClientRect();
+          const cx2 = r2.left + r2.width / 2, cy2 = r2.top + r2.height / 2;
+          openEl.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 21, clientX: cx2, clientY: cy2 - 70, bubbles: true }));
+          openEl.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 22, clientX: cx2, clientY: cy2 + 70, bubbles: true }));
+          openEl.dispatchEvent(new PointerEvent('pointermove', { pointerId: 21, clientX: cx2, clientY: cy2 - 12, bubbles: true }));
+          openEl.dispatchEvent(new PointerEvent('pointermove', { pointerId: 22, clientX: cx2, clientY: cy2 + 12, bubbles: true }));
+          openEl.dispatchEvent(new PointerEvent('pointerup', { pointerId: 21, clientX: cx2, clientY: cy2 - 12, bubbles: true }));
+          openEl.dispatchEvent(new PointerEvent('pointerup', { pointerId: 22, clientX: cx2, clientY: cy2 + 12, bubbles: true }));
+          await new Promise(ok => setTimeout(ok, 320));
+          pinchCollapsed = !!document.querySelector(`.stack[data-stack="${sid}"]`)?.classList.contains('is-collapsed');
+        }
+      }
+    }
+    return { dealDirs, spreadExpanded, pinchCollapsed };
+  });
+  assert.ok(stackAndBatch.dealDirs.includes('L') && stackAndBatch.dealDirs.includes('R'), `Alternating L/R batch deal verified: ${JSON.stringify(stackAndBatch.dealDirs)}`);
+  assert.equal(stackAndBatch.spreadExpanded, true, 'Two-finger vertical spread expands collapsed stack');
+  assert.equal(stackAndBatch.pinchCollapsed, true, 'Two-finger vertical pinch collapses open stack');
+
+  // 新闻推送绝不出现在外面首页（#zone-live-card 保持隐藏），始终推送到 Bot 对话页内部
+  await page.evaluate(async () => {
+    await window.__app.runAutomationItem({ id: 'auto-news-brief', name: '新闻推送', builtinAction: 'news' }, { fromToggle: true, skipNetwork: true });
+  });
+  await page.waitForFunction(() => !document.querySelector('#zone-chat-modal').classList.contains('hidden') && !!document.querySelector('#zone-chat-messages [data-card-kind="news"]'));
+  const newsInChat = await page.evaluate(() => ({
+    outsideHidden: document.querySelector('#zone-live-card')?.classList.contains('hidden'),
+    chatOpen: !document.querySelector('#zone-chat-modal')?.classList.contains('hidden'),
+    hasNewsCardInChat: !!document.querySelector('#zone-chat-messages [data-card-kind="news"]')
+  }));
+  assert.deepEqual(newsInChat, { outsideHidden: true, chatOpen: true, hasNewsCardInChat: true }, 'News push stays INSIDE Bot chat page and NEVER outside');
+  await sleep(360);
+  await page.screenshot({ path: path.resolve(root, 'test-results/zbot-51-news-in-chat.png') });
+  await page.click('#btn-chat-back');
+  await page.waitForFunction(() => document.querySelector('#zone-chat-modal').classList.contains('hidden'));
+  await sleep(360);
+  await page.screenshot({ path: path.resolve(root, 'test-results/zbot-51-home.png') });
+  report.checks.push('Zbot 5.1 verified: pure white solid ceramic UI, zero ripples, pure pitch-black hollow headlamp eyes, Bug #1 & #2 voice reader fixes, two-finger vertical stack spread/collapse, alternating L/R batch import, and News Push inside Bot chat page');
 
   for (const width of [390, 1100]) {
     await page.setViewport({ width, height: 844 });
@@ -1402,7 +1548,7 @@ try {
   await page.waitForFunction(() => !!navigator.serviceWorker.controller);
   await page.setOfflineMode(true); await page.reload();
   await page.waitForFunction(() => window.__app);
-  assert.equal(await page.title(), 'Zone');
+  assert.equal(await page.title(), 'Zbot');
   report.checks.push('Offline shell reload');
   assert.deepEqual(report.errors, []); assert.deepEqual(report.externalRequests, []);
   report.passed = true;

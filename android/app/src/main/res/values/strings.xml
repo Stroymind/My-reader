@@ -1,9 +1,9 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">Zone</string>
-    <string name="title_activity_main">Zone</string>
+    <string name="app_name">Zbot</string>
+    <string name="title_activity_main">Zbot</string>
     <string name="package_name">io.github.stroymind.myreader</string>
     <string name="custom_url_scheme">io.github.stroymind.myreader</string>
-    <string name="zone_accessibility_description">允许 Zone 在你语音授权下读取屏幕控件并代为点击、滑动与输入，配合你自己的 AI API Key 完成跨应用任务（付款、删除、发送等敏感操作前会自动暂停确认）。</string>
-    <string name="zone_widget_description">Zone 桌面单组件总管：在手机桌面上直接切换你的高审美几何 Bot 并一键语音派活，桌面永不凌乱。</string>
+    <string name="zone_accessibility_description">允许 Zbot 在你语音授权下读取屏幕控件并代为点击、滑动与输入，配合你自己的 AI API Key 完成跨应用任务（付款、删除、发送等敏感操作前会自动暂停确认）。</string>
+    <string name="zone_widget_description">Zbot 桌面单组件总管：在手机桌面上直接切换你的发光车灯眼 Bot 并一键语音派活，桌面永不凌乱。</string>
 </resources>

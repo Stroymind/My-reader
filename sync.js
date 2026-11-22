@@ -6,6 +6,24 @@ import { nativeGetJson, nativePostJson } from './ai.js';
 
 const SESSION_KEY = 'zone-cloud-account-v1';
 const DELETED_KEY = 'zone-sync-deleted-v1';
+const CLOUD_API_KEY = 'zone-sichao-api';
+const DEFAULT_CLOUD_API = 'https://sichao-v2-server.onrender.com';
+
+export function getCloudApi() {
+  try {
+    const raw = localStorage.getItem(CLOUD_API_KEY);
+    if (raw === null) return DEFAULT_CLOUD_API;
+    return String(raw).trim().replace(/\/+$/, '');
+  } catch {
+    return DEFAULT_CLOUD_API;
+  }
+}
+
+export function setCloudApi(url) {
+  const clean = String(url || '').trim().replace(/\/+$/, '');
+  try { localStorage.setItem(CLOUD_API_KEY, clean); } catch {}
+  return clean;
+}
 
 const LS_BOTS = 'zone-bots-v3';
 const LS_GROUPS = 'zone-groups-v1';

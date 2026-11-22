@@ -265,7 +265,21 @@ def test_byok_chat_endpoint_normalization_and_cloud_kb(tmp_path: Path) -> None:
 
 
 def test_connectors_verify_and_array_429_error_extraction(tmp_path: Path) -> None:
-    from sichao.gateway import extract_api_error_text
+    from sichao.gateway import extract_api_error_text, resolve_chat_endpoint
+
+    # International-first endpoint normalization: Gemini, Codex (/v1/responses), Claude
+    assert resolve_chat_endpoint("https://generativelanguage.googleapis.com", "gemini-2.5-flash") == (
+        "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+        "openai",
+    )
+    assert resolve_chat_endpoint("https://api.openai.com/v1", "gpt-5.1-codex-mini") == (
+        "https://api.openai.com/v1/responses",
+        "openai-responses",
+    )
+    assert resolve_chat_endpoint("https://api.anthropic.com", "claude-sonnet-4-5") == (
+        "https://api.anthropic.com/v1/messages",
+        "anthropic",
+    )
 
     # Gemini OpenAI-compat array error shape + OpenRouter nested metadata shape
     gem_err = [{"error": {"code": 429, "message": "You exceeded your current quota, please check your plan."}}]
@@ -383,6 +397,6 @@ def test_account_auth_cross_device_sync_and_web_client(tmp_path: Path) -> None:
 
     # PC Web client allowlist serving + traversal protection
     w_idx = client.get("/web/")
-    assert w_idx.status_code == 200 and "Zone" in w_idx.text
+    assert w_idx.status_code == 200 and "Zbot" in w_idx.text
     assert client.get("/web/sichao-server/sichao/app.py").status_code == 404
     assert client.get("/web/render.yaml").status_code == 404

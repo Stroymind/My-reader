@@ -461,14 +461,29 @@ export class EpubEngine {
   toc() { return flatToc(this.book.navigation?.toc); }
   goToc(target) { return this.rendition.display(target); }
   async applySettings() {
+    if (this.dead || !this.rendition) return;
     const cfi = this.loc?.start?.cfi;
     for (const c of this.rendition.getContents()) this.inject(c);
     this.rendition.themes.fontSize(settings.size + 'px'); // 触发重新分页
-    try { this.rendition.resize(this.el.clientWidth, this.el.clientHeight); } catch {}
+    const w = Math.max(1, this.el.clientWidth), h = Math.max(1, this.el.clientHeight);
+    if (w >= 60 && h >= 120) {
+      try { this.rendition.resize(w, h); } catch {}
+    }
+    this.expandViews();
     if (cfi) { await this.rendition.display(cfi); await this.settle(cfi); }
     this.syncHighlights();
   }
-  resize() { try { this.rendition.resize(); } catch {} }
+  resize() {
+    if (this.dead || !this.rendition) return;
+    const w = Math.max(1, this.el.clientWidth), h = Math.max(1, this.el.clientHeight);
+    if (w < 60 || h < 120) return;
+    const cfi = this.loc?.start?.cfi;
+    try { this.rendition.resize(w, h); } catch {}
+    this.expandViews();
+    if (cfi) {
+      try { this.rendition.display(cfi).catch(() => {}); } catch {}
+    }
+  }
   pageText() { return textInView(this.rendition, this.el); }
   destroy() { this.dead = true; try { this.book.destroy(); } catch {} this.el.innerHTML = ''; }
 }
@@ -766,14 +781,26 @@ export class TxtEngine {
     this.cols.classList.toggle('vrl', vrl);
     const fam = fontStack(/[\u3040-\u9fff]/.test(this.text.slice(0, 3000))) || '';
     this.cols.style.transition = 'none';
+    this.cols.style.columnWidth = '';
+    this.cols.style.height = '';
+    this.cols.style.transform = '';
+    if (!scrolled) {
+      this._progScroll = true;
+      this.page_.scrollTop = 0;
+      this.page_.scrollLeft = 0;
+      this._progScroll = false;
+    }
     if (scrolled) {
       Object.assign(this.cols.style, { columnWidth: '', transform: '', fontSize: settings.size + 'px', lineHeight: settings.lh, fontFamily: fam });
+      void this.cols.offsetHeight;
       this.pages = Math.max(1, Math.ceil(this.page_.scrollHeight / Math.max(1, h * 0.85)));
     } else if (vrl) {
       Object.assign(this.cols.style, { columnWidth: '', transform: '', fontSize: settings.size + 'px', lineHeight: settings.lh, fontFamily: fam });
+      void this.cols.offsetHeight;
       this.pages = Math.max(1, Math.ceil(this.page_.scrollWidth / w));
     } else {
-      Object.assign(this.cols.style, { columnWidth: w + 'px', fontSize: settings.size + 'px', lineHeight: settings.lh, fontFamily: fam });
+      Object.assign(this.cols.style, { columnWidth: w + 'px', height: h + 'px', fontSize: settings.size + 'px', lineHeight: settings.lh, fontFamily: fam });
+      void this.cols.offsetHeight;
       this.pages = Math.max(1, Math.round((this.cols.scrollWidth + this.gap) / (w + this.gap)));
     }
   }
@@ -818,9 +845,11 @@ export class TxtEngine {
       this.page_.scrollTop = Math.round(max * Math.max(0, Math.min(1, frac)));
       setTimeout(() => { this._progScroll = false; }, 60);
     } else if (this.mode === 'vrl') {
+      this.page_.scrollTop = 0;
       this.cols.style.transform = '';
       this.page_.scrollLeft = -this.p * this.w;
     } else {
+      this.page_.scrollTop = 0;
       this.page_.scrollLeft = 0;
       this.cols.style.transform = `translateX(${-this.p * (this.w + this.gap)}px)`;
     }

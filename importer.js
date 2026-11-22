@@ -257,7 +257,7 @@ export async function applyManifestToLibrary(manifest) {
 
 // 处理用户选择的一批文件
 export async function importFiles(files, { pdfjsLib, onStatus }) {
-  const res = { added: 0, dup: 0, fail: [], skipped: 0 };
+  const res = { added: 0, addedIds: [], dup: 0, fail: [], skipped: 0 };
   const ctx = { pdfjsLib, manifest: null };
   files = Array.from(files);
   // 先读取独立的 manifest JSON
@@ -286,7 +286,7 @@ export async function importFiles(files, { pdfjsLib, onStatus }) {
     onStatus(`正在导入 ${i}/${tasks.length}：${cleanTitle(t.name)}`);
     try {
       const r = await importBlob(await t.get(), t.name, ctx);
-      if (r.status === 'added') res.added++;
+      if (r.status === 'added') { res.added++; if (r.id) res.addedIds.push(r.id); }
       else if (r.status === 'dup') res.dup++;
       else if (r.status === 'fail') res.fail.push(r);
       else res.skipped++;

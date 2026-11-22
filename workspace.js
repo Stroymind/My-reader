@@ -894,8 +894,14 @@ function openAiSettings() {
         $('#ai-base').value = p.baseUrl;
         $('#ai-model').value = p.model;
         presetBox.querySelectorAll('.ai-preset-chip').forEach(x => x.classList.toggle('on', x === b));
-        $('#ai-settings-status').textContent = `已填入 ${p.label} 官方地址与推荐模型（${p.model}），粘贴密钥后点「测试」或「保存」。`;
-        $('#ai-key').focus();
+        if (p.localBridge) {
+          if (!$('#ai-key').value.trim()) $('#ai-key').value = 'local-cli';
+          $('#ai-settings-status').textContent = `已填入 ${p.label}（${p.model}）。在电脑运行 npm run ai:bridge 后，手机填电脑局域网 IP 即可直连本机官方 CLI 订阅额度。`;
+          $('#ai-base').focus();
+        } else {
+          $('#ai-settings-status').textContent = `已填入 ${p.label} 官方地址与推荐模型（${p.model}），粘贴密钥后点「测试」或「保存」。`;
+          $('#ai-key').focus();
+        }
       };
       presetBox.appendChild(b);
     }

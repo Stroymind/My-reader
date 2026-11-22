@@ -47,7 +47,7 @@ export function applyAppearance() {
   document.documentElement.dataset.appearance = pref;
   document.body?.classList.toggle('flow-scrolled', settings.flow === 'scrolled');
   document.body?.classList.toggle('writing-vrl', settings.writing === 'vertical-rl');
-  const bg = (settings.eink && inReaderPlugin) ? '#ffffff' : (reading ? (THEMES[settings.theme]?.bg || '#faf9f6') : (dark ? '#000000' : '#f5f5f7'));
+  const bg = (settings.eink && inReaderPlugin) ? '#ffffff' : (reading ? (THEMES[settings.theme]?.bg || '#faf9f6') : (dark ? '#000000' : '#ffffff'));
   document.querySelector('meta[name=theme-color]')?.setAttribute('content', bg);
   const btn = document.getElementById('btn-appearance');
   if (btn) {

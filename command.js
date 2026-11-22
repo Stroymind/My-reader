@@ -1,11 +1,11 @@
-// Zone 自然语言与语音直控引擎：离线优先（零延迟复合意图解析）+ 可选 AI 回退 + Web Speech 语音 / 前台唤醒词 + 一键撤销
+// Zbot 自然语言与语音直控引擎：离线优先（零延迟复合意图解析）+ 可选 AI 回退 + Web Speech 语音 / 前台唤醒词 + 一键撤销
 // 严禁执行未白名单化的删除或外部发送操作；无密钥/离线时零网络请求。
 
 import { aiConfigured, complete, transcribeAudio } from './ai.js';
 
 const WAKE_KEY = 'rr-voice-wake';
-const WAKE_RE = /^(?:hey\s+|hi\s+|你好\s*)?(?:zone|小域|小雨|小玉|小宇|小余|宗)[，,、。\s]*(.*)$/i;
-const RESERVED_OPEN = /^(?:目录|书签|星海|星图|知识|笔记|摘录|护眼|深色|浅色|夜间|日间|双语|对照|翻译|语音|唤醒|立体|全图|设置|整理|搜索|AI|左手|左撇子|右手|右撇子|墨水屏|竖排|横排|舒眼|休息|朗读|听书|思潮|情报)/i;
+const WAKE_RE = /^(?:hey\s+|hi\s+|你好\s*)?(?:z\s*bot|z\s*boat|小\s*z|zone|小域|小雨|小玉|小宇|小余|宗)[，,、。\s]*(.*)$/i;
+const RESERVED_OPEN = /^(?:目录|书签|星海|星图|知识|笔记|摘录|护眼|深色|浅色|夜间|日间|双语|对照|翻译|语音|唤醒|立体|全图|设置|整理|搜索|AI|左手|左撇子|右手|右撇子|墨水屏|竖排|横排|舒眼|休息|朗读|听书)/i;
 
 const SpeechRec = typeof window !== 'undefined'
   ? (window.SpeechRecognition || window.webkitSpeechRecognition || null)
@@ -134,16 +134,6 @@ function parseSingleClause(rawClause, ctx = {}) {
   if (/^(?:恢复默认界面|重置界面|清除自定义样式|还原界面)$/.test(text)) {
     return [{ op: 'resetUi' }];
   }
-  const sichaoApiSet = text.match(/^(?:连接|配置|绑定)思潮(?:云端|服务|地址)?\s*(https?:\/\/\S+)$/i);
-  if (sichaoApiSet) {
-    return [{ op: 'setSichaoApi', url: sichaoApiSet[1].trim() }];
-  }
-  if (/^(?:断开|关闭)思潮云端$/.test(text)) {
-    return [{ op: 'setSichaoApi', url: '' }];
-  }
-  if (/(?:今日思潮|打开思潮|看思潮|进入思潮|思潮|情报判断|判断档案|每日情报)/.test(text)) {
-    return [{ op: 'openSichao' }];
-  }
 
   // 1a. 手机控屏 (Phone-Use) 与桌面快捷方式 / 现场生成苹果风微应用
   if (/(?:放到(?:手机)?桌面|钉到桌面|固定到桌面|建(?:立|一个)?桌面快捷方式|生成桌面图标)/.test(text)) {
@@ -263,7 +253,12 @@ function parseSingleClause(rawClause, ctx = {}) {
     return ops;
   }
 
-  // 5. 导入书籍 / 文件 / 网页文章 / AI 找书 / 配置书源
+  // 5. 导入书籍 / 批量导入 / 文件 / 网页文章 / AI 找书 / 配置书源
+  const allUrls = text.match(/https?:\/\/[^\s，,；;。]+/gi) || [];
+  if (allUrls.length >= 2) {
+    ops.push({ op: 'batchImport', urls: allUrls.map(u => u.trim()), titles: [] });
+    return ops;
+  }
   const urlOnly = text.match(/^(?:(?:导入|抓取|收藏|阅读)(?:网页|文章|链接)?\s*)?(https?:\/\/\S+)$/i);
   if (urlOnly) {
     ops.push({ op: 'importUrl', url: urlOnly[1].trim() });
@@ -272,6 +267,11 @@ function parseSingleClause(rawClause, ctx = {}) {
   const opdsSet = text.match(/^(?:配置|设置|绑定)(?:书源|OPDS|个人书库)\s*(https?:\/\/\S+)$/i);
   if (opdsSet) {
     ops.push({ op: 'setOpds', url: opdsSet[1].trim() });
+    return ops;
+  }
+  const multiBookTitles = [...text.matchAll(/《([^》]{1,40})》/g)].map(m => m[1].trim()).filter(Boolean);
+  if (/(?:批量导入|批量添加|导入多本|导入一批|多本导入|全部导入)/.test(text) || (multiBookTitles.length >= 2 && /(?:导入|找|搜|下载|添加)/.test(text))) {
+    ops.push({ op: 'batchImport', urls: allUrls, titles: multiBookTitles });
     return ops;
   }
   const findBookM = text.match(/^(?:搜书|找书|帮我找|帮我搜|搜一下|找一本|下载一本?|导入一本?)\s*[《「]?([^，。！？,!?》」]{1,36})[》」]?$/)
@@ -371,21 +371,31 @@ function parseSingleClause(rawClause, ctx = {}) {
     return ops;
   }
 
-  if (/(?:上下翻页|上下滚动|竖向翻页|滚动阅读|上下滑动)/.test(text)) {
-    ops.push({ op: 'flow', value: 'scrolled' });
-  } else if (/(?:左右翻页|横向翻页|分页模式|左右滑动|恢复分页)/.test(text)) {
+  // 翻页方向：优先识别「从A变成B / 改成B / 换成B」的目标态，避免「从上下翻页变成左右翻页」被误判为上下翻页
+  const toPaginatedRe = /(?:变成|变为|改成|改为|换成|换为|切到|切回|切换到|切为|恢复成?|调成|转成|不要上下|不用上下).{0,8}(?:左右翻页|横向翻页|分页模式?|左右滑动|左右)/;
+  const toScrolledRe = /(?:变成|变为|改成|改为|换成|换为|切到|切回|切换到|切为|恢复成?|调成|转成|不要左右|不用左右).{0,8}(?:上下翻页|上下滚动|竖向翻页|滚动阅读|上下滑动|上下)/;
+  if (toPaginatedRe.test(text)) {
     ops.push({ op: 'flow', value: 'paginated' });
+  } else if (toScrolledRe.test(text)) {
+    ops.push({ op: 'flow', value: 'scrolled' });
+  } else if (/(?:左右翻页|横向翻页|分页模式|左右滑动|恢复分页)/.test(text) && !/(?:上下翻页|上下滚动|竖向翻页|滚动阅读|上下滑动)/.test(text)) {
+    ops.push({ op: 'flow', value: 'paginated' });
+  } else if (/(?:上下翻页|上下滚动|竖向翻页|滚动阅读|上下滑动)/.test(text)) {
+    ops.push({ op: 'flow', value: 'scrolled' });
   }
 
-  if (/(?:关|关闭|关掉|取消|退出).{0,3}竖排|(?:横排|横向排版|恢复横排|从左往右)/.test(text)) {
+  if (/(?:关|关闭|关掉|取消|退出|不要|别用|不用).{0,3}竖排|(?:横排|横向排版|恢复横排|从左往右)/.test(text)) {
     ops.push({ op: 'writing', value: 'horizontal' });
   } else if (/(?:竖排|竖向排版|台湾排版|台版|古籍排版|古代排版|繁体竖排|从右往左)/.test(text)) {
     ops.push({ op: 'writing', value: 'vertical-rl' });
   }
 
-  if (/(?:关|关闭|关掉|取消|退出).{0,4}(?:护眼|暖色|羊皮纸)/.test(text)) {
+  // 阅读主题与护眼模式：护眼模式明确对应暖纸 sepia，绝不能被同句的「从深色变成护眼 / 夜间护眼」误盖成深色/黑色模式
+  const wantsOffSepia = /(?:关|关闭|关掉|取消|退出|不要|别用|不用).{0,4}(?:护眼|暖色|羊皮纸)/.test(text);
+  const wantsSepia = !wantsOffSepia && /(?:护眼|暖色|泛黄|米黄|羊皮纸|sepia)/i.test(text);
+  if (wantsOffSepia) {
     ops.push({ op: 'readTheme', value: 'paper' });
-  } else if (/(?:护眼|暖色|泛黄|米黄|羊皮纸|sepia)/i.test(text)) {
+  } else if (wantsSepia) {
     ops.push({ op: 'readTheme', value: 'sepia' });
   } else if (/(?:纸张|纸色|自然纸)/.test(text)) {
     ops.push({ op: 'readTheme', value: 'paper' });
@@ -393,12 +403,22 @@ function parseSingleClause(rawClause, ctx = {}) {
     ops.push({ op: 'readTheme', value: 'white' });
   }
 
-  if (/(?:关|关闭|关掉|取消|退出).{0,4}(?:深色|暗色|夜间|黑夜|暗黑)/.test(text)) {
+  const toDarkRe = /(?:变成|变为|改成|改为|换成|换为|切到|切回|切换到|切为|调成|转成).{0,6}(?:深色|暗色|夜间|黑夜|暗黑|黑色)/;
+  const toLightRe = /(?:变成|变为|改成|改为|换成|换为|切到|切回|切换到|切为|调成|转成).{0,6}(?:浅色|亮色|日间|白天|护眼|暖色|纸张|纯白)/;
+  const offDarkRe = /(?:关|关闭|关掉|取消|退出|不要|别用|不用).{0,4}(?:深色|暗色|夜间|黑夜|暗黑|黑色)/;
+  const offLightRe = /(?:关|关闭|关掉|取消|退出|不要|别用|不用).{0,4}(?:浅色|亮色|日间|白天)/;
+
+  if (wantsSepia) {
+    // 明确请求护眼模式时，若同句包含「从深色/不要深色」，顺便切回浅色外观，但绝不开启暗色/夜间主题
+    if (offDarkRe.test(text) || /从.{0,4}(?:深色|暗色|夜间|黑夜|暗黑|黑色)/.test(text)) {
+      ops.push({ op: 'appearance', value: 'light' });
+    }
+  } else if (toLightRe.test(text) || offDarkRe.test(text)) {
     ops.push({ op: 'appearance', value: 'light' });
     if (!ops.some(o => o.op === 'readTheme')) ops.push({ op: 'readTheme', value: 'paper' });
-  } else if (/(?:关|关闭|关掉|取消|退出).{0,4}(?:浅色|亮色|日间|白天)/.test(text)) {
+  } else if (toDarkRe.test(text) || offLightRe.test(text)) {
     ops.push({ op: 'appearance', value: 'dark' });
-    if (reading) ops.push({ op: 'readTheme', value: 'night' });
+    if (reading || /(?:夜间阅读|暗夜阅读|关灯|阅读|黑色模式|深色模式)/.test(text)) ops.push({ op: 'readTheme', value: 'night' });
   } else if (/(?:深色|暗色|夜间|黑夜|暗黑|关灯|dark\s*mode)/i.test(text)) {
     ops.push({ op: 'appearance', value: 'dark' });
     if (reading || /(?:夜间阅读|暗夜阅读|关灯|阅读)/.test(text)) ops.push({ op: 'readTheme', value: 'night' });
@@ -464,8 +484,9 @@ function parseSingleClause(rawClause, ctx = {}) {
   }
 
   // 13. 阅读翻页 / 跳页 / 跳章 / 百分比 / 书签（含「为第N页添加一个标签」）/ 目录 / 退出阅读
-  if (/(?:下一页|往后翻|翻一页|向后翻|翻页|next\s*page)/i.test(text)) ops.push({ op: 'turn', delta: 1 });
-  else if (/(?:上一页|往前翻|回上一页|向前翻|prev\s*page)/i.test(text)) ops.push({ op: 'turn', delta: -1 });
+  const isFlowOrPace = ops.some(o => o.op === 'flow' || o.op === 'autoPace');
+  if (!isFlowOrPace && /(?:下一页|往后翻|翻一页|向后翻|^翻页$|帮我翻页|next\s*page)/i.test(text)) ops.push({ op: 'turn', delta: 1 });
+  else if (!isFlowOrPace && /(?:上一页|往前翻|回上一页|向前翻|prev\s*page)/i.test(text)) ops.push({ op: 'turn', delta: -1 });
   const pct = text.match(/(?:跳到|翻到|去|进度)?\s*第?\s*(\d{1,3})\s*%/);
   const goP = !pct && text.match(/(?:跳到|翻到|去|看|为|给)?\s*第\s*([0-9一二两三四五六七八九十百]+)\s*页/);
   const goC = !pct && !goP && text.match(/(?:跳到|翻到|去|看|为|给)?\s*第\s*([0-9一二两三四五六七八九十百]+)\s*(?:章|节|回)/);
@@ -544,23 +565,24 @@ const SAFE_OPS = new Set([
   'undo', 'wake', 'fontSize', 'font', 'lineHeight', 'readTheme', 'appearance',
   'eink', 'leftHand', 'flow', 'writing', 'eyeComfort', 'eyeRest', 'tts',
   'bilingual', 'autoPace', 'turn', 'seek', 'goPage', 'goChapter', 'voiceMark', 'bookmark', 'toc', 'bookmarks', 'highlights', 'closeBook', 'openSettings',
-  'pane', 'graphTilt', 'graphFit', 'graphMood', 'openBook', 'createNote', 'search', 'exportOutline', 'importBooks',
+  'pane', 'graphTilt', 'graphFit', 'graphMood', 'openBook', 'createNote', 'search', 'exportOutline', 'importBooks', 'batchImport',
   'findBook', 'importUrl', 'setOpds', 'stackCreate', 'stackRemove', 'stackMerge', 'stackDissolve',
-  'openSichao', 'setSichaoApi', 'askAi', 'styleUi', 'resetUi', 'exportVault', 'exportWord',
+  'askAi', 'styleUi', 'resetUi', 'exportVault', 'exportWord',
   'phoneUse', 'phoneUseSetup', 'pinShortcut', 'craftApp', 'openBotStudio', 'setComputerBridge', 'computerUse',
   'cosmosExplore', 'cosmosNeighbors', 'cosmosFocus', 'cosmosLink', 'cosmosZoom'
 ]);
 
 async function aiFallbackPlan(text, ctx) {
   if (!aiConfigured()) return [];
-  const sys = `你是 Zone 的全能自主 AI 语音中枢。无论用户提出什么自然语言需求（即使没有预设固定口令），都请拆解成严格 JSON 数组执行（只输出 JSON，不要解释）。
+  const sys = `你是 Zbot 的全能自主 AI 语音中枢。无论用户提出什么自然语言需求（即使没有预设固定口令），都请拆解成严格 JSON 数组执行（只输出 JSON，不要解释）。
 可用能力：
 - 阅读与排版：{"op":"fontSize","delta":2} / {"op":"font","value":"serif"|"kai"|"sans"|"custom"|"original"} / {"op":"lineHeight","value":1.5|1.8|2.1} / {"op":"readTheme","value":"paper"|"white"|"sepia"|"night"} / {"op":"appearance","value":"light"|"dark"|"system"} / {"op":"eink","on":true|false} / {"op":"leftHand","on":true|false} / {"op":"flow","value":"scrolled"|"paginated"} / {"op":"writing","value":"vertical-rl"|"horizontal"}
+  （重要规则：「护眼模式 / 暖色」必须是 {"op":"readTheme","value":"sepia"}，绝对不可误设为 dark 或 night；「从A变成B」只输出目标 B。）
 - 护眼与听书：{"op":"eyeComfort"} / {"op":"eyeRest"} / {"op":"tts","on":true|false} / {"op":"bilingual","on":true|false} / {"op":"autoPace","on":true|false,"speed":"auto"|"slower"|"faster"}
 - 翻页与标注：{"op":"turn","delta":1|-1} / {"op":"seek","fraction":0..1} / {"op":"goPage","page":12} / {"op":"goChapter","index":3} / {"op":"voiceMark","kind":"highlight"|"excerpt"|"annotation","query":"词","line":2,"paragraph":1,"note":"批注"} / {"op":"bookmark"} / {"op":"toc"} / {"op":"closeBook"}
-- 卡片堆与书库：{"op":"openBook","query":"书名"} / {"op":"openBook","ordinal":1} / {"op":"stackCreate","ordinals":[1,2],"name":"堆名"} / {"op":"stackRemove","stackIndex":1,"itemIndex":1} / {"op":"stackMerge","a":1,"b":2} / {"op":"stackDissolve","stackIndex":1} / {"op":"findBook","query":"书名"} / {"op":"importUrl","url":"https://..."} / {"op":"importBooks"} / {"op":"search","query":"词"}
-- 知识与星海与思潮与导出：{"op":"pane","value":"shelf"|"knowledge"|"graph"} / {"op":"createNote","text":"内容"} / {"op":"openSichao"} / {"op":"exportVault"} / {"op":"exportWord"} / {"op":"cosmosExplore","mode":"tour"|"next"|"frontier"} / {"op":"cosmosFocus","query":"词"} / {"op":"graphMood","value":"auto"|"dawn"|"day"|"dusk"|"night"} / {"op":"graphTilt","on":true|false} / {"op":"undo"}
-- 手机控屏与桌面入口：操作手机上其他 App -> {"op":"phoneUse","goal":"完整操作目标"}；把当前书/思潮/星海/小工具钉到手机桌面 -> {"op":"pinShortcut","target":"可选对象名"}；现场生成苹果风微应用并展示 -> {"op":"craftApp","prompt":"微应用描述"}
+- 卡片堆与书库：{"op":"openBook","query":"书名"} / {"op":"openBook","ordinal":1} / {"op":"stackCreate","ordinals":[1,2],"name":"堆名"} / {"op":"stackRemove","stackIndex":1,"itemIndex":1} / {"op":"stackMerge","a":1,"b":2} / {"op":"stackDissolve","stackIndex":1} / {"op":"findBook","query":"书名"} / {"op":"importUrl","url":"https://..."} / {"op":"importBooks"} / {"op":"batchImport","urls":[],"titles":[]} / {"op":"search","query":"词"}
+- 知识与星海与导出：{"op":"pane","value":"shelf"|"knowledge"|"graph"} / {"op":"createNote","text":"内容"} / {"op":"exportVault"} / {"op":"exportWord"} / {"op":"cosmosExplore","mode":"tour"|"next"|"frontier"} / {"op":"cosmosFocus","query":"词"} / {"op":"graphMood","value":"auto"|"dawn"|"day"|"dusk"|"night"} / {"op":"graphTilt","on":true|false} / {"op":"undo"}
+- 手机控屏与桌面入口：操作手机上其他 App -> {"op":"phoneUse","goal":"完整操作目标"}；把当前书/星海/小工具钉到手机桌面 -> {"op":"pinShortcut","target":"可选对象名"}；现场生成微应用并展示 -> {"op":"craftApp","prompt":"微应用描述"}
 - 实时改界面：任何对颜色/间距/圆角/风格的定制诉求 -> {"op":"styleUi","prompt":"用户的界面修改描述"}；还原 -> {"op":"resetUi"}
 - 万能问答/总结/思考：任何开放式提问、总结、解释、头脑风暴 -> {"op":"askAi","question":"用户的完整问题"}
 原则：尽量把用户的意图落地为可执行操作；若是开放性需求或聊天提问，用 askAi 或 styleUi 兜底，绝不轻易返回空数组。`;
@@ -904,13 +926,16 @@ export function createCommandController(host) {
       return { ok, count: ok ? 1 : 0, ops };
     }
 
+    document.getElementById('cmd-input')?.blur();
+    closeBar(false);
+
     const snap = host.snapshot();
     const notes = [];
     let undoable = false;
     for (const a of ops) {
       if (a.op === 'wake') {
         const ok = await setWake(a.on);
-        if (ok) notes.push(a.on ? '已开启语音唤醒（说「Zone…」）' : '已关闭语音唤醒');
+        if (ok) notes.push(a.on ? '已开启语音唤醒（说「Zbot…」）' : '已关闭语音唤醒');
         continue;
       }
       const res = await host.exec(a);
@@ -921,7 +946,6 @@ export function createCommandController(host) {
       undoStack.push(() => host.restore(snap));
       if (undoStack.length > 16) undoStack.shift();
     }
-    closeBar(false);
     if (notes.length) {
       host.toast(notes.join(' · '), undoable ? 4200 : 2400, undoable ? () => undoLast() : null);
     }
@@ -940,7 +964,7 @@ export function createCommandController(host) {
   });
   document.getElementById('cmd-wake')?.addEventListener('click', async () => {
     const next = !wakeOn;
-    if (await setWake(next)) host.toast(next ? '前台语音唤醒已开，直接说「Zone…」' : '语音唤醒已关');
+    if (await setWake(next)) host.toast(next ? '前台语音唤醒已开，直接说「Zbot…」' : '语音唤醒已关');
   });
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) stopWake();

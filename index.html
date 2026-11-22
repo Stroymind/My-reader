@@ -3,10 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<meta name="theme-color" content="#f5f5f7">
-<meta name="description" content="Zone：苹果风个人移动端 AI Agent。">
+<meta name="theme-color" content="#ffffff">
+<meta name="description" content="Zbot：纯净极简个人移动端 AI Agent。">
 <meta name="google" content="notranslate">
-<title>Zone</title>
+<title>Zbot</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icons/icon-192.png">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
@@ -29,7 +29,7 @@
 <section id="library" class="view active">
   <div class="shell">
     <div class="maincol">
-      <h1 class="sr">Zone</h1>
+      <h1 class="sr">Zbot</h1>
 
       <div id="pane-shelf" class="pane on" role="tabpanel" aria-label="流">
         <div class="measure">
@@ -49,7 +49,7 @@
             </div>
           </div>
           <div id="import-status" class="status hidden"></div>
-          <section id="zone-agent-hub" class="agent-hub" aria-label="Zone 智能体中枢">
+          <section id="zone-agent-hub" class="agent-hub" aria-label="Zbot 智能体中枢">
             <div class="agent-top-acts">
               <button id="btn-hub-profile" class="agent-avatar-btn" type="button" aria-label="账号、API 用量与设置" title="用量与设置">Z</button>
               <button id="btn-hub-newbot" class="agent-icon-btn" type="button" aria-label="新建 Bot" title="新建 Bot">
@@ -59,7 +59,7 @@
             <div class="agent-hero">
               <button id="zone-hero-card" class="agent-hero-card" type="button" aria-label="进入主 Bot 对话">
                 <span id="zone-hero-glyph" class="agent-orb-glyph" aria-hidden="true"></span>
-                <span id="zone-hero-name" class="agent-hero-name">Zone</span>
+                <span id="zone-hero-name" class="agent-hero-name">Zbot</span>
               </button>
             </div>
             <div id="zone-live-card" class="agent-live hidden" aria-live="polite"></div>
@@ -331,7 +331,7 @@
         <span class="cmd-wave" aria-hidden="true"><i></i><i></i><i></i></span>
       </button>
       <input id="cmd-input" type="text" placeholder="说一句即可，如「把第2行划线」「探索星海」" aria-label="输入或说出指令" autocomplete="off" enterkeyhint="go">
-      <button id="cmd-wake" class="cmd-wake" type="button" aria-pressed="false" title="开启后可直接说「Zone…」唤醒">唤醒</button>
+      <button id="cmd-wake" class="cmd-wake" type="button" aria-pressed="false" title="开启后可直接说「Zbot…」唤醒">唤醒</button>
     </form>
   </div>
 </div>
@@ -340,16 +340,16 @@
   <span id="drag-trash-label">拖到这里移除</span>
 </div>
 <div id="auth-gate" class="auth-gate hidden" role="dialog" aria-modal="true" aria-labelledby="auth-title">
-  <div class="auth-portal" id="auth-portal" tabindex="0" role="button" aria-label="轻触进入 Zone">
+  <div class="auth-portal" id="auth-portal" tabindex="0" role="button" aria-label="轻触进入 Zbot">
     <div class="auth-ring" aria-hidden="true"></div>
     <div class="auth-mark" aria-hidden="true">
-      <svg viewBox="0 0 100 100" width="76" height="76">
-        <path d="M42 16 C46 9 54 9 58 16 L86 67 C91 76 85 86 75 86 H25 C15 86 9 76 14 67 Z" fill="#111111" stroke="none"/>
-        <rect x="41" y="49" width="7.2" height="17" rx="3.6" fill="#FFFFFF" stroke="none"/>
-        <rect x="57" y="49" width="7.2" height="17" rx="3.6" fill="#FFFFFF" stroke="none"/>
+      <svg viewBox="0 0 100 100" width="76" height="76" style="display:block">
+        <rect x="0" y="0" width="100" height="100" rx="23" fill="#0A0A0C" stroke="none"/>
+        <rect x="27.2" y="36.2" width="18.2" height="27.6" rx="6.6" fill="none" stroke="#F6F6F9" stroke-width="3.4"/>
+        <rect x="54.6" y="36.2" width="18.2" height="27.6" rx="6.6" fill="none" stroke="#F6F6F9" stroke-width="3.4"/>
       </svg>
     </div>
-    <h2 id="auth-title" class="auth-title">Zone</h2>
+    <h2 id="auth-title" class="auth-title">Zbot</h2>
     <p class="auth-whisper">个人移动端智能体 · 轻触进入</p>
   </div>
   <p class="auth-pledge">本机加密存储 · 隐私归你所有</p>
@@ -370,12 +370,6 @@
   <p class="eye-rest-title">望向远处，让眼睛松一口气</p>
   <p class="eye-rest-sub" id="eye-rest-count">20s · 轻触任意处返回</p>
 </div>
-<div id="sichao-mask" class="sichao-mask hidden" role="dialog" aria-modal="true" aria-label="思潮 · 独立判断训练">
-  <div class="sichao-sheet">
-    <div class="intent-grip" aria-hidden="true"></div>
-    <div id="sichao-body" class="sichao-body"></div>
-  </div>
-</div>
 <section id="zone-chat-modal" class="bot-chat-view hidden" role="dialog" aria-modal="true" aria-label="Bot 对话">
   <header class="bot-chat-bar">
     <div class="bot-chat-left">
@@ -384,7 +378,7 @@
       </button>
       <button id="btn-chat-botmeta" class="bot-chat-who" type="button" title="查看资料">
         <span id="chat-head-av" class="bot-chat-av" aria-hidden="true"></span>
-        <span id="chat-head-name" class="bot-chat-name">Zone</span>
+        <span id="chat-head-name" class="bot-chat-name">Zbot</span>
       </button>
     </div>
     <div class="bot-chat-right">

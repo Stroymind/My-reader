@@ -2,13 +2,12 @@ import * as pdfjsLib from './vendor/pdf.min.mjs';
 import { db } from './db.js';
 import { importArticleUrl, importBlob, importFiles, parseManifest, applyManifestToLibrary } from './importer.js';
 import { findAndFetchBook, getOpdsUrl, setOpdsUrl } from './book-finder.js';
-import { fetchLiveSignals, getSichaoApi, initSichao, setSichaoApi } from './sichao.js';
 import { getPhoneUseStatus, openPhoneUseSettings, runPhoneUseTask } from './phone-use.js';
 import { closeMicroApp, consumeLaunchDeepLink, craftMicroApp, isMicroAppOpen, listMicroApps, openMicroApp, pinToDesktop } from './agent-surface.js';
 import { applyThemePlugin, closeBotStudio, deleteBotById, getActiveBot, getActiveThemePlugin, getBotPlugins, getPrimaryBot, isPluginEnabled, isPluginMountedOnBot, listAutomations, listBots, listGroups, listPlugins, openBotStudio, renderBotSvg, renderGroupAvatarHtml, setActiveBot, startBotLifeEngine, syncToAndroidWidget, toggleBotPlugin, triggerBotMood, updateBotNotify } from './bots.js';
 import { buildEnabledSkillsPrompt, closeConnectAppsView, listAllConnectedMcpPlugins, listConnectedApps, openConnectAppsView } from './connectors.js';
 import { buildMemoryContextForBot, closeImportMemorySheet, extractDocFileText, importMemoryText, listMemories, openImportMemorySheet } from './memory.js';
-import { cloudAuthLogin, cloudAuthLogout, cloudAuthRegister, getCloudSession, isCloudSignedIn, pollSyncDelta, recordSyncDeletion, scheduleCloudSync, syncNow } from './sync.js';
+import { cloudAuthLogin, cloudAuthLogout, cloudAuthRegister, getCloudApi, getCloudSession, isCloudSignedIn, pollSyncDelta, recordSyncDeletion, scheduleCloudSync, setCloudApi, syncNow } from './sync.js';
 import { BookletEngine, EpubEngine, PdfEngine, TxtEngine } from './engines.js';
 import { aiConfigured, complete as aiComplete, fetchLiveBalance, getAiConfig, getAiUsage, getModelPricing, nativePostJson, recordAiUsage, resetAiUsage, setAiBudget, setRechargeBalance } from './ai.js';
 import { settings, saveSettings, applyBodyTheme, applyAppearance, appearancePref, cycleAppearance, applyCustomFontBlob, FONTS, THEMES } from './settings.js';
@@ -40,31 +39,22 @@ function toast(msg, ms = 2200, onUndo = null, actionLabel = '撤销') {
   toast.t = setTimeout(() => t.classList.add('hidden'), ms);
 }
 function haptic(kind = 'light') {
-  try {
-    if (!navigator.vibrate) return;
-    const map = { light: 10, medium: 18, snap: [12, 24, 16], success: [14, 34, 22], delete: [24, 36, 14] };
-    navigator.vibrate(map[kind] ?? 10);
-  } catch {}
+  // 克制触感：普通点击与操作保持静默，仅在长按浮起拖拽时给一次 10ms 轻触确认
+  if (kind !== 'lift') return;
+  try { navigator.vibrate?.(10); } catch {}
 }
-function spawnRipple(target, x, y) {
-  if (!target || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-  const r = target.getBoundingClientRect();
-  if (!r.width || !r.height) return;
-  const wave = document.createElement('span');
-  wave.className = 'zone-ripple';
-  const sz = Math.max(r.width, r.height) * 0.9;
-  wave.style.width = sz + 'px';
-  wave.style.height = sz + 'px';
-  wave.style.left = (x - r.left) + 'px';
-  wave.style.top = (y - r.top) + 'px';
-  target.appendChild(wave);
-  setTimeout(() => wave.remove(), 540);
+let newlyImportedOrder = new Map();
+let newlyImportedTimer = null;
+let pendingBotBatchImport = null;
+function markNewlyImported(ids = []) {
+  newlyImportedOrder.clear();
+  clearTimeout(newlyImportedTimer);
+  const list = Array.isArray(ids) ? ids.filter(Boolean) : [];
+  list.forEach((id, idx) => newlyImportedOrder.set(id, idx));
+  if (list.length) {
+    newlyImportedTimer = setTimeout(() => { newlyImportedOrder.clear(); }, 1800);
+  }
 }
-document.addEventListener('pointerdown', e => {
-  if (e.button != null && e.button !== 0) return;
-  const hit = e.target?.closest?.('.book, .stack-head, .chat-card, .bot-mounted-chip, .ai-foot-pill, .ai-q-chip, .omni-add, .omni-mic, .swipe-pill');
-  if (hit && !e.target?.closest?.('input, textarea')) spawnRipple(hit, e.clientX, e.clientY);
-}, { passive: true });
 function hueFor(s) { let h = 0; for (const c of s) h = (h * 31 + c.codePointAt(0)) % 360; return h; }
 const fmtPct = p => (p == null ? '' : (p * 100).toFixed(p < 0.1 && p > 0 ? 1 : 0) + '%');
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
@@ -594,7 +584,7 @@ async function shareReadingItem({ kind = 'stack', id } = {}) {
   }
 
   let shareUrl = '';
-  const api = getSichaoApi();
+  const api = getCloudApi();
   if (api) {
     toast('正在生成公众号风格阅读页…', 2400);
     try {
@@ -743,7 +733,7 @@ function bindShelfBook(el, b, stack, swipeBg, wrap) {
     const pane = $('#pane-shelf');
     if (pane) pane.style.overflow = 'hidden';
     document.documentElement.style.touchAction = 'none';
-    haptic('medium');
+    haptic('lift');
     try { el.setPointerCapture(pointerId); } catch {}
     window.addEventListener('touchmove', preventTouchScroll, { passive: false });
   };
@@ -947,6 +937,11 @@ function bookRow(b, stack, i = 0) {
   wrap.setAttribute('role', 'listitem');
   wrap.dataset.anchor = 'book:' + b.id;
   wrap.style.setProperty('--i', i);
+  if (newlyImportedOrder.has(b.id)) {
+    const dealIdx = newlyImportedOrder.get(b.id);
+    wrap.classList.add('deal-in', dealIdx % 2 === 0 ? 'deal-left' : 'deal-right');
+    wrap.style.setProperty('--deal-i', String(dealIdx));
+  }
   const el = node('button', 'book');
   el.type = 'button';
   el.dataset.id = b.id;
@@ -1233,7 +1228,7 @@ function bindStackGestures(sec, card, head, actsEl, s, members) {
     const pane = $('#pane-shelf');
     if (pane) pane.style.overflow = 'hidden';
     document.documentElement.style.touchAction = 'none';
-    haptic('medium');
+    haptic('lift');
     try { head.setPointerCapture(pointerId); } catch {}
     window.addEventListener('touchmove', preventTouch, { passive: false });
   };
@@ -1794,24 +1789,27 @@ let command = null;
   lib.addEventListener('pointercancel', () => { pid = null; }, { passive: true });
 })();
 
-// 双指捏合合并卡片 / 卡片堆（两根手指分别按住两张不同卡片或卡片堆向内一捏，自动弹性引力吸附合并；单卡片或空白区捏合仍保留 Z 轴穿层）
+// 双指手势：
+// 1) 两根手指分别按住两张不同卡片/卡片堆向内一捏 -> 合并卡片堆
+// 2) 两根手指在同一个折叠卡片堆上「垂直向外拉开」-> 展开卡片堆；在展开的卡片堆内「垂直向内捏合」-> 折叠收拢
 (function bindCardPinchMerge() {
   const pane = $('#pane-shelf');
   if (!pane) return;
   const pts = new Map();
   let pair = null, d0 = 0, lastRatio = 1, readyBuzz = false;
+  let stackGest = null;
   const resolveTarget = node => {
     if (!node?.closest) return null;
     const stackEl = node.closest('.stack[data-stack]');
     if (stackEl && stackEl.classList.contains('is-collapsed')) {
-      return { kind: 'stack', id: stackEl.dataset.stack, el: stackEl, stackId: stackEl.dataset.stack };
+      return { kind: 'stack', id: stackEl.dataset.stack, el: stackEl, stackId: stackEl.dataset.stack, collapsed: true };
     }
     const bookEl = node.closest('.book[data-id]');
     if (bookEl) {
-      return { kind: 'book', id: bookEl.dataset.id, el: bookEl, stackId: stackEl?.dataset.stack || null };
+      return { kind: 'book', id: bookEl.dataset.id, el: bookEl, stackId: stackEl?.dataset.stack || null, stackEl, collapsed: false };
     }
     if (stackEl) {
-      return { kind: 'stack', id: stackEl.dataset.stack, el: stackEl, stackId: stackEl.dataset.stack };
+      return { kind: 'stack', id: stackEl.dataset.stack, el: stackEl, stackId: stackEl.dataset.stack, collapsed: false };
     }
     return null;
   };
@@ -1822,7 +1820,14 @@ let command = null;
         t.el.style.transform = '';
       }
     }
-    pair = null; d0 = 0; lastRatio = 1; readyBuzz = false;
+    if (stackGest) {
+      stackGest.el.classList.remove('stack-spreading', 'stack-collapsing');
+      const card = stackGest.el.querySelector('.stack-card');
+      if (card) card.style.transform = '';
+      const items = stackGest.el.querySelector('.stack-items');
+      if (items) items.style.transform = '';
+    }
+    pair = null; stackGest = null; d0 = 0; lastRatio = 1; readyBuzz = false;
     setTimeout(() => { pinchMergingCards = false; }, 120);
   };
   pane.addEventListener('pointerdown', e => {
@@ -1832,6 +1837,24 @@ let command = null;
     if (pts.size === 2) {
       const [p1, p2] = [...pts.values()];
       const t1 = p1.target, t2 = p2.target;
+      const sameStack = !!(t1 && t2 && t1.stackId && t1.stackId === t2.stackId);
+      if (sameStack) {
+        const stackEl = t1.el.classList.contains('stack') ? t1.el : t1.stackEl;
+        if (stackEl) {
+          pinchMergingCards = true;
+          const collapsed = stackEl.classList.contains('is-collapsed');
+          stackGest = {
+            mode: collapsed ? 'expand' : 'collapse',
+            stackId: t1.stackId,
+            el: stackEl,
+            dy0: Math.max(12, Math.abs(p1.y - p2.y)),
+            dx0: Math.max(12, Math.abs(p1.x - p2.x)),
+            ready: false
+          };
+          stackEl.classList.add(collapsed ? 'stack-spreading' : 'stack-collapsing');
+          return;
+        }
+      }
       const distinct = t1 && t2 && !(t1.kind === t2.kind && t1.id === t2.id)
         && !(t1.kind === 'book' && t2.kind === 'book' && t1.stackId && t1.stackId === t2.stackId);
       if (distinct) {
@@ -1842,7 +1865,6 @@ let command = null;
         readyBuzz = false;
         t1.el.classList.add('pinch-merging');
         t2.el.classList.add('pinch-merging');
-        haptic('light');
       }
     }
   }, { passive: true });
@@ -1850,8 +1872,29 @@ let command = null;
     const rec = pts.get(e.pointerId);
     if (!rec) return;
     rec.x = e.clientX; rec.y = e.clientY;
-    if (!pair || pts.size < 2 || !d0) return;
+    if (pts.size < 2) return;
     const [p1, p2] = [...pts.values()];
+    if (stackGest) {
+      const dy = Math.abs(p1.y - p2.y);
+      const dx = Math.abs(p1.x - p2.x);
+      const dyRatio = dy / stackGest.dy0;
+      const dxDelta = Math.abs(dx - stackGest.dx0);
+      if (stackGest.mode === 'expand') {
+        const dyGrow = dy - stackGest.dy0;
+        const stretch = Math.max(1, Math.min(1.14, 1 + Math.max(0, dyGrow) / 360));
+        const card = stackGest.el.querySelector('.stack-card');
+        if (card) card.style.transform = `scaleY(${stretch.toFixed(3)})`;
+        stackGest.ready = dyRatio >= 1.24 && dyGrow >= 18 && dyGrow >= dxDelta * 0.75;
+      } else {
+        const dyShrink = stackGest.dy0 - dy;
+        const squeeze = Math.max(0.86, Math.min(1, 1 - Math.max(0, dyShrink) / 420));
+        const items = stackGest.el.querySelector('.stack-items');
+        if (items) items.style.transform = `scaleY(${squeeze.toFixed(3)})`;
+        stackGest.ready = dyRatio <= 0.78 && dyShrink >= 18 && dyShrink >= dxDelta * 0.75;
+      }
+      return;
+    }
+    if (!pair || !d0) return;
     const d = Math.hypot(p1.x - p2.x, p1.y - p2.y);
     const ratio = d / d0;
     lastRatio = ratio;
@@ -1867,12 +1910,20 @@ let command = null;
     const isReady = ratio <= 0.80;
     pair[0].el.classList.toggle('pinch-merge-ready', isReady);
     pair[1].el.classList.toggle('pinch-merge-ready', isReady);
-    if (isReady && !readyBuzz) { readyBuzz = true; haptic('medium'); }
+    if (isReady && !readyBuzz) readyBuzz = true;
   }, { passive: true });
   const end = async e => {
     if (!pts.has(e.pointerId)) return;
     pts.delete(e.pointerId);
-    if (!pair || pts.size >= 2) return;
+    if (pts.size >= 2) return;
+    if (stackGest) {
+      const done = e.type === 'pointerup' && stackGest.ready;
+      const { mode, stackId } = stackGest;
+      resetPairVisual();
+      if (done) await toggleStack(stackId, mode === 'expand');
+      return;
+    }
+    if (!pair) return;
     const shouldMerge = e.type === 'pointerup' && lastRatio <= 0.80;
     const chosen = pair;
     resetPairVisual();
@@ -2043,7 +2094,9 @@ const scheduleImportHide = (ms = 4200) => {
 };
 $('#import-status')?.addEventListener('click', () => { clearTimeout(importHideTimer); $('#import-status')?.classList.add('hidden'); });
 $('#file-input').onchange = async e => {
-  showShelfPage();
+  const fromBot = pendingBotBatchImport;
+  pendingBotBatchImport = null;
+  if (!fromBot) showShelfPage();
   const files = Array.from(e.target.files || []); e.target.value = '';
   if (!files.length) return;
   try { await navigator.storage?.persist?.(); } catch {}
@@ -2075,7 +2128,23 @@ $('#file-input').onchange = async e => {
   if (res.skipped) msg += `，跳过 ${res.skipped} 个不支持的文件`;
   if (res.fail.length) msg += `\n失败 ${res.fail.length} 个：\n` + res.fail.map(f => `· ${f.title}：${f.reason}`).join('\n');
   st.textContent = msg;
-  renderLibrary();
+  if (res.addedIds?.length) markNewlyImported(res.addedIds);
+  await renderLibrary();
+  if (fromBot && res.addedIds?.length) {
+    const { thread } = getOrCreateBotThread(fromBot.botId);
+    const dealAt = Date.now();
+    thread.messages.push({ role: 'assistant', content: `已为你批量导入 ${res.addedIds.length} 项，按左右交替顺序叠入：`, at: dealAt });
+    for (let idx = 0; idx < res.addedIds.length; idx++) {
+      const b = await db.get('books', res.addedIds[idx]);
+      if (!b) continue;
+      const card = { ...makeBookChatCard(b), dealIndex: idx, dealAt };
+      thread.messages.push({ role: 'card', card, at: dealAt });
+    }
+    thread.updatedAt = Date.now();
+    saveTaskThreads();
+    renderChatBox(thread);
+    renderBotRoster();
+  }
   scheduleImportHide(res.fail.length ? 5200 : 3800);
 };
 
@@ -2813,7 +2882,22 @@ function buildSettings() {
 async function reopen() { const id = cur.id; $('#settings').classList.add('hidden'); await closeBook(); await openBook(id); }
 $('#btn-aa')?.addEventListener('click', () => { const s = $('#settings'); const show = s.classList.contains('hidden'); if (show) buildSettings(); s.classList.toggle('hidden', !show); });
 
-let rz; window.addEventListener('resize', () => { clearTimeout(rz); rz = setTimeout(() => engine?.resize(), 250); });
+let rz1, rz2;
+function scheduleReaderReflow() {
+  clearTimeout(rz1);
+  clearTimeout(rz2);
+  if (!engine) return;
+  const runReflow = () => {
+    if (!engine || !$('#reader')?.classList.contains('active')) return;
+    const stage = $('#stage');
+    if (stage) { stage.style.transform = ''; stage.style.opacity = ''; }
+    engine.resize?.();
+  };
+  rz1 = setTimeout(runReflow, 180);
+  rz2 = setTimeout(runReflow, 440);
+}
+window.addEventListener('resize', scheduleReaderReflow);
+window.visualViewport?.addEventListener('resize', scheduleReaderReflow);
 
 let readerReturnBotId = '';
 
@@ -3197,7 +3281,6 @@ function handleBack() {
   if (!$('#note-mask').classList.contains('hidden')) { $('#note-mask').classList.add('hidden'); noteSel = null; return true; }
   if (document.body.classList.contains('selecting')) { exitSelect(); return true; }
   if (closeEyeRest()) return true;
-  if (sichao.close()) return true;
   if (closeReaderPanel()) return true;
   if (!$('#settings').classList.contains('hidden')) { $('#settings').classList.add('hidden'); return true; }
   if (!$('#lib-panel').classList.contains('hidden')) { $('#lib-panel').classList.add('hidden'); return true; }
@@ -3233,24 +3316,38 @@ if (nativeApp && 'serviceWorker' in navigator) {
   navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadCtrl && !reloaded) { reloaded = true; location.reload(); } });
   navigator.serviceWorker.register('sw.js').catch(() => {});
 }
+let prefsRunning = false;
+let prefsPending = false;
 async function applyReaderPrefs() {
-  saveSettings();
-  applyBodyTheme();
-  if (!$('#settings').classList.contains('hidden')) buildSettings();
-  if (engine?.needsReopen?.() && cur) {
-    await persist();
-    const id = cur.id;
-    try { engine.destroy(); } catch {}
-    engine = null;
-    await openBook(id);
-    return;
+  if (prefsRunning) { prefsPending = true; return; }
+  prefsRunning = true;
+  try {
+    do {
+      prefsPending = false;
+      saveSettings();
+      applyBodyTheme();
+      if (!$('#settings').classList.contains('hidden')) buildSettings();
+      const stage = $('#stage');
+      if (stage) { stage.style.transform = ''; stage.style.opacity = ''; }
+      if (engine?.needsReopen?.() && cur) {
+        await persist();
+        const id = cur.id;
+        try { engine.destroy(); } catch {}
+        engine = null;
+        await openBook(id);
+      } else {
+        if (cur?.type === 'pdf' && engine) {
+          engine.reflow = true;
+          await engine.render();
+        }
+        await engine?.applySettings?.();
+        refreshBilingual();
+      }
+      scheduleReaderReflow();
+    } while (prefsPending);
+  } finally {
+    prefsRunning = false;
   }
-  if (cur?.type === 'pdf' && engine) {
-    engine.reflow = true;
-    await engine.render();
-  }
-  await engine?.applySettings?.();
-  refreshBilingual();
 }
 
 function pickVisiblePassage(eng, opts = {}) {
@@ -3333,8 +3430,6 @@ function speakCurrentPage() {
   } catch { ttsActive = false; }
 }
 
-const sichao = initSichao({ toast, onNoteCreated: () => refreshWorkspace() });
-
 command = createCommandController({
   toast,
   closeMenus: () => { closeIntent(false); closeStackMenus(false); closeBookPeek(); },
@@ -3378,6 +3473,7 @@ command = createCommandController({
       case 'readTheme': {
         if (!THEMES[a.value]) return null;
         settings.theme = a.value;
+        if (a.value !== 'night' && settings.eink) settings.eink = false;
         await applyReaderPrefs();
         return { label: THEMES[a.value].label + '模式', undoable: true };
       }
@@ -3400,6 +3496,7 @@ command = createCommandController({
         return { label: settings.leftHand ? '已切到左手模式' : '已恢复右手模式', undoable: true };
       }
       case 'eyeComfort': {
+        settings.eink = false;
         settings.theme = 'sepia';
         settings.lh = Math.max(settings.lh || 1.8, 2.1);
         settings.size = Math.min(40, Math.max(21, (settings.size || 19) + 2));
@@ -3550,10 +3647,6 @@ command = createCommandController({
           return { label: err?.message || '找书失败，请检查网络或书源地址' };
         }
       }
-      case 'setSichaoApi': {
-        setSichaoApi(a.url || '');
-        return { label: a.url ? '已连接思潮 24/7 云端情报底座' : '已切回本机离线思潮模式' };
-      }
       case 'exportVault': {
         const { listNotes, listLinks } = await import('./knowledge.js');
         const notes = await listNotes();
@@ -3594,11 +3687,6 @@ command = createCommandController({
         aEl.click();
         setTimeout(() => URL.revokeObjectURL(aEl.href), 4000);
         return { label: `已导出 ${notes.length} 条笔记为 Word / WPS 文档` };
-      }
-      case 'openSichao': {
-        if (reading) await closeBook();
-        sichao.open();
-        return { label: '已打开「思潮」独立判断空间' };
       }
       case 'askAi': {
         const pageTxt = reading ? (engine?.pageText?.() || '').trim().slice(0, 1200) : '';
@@ -3811,6 +3899,59 @@ command = createCommandController({
         $('#file-input')?.click();
         return { label: '请选择要导入的书籍或文件' };
       }
+      case 'batchImport': {
+        const gate = canAccessReaderSpace();
+        if (!gate.ok) return { label: gate.reason };
+        const urls = Array.isArray(a.urls) ? a.urls.filter(Boolean) : [];
+        const titles = Array.isArray(a.titles) ? a.titles.filter(Boolean) : [];
+        const fromChat = !$('#zone-chat-modal')?.classList.contains('hidden');
+        if (!urls.length && !titles.length) {
+          if (fromChat) {
+            pendingBotBatchImport = { botId: getActiveBot().id };
+          } else {
+            if (reading) await closeBook();
+            showPane('shelf');
+          }
+          $('#file-input')?.click();
+          return { label: '请选择多个文件，导入后将左右交替叠入' };
+        }
+        const addedIds = [];
+        for (const u of urls) {
+          try {
+            const r = await importArticleUrl(u);
+            if (r?.id) addedIds.push(r.id);
+          } catch {}
+        }
+        for (const t of titles) {
+          try {
+            const found = await findAndFetchBook(t);
+            if (found?.found) {
+              const r = await importBlob(found.blob, found.fileName, { pdfjsLib });
+              if (r?.id) addedIds.push(r.id);
+            }
+          } catch {}
+        }
+        if (addedIds.length) {
+          markNewlyImported(addedIds);
+          await renderLibrary();
+          if (fromChat) {
+            const { thread } = getOrCreateBotThread(getActiveBot().id);
+            const dealAt = Date.now();
+            thread.messages.push({ role: 'assistant', content: `已批量导入 ${addedIds.length} 项，按左右交替顺序叠入：`, at: dealAt });
+            for (let idx = 0; idx < addedIds.length; idx++) {
+              const b = await db.get('books', addedIds[idx]);
+              if (!b) continue;
+              thread.messages.push({ role: 'card', card: { ...makeBookChatCard(b), dealIndex: idx, dealAt }, at: dealAt });
+            }
+            thread.updatedAt = Date.now();
+            saveTaskThreads();
+            renderChatBox(thread);
+            renderBotRoster();
+          }
+          return { label: `已批量导入 ${addedIds.length} 项` };
+        }
+        return { label: '未匹配到可导入内容，可直接选本地文件批量导入' };
+      }
       case 'cosmosExplore': {
         const gate = canAccessReaderSpace();
         if (!gate.ok) return { label: gate.reason };
@@ -3885,12 +4026,10 @@ command = createCommandController({
       case 'pinShortcut': {
         const target = String(a.target || '').trim();
         let spec = null;
-        if (/思潮/.test(target)) {
-          spec = { id: 'zone-sichao', label: '今日思潮', uri: 'zone://open/sichao', glyph: '思' };
-        } else if (/星海/.test(target)) {
-          spec = { id: 'zone-graph', label: 'Zone 星海', uri: 'zone://open/graph', glyph: '星' };
+        if (/星海/.test(target)) {
+          spec = { id: 'zone-graph', label: 'Zbot 星海', uri: 'zone://open/graph', glyph: '星' };
         } else if (/知识|笔记/.test(target)) {
-          spec = { id: 'zone-knowledge', label: 'Zone 知识', uri: 'zone://open/knowledge', glyph: '知' };
+          spec = { id: 'zone-knowledge', label: 'Zbot 知识', uri: 'zone://open/knowledge', glyph: '知' };
         } else if (reading && cur?.id) {
           spec = { id: `book-${cur.id}`, label: cur.title || '阅读', uri: `zone://open/book/${cur.id}`, glyph: (cur.title || '读').slice(0, 1) };
         } else if (target) {
@@ -3900,9 +4039,9 @@ command = createCommandController({
         }
         if (!spec) {
           const pane = currentPane();
-          if (pane === 'graph') spec = { id: 'zone-graph', label: 'Zone 星海', uri: 'zone://open/graph', glyph: '星' };
-          else if (pane === 'knowledge') spec = { id: 'zone-knowledge', label: 'Zone 知识', uri: 'zone://open/knowledge', glyph: '知' };
-          else spec = { id: 'zone-sichao', label: '今日思潮', uri: 'zone://open/sichao', glyph: '思' };
+          if (pane === 'graph') spec = { id: 'zone-graph', label: 'Zbot 星海', uri: 'zone://open/graph', glyph: '星' };
+          else if (pane === 'knowledge') spec = { id: 'zone-knowledge', label: 'Zbot 知识', uri: 'zone://open/knowledge', glyph: '知' };
+          else spec = { id: 'zbot-home', label: 'Zbot', uri: 'zone://open/voice', glyph: 'Z' };
         }
         const res = await pinToDesktop(spec);
         toast(res.message, 3200);
@@ -4191,12 +4330,10 @@ async function openDeepLink(uri) {
   const mBot = s.match(/^zone:\/\/open\/bot\/(.+)$/);
   if (mBot) {
     const b = setActiveBot(decodeURIComponent(mBot[1]));
-    if (b.id === 'bot-sichao') { openSichaoSheet(); return true; }
     toast(`当前 Bot：${b.name}`);
     command.openBar({ listen: false });
     return true;
   }
-  if (s === 'zone://open/sichao') { openSichaoSheet(); return true; }
   if (s === 'zone://open/graph') {
     if (reading) await closeBook();
     if (document.documentElement.classList.contains('legacy-reader-home')) { showPane('graph', { whisper: false }); return true; }
@@ -4398,7 +4535,7 @@ function reloadFromCloudSync() {
 
 function triggerCloudSyncSoon() {
   if (!isCloudSignedIn()) return;
-  scheduleCloudSync({ apiBase: getSichaoApi(), onApplied: reloadFromCloudSync });
+  scheduleCloudSync({ apiBase: getCloudApi(), onApplied: reloadFromCloudSync });
 }
 
 function saveTaskThreads(skipSync = false) {
@@ -4617,6 +4754,10 @@ function parseBotCardDirectives(raw) {
     cards.push({ kind: 'stack_ref', query: String(query || '').trim() });
     return '';
   });
+  clean = clean.replace(/\[\[NEWS_PUSH(?::[^\]]*)?\]\]/g, () => {
+    cards.push({ kind: 'news_ref' });
+    return '';
+  });
   return { text: clean.replace(/\n{3,}/g, '\n\n').trim(), cards };
 }
 
@@ -4780,9 +4921,14 @@ function renderBotMountedBar(bot) {
 function renderChatCardElement(card, thread) {
   const wrap = document.createElement('div');
   wrap.className = 'chat-card-wrap';
+  if (card.dealIndex != null && card.dealAt && Date.now() - card.dealAt < 4000) {
+    wrap.classList.add('deal-in', card.dealIndex % 2 === 0 ? 'deal-left' : 'deal-right');
+    wrap.style.setProperty('--deal-i', String(card.dealIndex));
+  }
   const el = document.createElement('div');
   el.className = 'chat-card';
   el.dataset.cardId = card.id || '';
+  if (card.kind) el.dataset.cardKind = card.kind;
 
   const head = document.createElement('div');
   head.className = 'chat-card-head';
@@ -4978,6 +5124,10 @@ function renderChatCardElement(card, thread) {
         bPri.textContent = card.primaryLabel || (card.appId ? '立即打开' : '打开链接');
         bPri.onclick = () => {
           if (card.appId) openMicroApp(card.appId);
+          else if (card.kind === 'news') {
+            if (aiConfigured()) chatWithActiveBot('请展开并深入解读刚才推送的今日重点动态');
+            else openAiSettingsDialog();
+          } else if (card.actionCmd) command.run(card.actionCmd);
           else if (card.url) window.open(card.url, '_blank', 'noopener');
         };
         acts.appendChild(bPri);
@@ -5039,7 +5189,7 @@ function renderChatBox(thread, pendingText = '') {
     renderGroupMentionBar(group);
   } else {
     modal.style.setProperty('--bot-accent', bot.accent || '#007AFF');
-    if (avEl) avEl.innerHTML = renderBotSvg(bot.shape, bot.accent);
+    if (avEl) avEl.innerHTML = renderBotSvg(bot.shape, bot.accent, bot.id);
     if (nameEl) nameEl.textContent = bot.name;
     if (inp) inp.placeholder = `给 ${bot.name} 发消息…`;
     renderBotMountedBar(bot);
@@ -5112,7 +5262,7 @@ function renderChatBox(thread, pendingText = '') {
       if (m.role !== 'user') {
         const av = document.createElement('div');
         av.className = 'chat-mini-av';
-        av.innerHTML = renderBotSvg(senderBot.shape, senderBot.accent);
+        av.innerHTML = renderBotSvg(senderBot.shape, senderBot.accent, senderBot.id);
         row.appendChild(av);
       }
       const bub = document.createElement('div');
@@ -5258,7 +5408,7 @@ function mountedExtPluginsFor(botId) {
 }
 
 async function inspectExternalPluginRemote({ url, token = '' } = {}) {
-  const api = getSichaoApi();
+  const api = getCloudApi();
   if (!api) return { ok: false, error: '未配置云端代理地址，无法探测远程 MCP' };
   try {
     const r = await nativePostJson(`${api}/api/mcp/inspect`, {}, { url, token }, 45000);
@@ -5320,7 +5470,7 @@ function openZoneMemorySheet(defaultScope = 'global') {
   openImportMemorySheet({
     bots: listBots(),
     defaultScope,
-    cloudApi: getSichaoApi(),
+    cloudApi: getCloudApi(),
     onCopyPrompt: txt => copyText(txt),
     onToast: (msg, ms) => toast(msg, ms),
     onChanged: () => { renderAgentHub(); triggerCloudSyncSoon(); }
@@ -5328,7 +5478,7 @@ function openZoneMemorySheet(defaultScope = 'global') {
 }
 
 async function runCloudByokAgent(bot, ctxMsgs, memoryCtx, extPlugs, rulesOverride = '') {
-  const api = getSichaoApi();
+  const api = getCloudApi();
   if (!api) return null;
   const cfg = getAiConfig();
   const mergedPlugs = [...(extPlugs || []), ...listAllConnectedMcpPlugins()];
@@ -5431,7 +5581,7 @@ async function chatWithActiveGroup(text, attachments = []) {
       respondedIds.add(b.id);
       const memCtx = await buildSecondBrainContext(b.id, q);
       const extPlugs = mountedExtPluginsFor(b.id);
-      const useCloud = !hasVisualAtts && (isPluginMountedOnBot(b.id, 'mcp-bridge') || extPlugs.length > 0) && getSichaoApi() && q.length >= 6;
+      const useCloud = !hasVisualAtts && (isPluginMountedOnBot(b.id, 'mcp-bridge') || extPlugs.length > 0) && getCloudApi() && q.length >= 6;
       renderChatBox(thread, `${b.name} ${useCloud ? '正在联网协同思考…' : '正在群内回复…'}`);
       const peers = members.filter(x => x.id !== b.id).map(x => `${x.name}${x.rules ? `(${x.rules.slice(0, 20)})` : ''}`).join('、');
       const sysPrompt = [
@@ -5523,8 +5673,13 @@ async function chatWithActiveBot(text, attachments = []) {
     return;
   }
 
-  // 自然语言找书 / 要卡片 / 要卡片堆：任意 Bot 均可直接回复可交互的阅读卡片与卡片堆卡片（支持零 Token 本地秒发）
-  if (!atts.length && isBotReadingRequest(q)) {
+  // 离线兜底（仅当尚未配置真实 AI API Key 时触发；一旦接入真实 AI API，完全交给 Agent 工具指令自主调度，绝不硬编码抢占对话）
+  if (!aiConfigured() && !atts.length && /^(?:(?:帮我|给我)?(?:看|拉取|发|打开|来一条?|开启?)?(?:今日|最新)?(?:新闻推送|科技新闻|前沿动态|每日情报))$/.test(q)) {
+    await deliverNewsPushInChat(bot.id, { openChat: false });
+    return;
+  }
+
+  if (!aiConfigured() && !atts.length && isBotReadingRequest(q)) {
     const { cards, totalBooks } = await findMatchingReadingCards(q);
     if (cards.length) {
       thread.messages.push({
@@ -5557,7 +5712,7 @@ async function chatWithActiveBot(text, attachments = []) {
   if (!aiConfigured()) {
     thread.messages.push({
       role: 'assistant',
-      content: `你好，我是 ${bot.name}。填上你自己的 AI API Key（支持 DeepSeek / 硅基流动 / 通义千问 / OpenAI / Gemini / Claude，纯 BYOK 零平台扣费）后，就能直接在这里和我连续对话啦。`,
+      content: `你好，我是 ${bot.name}。填上你的 AI API Key（优先支持 Gemini / OpenAI / Codex / Claude / OpenRouter / Grok，也支持本机 Codex CLI 桥接，纯 BYOK 零平台扣费）后，就能直接在这里和我连续对话并自主执行任务。`,
       needKey: true,
       at: Date.now()
     });
@@ -5569,7 +5724,7 @@ async function chatWithActiveBot(text, attachments = []) {
   const hasVisualAtts = atts.some(a => a.kind === 'image' || a.kind === 'video');
   const memoryCtx = await buildSecondBrainContext(bot.id, q);
   const extPlugs = mountedExtPluginsFor(bot.id);
-  const canUseCloudEngine = !hasVisualAtts && (isPluginMountedOnBot(bot.id, 'mcp-bridge') || extPlugs.length > 0) && !!getSichaoApi() && (q.length >= 4 || extPlugs.length > 0);
+  const canUseCloudEngine = !hasVisualAtts && (isPluginMountedOnBot(bot.id, 'mcp-bridge') || extPlugs.length > 0) && !!getCloudApi() && (q.length >= 4 || extPlugs.length > 0);
   renderChatBox(thread, hasVisualAtts ? '正在解析照片/视频内容…' : (canUseCloudEngine ? '云端多步 Agent 思考与按需联网中…' : '思考中…'));
   $('#zone-chat-modal')?.classList.add('thinking');
   try {
@@ -5584,7 +5739,7 @@ async function chatWithActiveBot(text, attachments = []) {
     const peerHint = otherBots.length
       ? `你可后台静默联系的其他 Bot：${otherBots.map(b => `${b.name}${b.rules ? `(${b.rules.slice(0, 22)})` : ''}`).join('、')}。如任务需要交给某位 Bot 协同，可输出 [[MSG_BOT:对方Bot名|具体委托内容]]，系统会后台静默通讯并把结果交回给你，不会打扰用户。`
       : '';
-    const cardHint = '如需用户点击卡片确认后再执行关键任务，可在回复末尾另起一行输出 [[CONFIRM:标题|目标或链接|简短说明|确认后指令]]；如产出关键链接/PR/报告卡片，可输出 [[CARD:来源|标题|副标题|详情|https://链接]]；如需发送用户库里的书籍或卡片堆卡片，可输出 [[BOOK_CARD:书名关键词]] 或 [[STACK_CARD:卡片堆名称]]。';
+    const cardHint = '如需用户点击卡片确认后再执行关键任务，可在回复末尾另起一行输出 [[CONFIRM:标题|目标或链接|简短说明|确认后指令]]；如产出关键链接/PR/报告卡片，可输出 [[CARD:来源|标题|副标题|详情|https://链接]]；如需发送用户库里的书籍或卡片堆卡片，可输出 [[BOOK_CARD:书名关键词]] 或 [[STACK_CARD:卡片堆名称]]；如需在对话内推送今日新闻动态卡片，可输出 [[NEWS_PUSH]]。';
     const combinedRules = [bot.rules || '', peerHint, cardHint].filter(Boolean).join('\n\n');
 
     let ans = '';
@@ -5640,9 +5795,13 @@ async function chatWithActiveBot(text, attachments = []) {
     if (parsed.text) {
       thread.messages.push({ role: 'assistant', content: parsed.text, at: Date.now() });
     }
-    const resolvedCards = await resolveBotCardRefs(parsed.cards);
+    const wantNewsPush = parsed.cards.some(c => c.kind === 'news_ref');
+    const resolvedCards = await resolveBotCardRefs(parsed.cards.filter(c => c.kind !== 'news_ref'));
     for (const c of resolvedCards) {
       thread.messages.push({ role: 'card', card: c, at: Date.now() });
+    }
+    if (wantNewsPush) {
+      await deliverNewsPushInChat(bot.id, { openChat: false });
     }
     if (cloudSteps.length && !parsed.cards.length) {
       const topSrc = cloudSources[0] || null;
@@ -5952,7 +6111,7 @@ function openProfileSheet() {
   let syncingNow = false;
   const escHtml = s => String(s || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const webPortalUrl = () => {
-    const api = String(getSichaoApi() || 'https://sichao-v2-server.onrender.com').replace(/\/+$/, '');
+    const api = String(getCloudApi() || 'https://sichao-v2-server.onrender.com').replace(/\/+$/, '');
     return `${api}/web/`;
   };
   const draw = () => {
@@ -5978,11 +6137,11 @@ function openProfileSheet() {
     const monogram = sess?.user?.display_name ? Array.from(sess.user.display_name)[0].toUpperCase() : 'Z';
 
     mask.innerHTML = `
-      <div class="bots-sheet" role="dialog" aria-label="我的 Zone">
+      <div class="bots-sheet" role="dialog" aria-label="我的 Zbot">
         <div class="bots-head">
           <div>
-            <h3>我的 Zone</h3>
-            <p>Zone 5.0 · 跨端云同步 · 自有密钥</p>
+            <h3>我的 Zbot</h3>
+            <p>Zbot 5.1 · 跨端云同步 · 自有密钥</p>
           </div>
           <button type="button" class="bots-close" data-p-act="close">完成</button>
         </div>
@@ -6021,7 +6180,7 @@ function openProfileSheet() {
             <button type="button" class="prof-acct-row" data-p-act="toggle-auth">
               <div class="prof-acct-av">Z</div>
               <div class="prof-row-main">
-                <strong>登录 Zone 账号</strong>
+                <strong>登录 Zbot 账号</strong>
                 <span>手机与电脑端实时同步 Bot、对话消息与知识库</span>
               </div>
               <span class="prof-row-val">${showAuthForm ? '收起' : '登录 ›'}</span>
@@ -6081,7 +6240,7 @@ function openProfileSheet() {
           <button type="button" class="prof-row" data-p-act="refresh-bal">
             <div class="prof-row-main">
               <strong>${checkingLive ? '查询中…' : '刷新余额'}</strong>
-              <span>DeepSeek · OpenRouter · 硅基流动</span>
+              <span>OpenRouter · 官方余额</span>
             </div>
             <span class="prof-row-val">${checkingLive ? '…' : '刷新 ›'}</span>
           </button>
@@ -6104,7 +6263,7 @@ function openProfileSheet() {
           <button type="button" class="prof-row" data-p-act="plugins">
             <div class="prof-row-main">
               <strong>连接应用</strong>
-              <span>GitHub · Notion · 飞书 · MCP · 阅读器</span>
+              <span>Notion · Obsidian · Google · GitHub · MCP</span>
             </div>
             <span class="prof-row-val">›</span>
           </button>
@@ -6152,15 +6311,15 @@ function openProfileSheet() {
         const displayName = (mask.querySelector('#prof-auth-name')?.value || '').trim();
         authBusy = true; authErr = ''; draw();
         const fn = authMode === 'register' ? cloudAuthRegister : cloudAuthLogin;
-        const res = await fn({ apiBase: getSichaoApi(), account, password, displayName });
+        const res = await fn({ apiBase: getCloudApi(), account, password, displayName });
         if (!res.ok) {
           authBusy = false; authErr = res.error || '登录失败'; draw();
           return;
         }
-        const sres = await syncNow({ apiBase: getSichaoApi(), onApplied: reloadFromCloudSync });
+        const sres = await syncNow({ apiBase: getCloudApi(), onApplied: reloadFromCloudSync });
         authBusy = false; showAuthForm = false; authErr = '';
         haptic('success');
-        toast(sres.ok ? '登录成功，已完成手机与电脑端云同步' : '已登录 Zone 账号', 3200);
+        toast(sres.ok ? '登录成功，已完成手机与电脑端云同步' : '已登录 Zbot 账号', 3200);
         draw();
       };
     }
@@ -6169,7 +6328,7 @@ function openProfileSheet() {
       syncBtn.onclick = async () => {
         if (syncingNow) return;
         syncingNow = true; draw();
-        const res = await syncNow({ apiBase: getSichaoApi(), onApplied: reloadFromCloudSync });
+        const res = await syncNow({ apiBase: getCloudApi(), onApplied: reloadFromCloudSync });
         syncingNow = false;
         haptic(res.ok ? 'success' : 'light');
         toast(res.ok ? `双向同步完成（版本 #${res.revision}）` : (res.error || '同步失败，请稍后重试'), 2800);
@@ -6187,8 +6346,8 @@ function openProfileSheet() {
     const logoutBtn = mask.querySelector('[data-p-act="auth-logout"]');
     if (logoutBtn) {
       logoutBtn.onclick = async () => {
-        await cloudAuthLogout({ apiBase: getSichaoApi() });
-        toast('已退出 Zone 账号（本机数据完整保留）', 2400);
+        await cloudAuthLogout({ apiBase: getCloudApi() });
+        toast('已退出 Zbot 账号（本机数据完整保留）', 2400);
         draw();
       };
     }
@@ -6211,7 +6370,7 @@ function openProfileSheet() {
       if (checkingLive) return;
       if (!aiConfigured()) { toast('请先配置你的 API Key'); return; }
       checkingLive = true; draw();
-      const res = await fetchLiveBalance(getSichaoApi());
+      const res = await fetchLiveBalance(getCloudApi());
       checkingLive = false;
       if (res?.ok) {
         toast(`${res.provider || '官方'}实时余额：${res.currency === 'USD' ? '$' : '¥'}${Number(res.balance).toFixed(2)}`, 3000);
@@ -6263,7 +6422,6 @@ function renderAgentHub() {
 
 function launchPluginById(id, bot = getActiveBot()) {
   const targetBot = bot || getActiveBot();
-  if (id === 'sichao') { openSichaoSheet(); return; }
   if (id === 'phone-use') { command.run('开启手机控屏'); return; }
   if (id === 'computer-use') {
     const curUrl = (() => { try { return localStorage.getItem('zone-cu-bridge') || ''; } catch { return ''; } })();
@@ -6282,37 +6440,42 @@ function launchPluginById(id, bot = getActiveBot()) {
     return;
   }
 }
-async function runAutomationItem(auto, opts = {}) {
-  if (opts?.disabled) {
-    $('#zone-live-card')?.classList.add('hidden');
-    return;
+async function deliverNewsPushInChat(botId = '', { openChat = true, skipNetwork = false } = {}) {
+  // 新闻推送始终在 Bot 对话页内部呈现（无外部卡片、无独立思潮项目）
+  $('#zone-live-card')?.classList.add('hidden');
+  const targetBot = listBots().find(b => b.id === botId) || getActiveBot() || getPrimaryBot();
+  if (openChat) openBotConversation(targetBot);
+  if (aiConfigured() && !skipNetwork) {
+    await chatWithActiveBot('请帮我检索并简明整理今天全球 AI 与科技领域的 5 条重点动态。');
+    return null;
   }
-  if (auto?.builtinAction === 'sichao') {
-    if (opts?.fromToggle) {
-      showAgentLiveCard({ title: '新闻推送 · 正在拉取最新动态…', body: '正在连接云端思潮获取今日前沿信号…' });
-      try {
-        const list = await fetchLiveSignals();
-        const preview = list.slice(0, 3).map((ev, i) => `${i + 1}. ${ev.title}`).join('\n');
-        showAgentLiveCard({
-          title: `新闻推送 · 已送达 ${list.length} 条`,
-          body: preview || '暂无最新信号',
-          onOpen: () => openSichaoSheet(),
-          pinSpec: { id: 'zone-sichao', label: '新闻推送', uri: 'zone://open/sichao', glyph: '闻' }
-        });
-      } catch (err) {
-        showAgentLiveCard({
-          title: '新闻推送 · 离线就绪',
-          body: `云端唤醒中（${err?.message || '稍后重试'}），点下方可立即进入本地情报卡。`,
-          onOpen: () => openSichaoSheet()
-        });
-      }
-      return;
-    }
-    openSichaoSheet();
+  const card = postChatCard(targetBot.id, {
+    kind: 'news',
+    icon: 'cloud',
+    provider: '新闻推送',
+    status: aiConfigured() ? '就绪' : '待接入 AI',
+    statusTone: aiConfigured() ? 'ok' : '',
+    title: '对话内新闻推送已就绪',
+    detail: '接入你的 Gemini / OpenAI / Codex / Claude API 或本地 CLI 订阅桥接后，Bot 将按设定周期直接在当前对话内实时推送并深入解读。',
+    primaryLabel: aiConfigured() ? '立即深入解读' : '配置 AI 接入'
+  });
+  const { thread } = getOrCreateBotThread(targetBot.id);
+  thread.updatedAt = Date.now();
+  saveTaskThreads();
+  renderChatBox(thread);
+  renderBotRoster();
+  return card;
+}
+async function runAutomationItem(auto, opts = {}) {
+  $('#zone-live-card')?.classList.add('hidden');
+  if (opts?.disabled) return;
+  if (auto?.builtinAction === 'news' || auto?.builtinAction === 'sichao') {
+    await deliverNewsPushInChat(getActiveBot()?.id || getPrimaryBot()?.id, { openChat: true, skipNetwork: !!opts?.skipNetwork });
     return;
   }
   if (auto?.prompt) {
-    activeThreadId = null;
+    const targetBot = getActiveBot() || getPrimaryBot();
+    openBotConversation(targetBot);
     await chatWithActiveBot(auto.prompt);
   }
 }
@@ -6326,7 +6489,7 @@ const openBotsFromHub = (opts = {}) => openBotStudio({
   ...opts
 });
 const openConnectAppsFromHub = () => openConnectAppsView({
-  cloudApi: getSichaoApi(),
+  cloudApi: getCloudApi(),
   onInspectPlugin: inspectExternalPluginRemote,
   onChanged: () => { renderAgentHub(); triggerCloudSyncSoon(); },
   onToast: (msg, ms) => toast(msg, ms)
@@ -6439,13 +6602,16 @@ $('#zone-chat-form')?.addEventListener('submit', async e => {
     renderAgentHub();
     return;
   }
-  if (!atts.length && isBotReadingRequest(text)) {
-    await chatWithActiveBot(text, atts);
-    renderAgentHub();
-    return;
-  }
+  const DIRECT_CHAT_CMD_OPS = new Set([
+    'batchImport', 'importBooks', 'importUrl', 'phoneUse', 'phoneUseSetup',
+    'computerUse', 'setComputerBridge', 'openBotStudio',
+    'pinShortcut', 'craftApp', 'setOpds', 'styleUi', 'resetUi'
+  ]);
   const ops = !atts.length ? parseNaturalCommands(text, { reading: false, pane: currentPane() }) : [];
-  if (ops.length && ops[0].op !== 'askAi') {
+  const shouldRunLocalCmd = ops.length && ops[0].op !== 'askAi' && (!aiConfigured() || DIRECT_CHAT_CMD_OPS.has(ops[0].op));
+  if (!aiConfigured() && !atts.length && (isBotReadingRequest(text) || /^(?:(?:帮我|给我)?(?:看|拉取|发|打开|来一条?|开启?)?(?:今日|最新)?(?:新闻推送|科技新闻|前沿动态|每日情报))$/.test(text))) {
+    await chatWithActiveBot(text, atts);
+  } else if (shouldRunLocalCmd) {
     await command.run(text);
   } else {
     await chatWithActiveBot(ops[0]?.question || text, atts);
@@ -6460,18 +6626,18 @@ consumeLaunchDeepLink(openDeepLink);
 syncToAndroidWidget();
 syncEdgeDockFromNative();
 if (isCloudSignedIn()) {
-  syncNow({ apiBase: getSichaoApi(), onApplied: reloadFromCloudSync }).catch(() => {});
+  syncNow({ apiBase: getCloudApi(), onApplied: reloadFromCloudSync }).catch(() => {});
 }
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden) {
     syncEdgeDockFromNative();
-    if (isCloudSignedIn()) pollSyncDelta({ apiBase: getSichaoApi(), onApplied: reloadFromCloudSync }).catch(() => {});
+    if (isCloudSignedIn()) pollSyncDelta({ apiBase: getCloudApi(), onApplied: reloadFromCloudSync }).catch(() => {});
   }
 });
 setInterval(() => {
   if (!document.hidden && isCloudSignedIn()) {
-    pollSyncDelta({ apiBase: getSichaoApi(), onApplied: reloadFromCloudSync }).catch(() => {});
+    pollSyncDelta({ apiBase: getCloudApi(), onApplied: reloadFromCloudSync }).catch(() => {});
   }
 }, 18000);
 
-window.__app = { db, openBook, closeBook, importFiles, importBlob, importArticleUrl, handleBack, openDeepLink, openMicroApp, closeMicroApp, isMicroAppOpen, pinToDesktop, postChatCard, requestChatConfirm, openBotConversation, openGroupConversation, openBotReaderSheet, relayBotToBotMessage, buildSecondBrainContext, dockToRightEdge, undockFromRightEdge, shareReadingItem, startInlineStackRename, mergeShelfTargets, openProfileSheet, getCloudSession, syncNow: () => syncNow({ apiBase: getSichaoApi(), onApplied: reloadFromCloudSync }), get engine() { return engine; }, renderLibrary, stacks: { list: listStacks }, runCommand: text => command.run(text), openCommand: opts => command.openBar(opts), openPeek: openBookPeek, closePeek: closeBookPeek, openAuthGate, getAuthUser, getOpdsUrl, setOpdsUrl };
+window.__app = { db, openBook, closeBook, importFiles, importBlob, importArticleUrl, handleBack, openDeepLink, openMicroApp, closeMicroApp, isMicroAppOpen, pinToDesktop, postChatCard, requestChatConfirm, openBotConversation, openGroupConversation, openBotReaderSheet, relayBotToBotMessage, buildSecondBrainContext, dockToRightEdge, undockFromRightEdge, shareReadingItem, startInlineStackRename, mergeShelfTargets, toggleStack, markNewlyImported, runAutomationItem, deliverNewsPushInChat, openProfileSheet, getCloudSession, syncNow: () => syncNow({ apiBase: getCloudApi(), onApplied: reloadFromCloudSync }), get engine() { return engine; }, renderLibrary, stacks: { list: listStacks }, runCommand: text => command.run(text), openCommand: opts => command.openBar(opts), openPeek: openBookPeek, closePeek: closeBookPeek, openAuthGate, getAuthUser, getOpdsUrl, setOpdsUrl };

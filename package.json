@@ -1,12 +1,13 @@
 {
   "name": "zone",
   "private": true,
-  "version": "1.3.0",
-  "description": "Zone：个人知识管理系统，连接阅读、摘录、笔记、图谱与 AI。",
+  "version": "5.1.0",
+  "description": "Zbot：个人智能体工作台与极简知识阅读空间。",
   "scripts": {
     "sync:www": "node scripts/sync-www.mjs",
     "cap:sync": "npm run sync:www && cap sync android",
     "android:release": "npm run cap:sync && cd android && ./gradlew assembleRelease --no-daemon",
+    "ai:bridge": "node scripts/ai-bridge.mjs",
     "test:smoke": "node scripts/smoke.mjs",
     "test:zone": "node scripts/zone-smoke.mjs"
   },

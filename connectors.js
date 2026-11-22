@@ -1,8 +1,8 @@
-// Zone 全屏「连接应用 (Connect Apps)」中心
-// 100% 实实在在的真实连接与授权验证（绝不做花架子）：
-// 1) 12 个官方直连 API / Webhook 应用（GitHub / Notion / Linear / Slack / 飞书 / 钉钉 / Todoist / Telegram / Discord / Resend / Airtable / Trello）
-// 2) 通用远程 MCP 与 OAuth 网关（Composio 1000+ OAuth 应用 / Zapier MCP / 任意 Streamable HTTP MCP / 公开 SKILL.md）
-// 3) Android 本机内置能力（阅读器 / 手机控屏 / 连接电脑 / 联网检索 / 思潮）与外观主题
+// Zbot 全屏「连接应用 (Connect Apps)」中心
+// 优先支持全球主流开放接口与标准 MCP（无需厂商合作，用户自有 Token / MCP 端点即插即用）：
+// 1) 官方直连 API / Webhook / MCP 应用（Notion / Obsidian / Google Workspace / GitHub / Figma / Canva / Linear / Todoist / Slack / Telegram / Discord / Resend / Airtable / Trello）
+// 2) 通用远程 MCP 与 OAuth 网关（Composio 1000+ OAuth / Zapier MCP / 任意 Streamable HTTP MCP / 公开 SKILL.md）
+// 3) Android 本机内置能力（阅读器 / 手机控屏 / 连接电脑 / 联网检索）与外观主题
 
 import { nativePostJson } from './ai.js';
 import { applyThemePlugin, getActiveThemePlugin, listPlugins, savePlugins } from './bots.js';
@@ -11,10 +11,10 @@ const CONN_KEY = 'zone-connected-apps-v1';
 const SKILLS_KEY = 'zone-curated-skills-v1';
 
 const THEME_LIST = [
-  { id: 'apple-light', name: 'Apple 瓷白', desc: '经典瓷白与系统深色自适应', color: '#007aff' },
+  { id: 'apple-light', name: '纯净瓷白', desc: '纯白实面与深邃黑底自适应', color: '#111111' },
   { id: 'warm-linen', name: '暖白亚麻', desc: '温润书卷纸感浅暖色调', color: '#9a5b2f' },
   { id: 'mist-sage', name: '雾绿工作室', desc: '柔和低疲劳森林灰绿调', color: '#2e7d52' },
-  { id: 'slate-pro', name: '钛灰专业', desc: '冷静利落的效率蓝灰配色', color: '#3b5bdb' }
+  { id: 'slate-pro', name: '冷灰工坊', desc: '冷静利落的效率蓝灰配色', color: '#2563eb' }
 ];
 
 const CURATED_SKILLS = [
@@ -40,43 +40,63 @@ const CURATED_SKILLS = [
 
 export const APP_CATALOG = [
   {
+    id: 'notion', name: 'Notion', cat: 'office', color: '#111111', glyph: 'N',
+    desc: '搜索工作区页面与数据库、自动新建笔记（官方 API / MCP）',
+    fieldLabel: 'Internal Integration Token', placeholder: 'ntn_... 或 secret_...',
+    guideUrl: 'https://www.notion.so/my-integrations', guideText: '前往 Notion Integrations 创建并共享页面'
+  },
+  {
+    id: 'obsidian', name: 'Obsidian Vault', cat: 'office', color: '#7C3AED', glyph: 'Ob',
+    desc: '连接本机 Obsidian 双向链接库（Local REST API / MCP 插件，无需合作）',
+    isMcpGateway: true, defaultUrl: 'http://127.0.0.1:27123/mcp',
+    urlPlaceholder: 'Obsidian MCP 或 Local REST API 地址 (http://127.0.0.1:27123/...)',
+    fieldLabel: 'Obsidian API Key / Token', placeholder: '在 Obsidian 插件设置中复制 API Key',
+    guideUrl: 'https://obsidian.md/plugins', guideText: '在 Obsidian 社区插件市场安装 MCP / Local REST API 插件'
+  },
+  {
+    id: 'google-workspace', name: 'Google Workspace', cat: 'mcp', color: '#4285F4', glyph: 'G',
+    desc: '打通 Gmail / Google Calendar / Drive / Docs（通过个人 MCP 或 Composio OAuth）',
+    isMcpGateway: true, defaultUrl: 'https://connect.composio.dev/mcp',
+    urlPlaceholder: 'Google Workspace MCP 端点或 Composio MCP 地址',
+    fieldLabel: 'API Key / Bearer Token', placeholder: '粘贴你的 MCP Token 或 Composio Key',
+    guideUrl: 'https://app.composio.dev', guideText: '无需自建 OAuth 审核，通过标准 MCP 连接 Gmail / 日历 / Drive'
+  },
+  {
     id: 'github', name: 'GitHub', cat: 'dev', color: '#181717', glyph: 'GH',
     desc: '读取仓库、查看与创建 Issue / PR',
     fieldLabel: 'Personal Access Token', placeholder: 'ghp_... 或 github_pat_...',
     guideUrl: 'https://github.com/settings/tokens', guideText: '前往 GitHub 生成 Token（勾选 repo 权限）'
   },
   {
-    id: 'notion', name: 'Notion', cat: 'office', color: '#111111', glyph: 'N',
-    desc: '搜索工作区页面与数据库、自动新建笔记',
-    fieldLabel: 'Internal Integration Token', placeholder: 'ntn_... 或 secret_...',
-    guideUrl: 'https://www.notion.so/my-integrations', guideText: '前往 Notion Integrations 创建并共享页面'
+    id: 'figma', name: 'Figma MCP', cat: 'dev', color: '#0ACF83', glyph: 'Fg',
+    desc: '连接官方 Figma MCP，直接读取设计稿与组件规范',
+    isMcpGateway: true, defaultUrl: 'https://mcp.figma.com/mcp',
+    urlPlaceholder: 'https://mcp.figma.com/mcp',
+    fieldLabel: 'Figma Token（可选）', placeholder: '粘贴 Figma Personal Access Token',
+    guideUrl: 'https://www.figma.com/developers/api', guideText: '获取 Figma 官方 MCP 接入说明'
+  },
+  {
+    id: 'canva', name: 'Canva MCP', cat: 'office', color: '#00C4CC', glyph: 'Cv',
+    desc: '连接官方 Canva MCP，自动检索与协作编辑设计稿',
+    isMcpGateway: true, defaultUrl: 'https://mcp.canva.com/mcp',
+    urlPlaceholder: 'https://mcp.canva.com/mcp',
+    fieldLabel: 'Canva Token（可选）', placeholder: '粘贴 Canva 授权 Token',
+    guideUrl: 'https://www.canva.dev', guideText: '查看 Canva MCP 开放接口文档'
   },
   {
     id: 'composio', name: 'Composio · 1000+ OAuth', cat: 'mcp', color: '#4F46E5', glyph: 'C',
-    desc: '一站式 OAuth 授权 Gmail / 日历 / Drive / Jira 等千款应用',
+    desc: '一站式 OAuth 授权 Gmail / Calendar / Drive / Jira / Linear 等千款海外应用',
     isMcpGateway: true, defaultUrl: 'https://connect.composio.dev/mcp',
     fieldLabel: 'Composio API Key / Token', placeholder: '粘贴你的 Composio Key（留空按端点探测）',
     guideUrl: 'https://app.composio.dev', guideText: '获取 Composio MCP 授权密钥'
   },
   {
     id: 'zapier', name: 'Zapier MCP', cat: 'mcp', color: '#FF4F00', glyph: 'Z',
-    desc: '通过个人 Zapier MCP 链接联动 7000+ 自动化工作流',
+    desc: '通过个人 Zapier MCP 链接联动 7000+ 海外自动化工作流',
     isMcpGateway: true, defaultUrl: '',
     urlPlaceholder: '粘贴你的专属 Zapier MCP 地址 (https://mcp.zapier.com/...)',
     fieldLabel: '可选 Bearer Token', placeholder: '如地址已自带鉴权可留空',
     guideUrl: 'https://mcp.zapier.com', guideText: '打开 Zapier MCP 复制你的个人端点链接'
-  },
-  {
-    id: 'feishu', name: '飞书 · Feishu', cat: 'msg', color: '#00D6B9', glyph: '飞',
-    desc: '给飞书群自动发日报、提醒与任务汇报',
-    fieldLabel: '自定义机器人 Webhook 地址', placeholder: 'https://open.feishu.cn/open-apis/bot/v2/hook/...',
-    guideUrl: 'https://open.feishu.cn/document/client-docs/bot-v3/add-custom-bot', guideText: '在飞书群设置 → 群机器人中复制 Webhook'
-  },
-  {
-    id: 'dingtalk', name: '钉钉 · DingTalk', cat: 'msg', color: '#007FFF', glyph: '钉',
-    desc: '向钉钉群推送消息、进度与监控告警',
-    fieldLabel: '自定义机器人 Webhook 地址', placeholder: 'https://oapi.dingtalk.com/robot/send?access_token=...',
-    guideUrl: 'https://open.dingtalk.com/document/robots/custom-robot-access', guideText: '在钉钉群设置 → 智能群助手中复制 Webhook'
   },
   {
     id: 'linear', name: 'Linear', cat: 'dev', color: '#5E6AD2', glyph: 'L',
@@ -114,7 +134,7 @@ export const APP_CATALOG = [
     id: 'resend', name: 'Resend 邮件', cat: 'office', color: '#111111', glyph: '✉',
     desc: '通过你的 Resend 账号让 Bot 自动发送邮件',
     fieldLabel: 'Resend API Key', placeholder: 're_...',
-    extraKey: 'fromEmail', extraLabel: '发件人邮箱（可选）', extraPlaceholder: 'Zone <onboarding@resend.dev>',
+    extraKey: 'fromEmail', extraLabel: '发件人邮箱（可选）', extraPlaceholder: 'Zbot <onboarding@resend.dev>',
     guideUrl: 'https://resend.com/api-keys', guideText: '在 Resend 控制台创建 API Key'
   },
   {

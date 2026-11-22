@@ -2,26 +2,27 @@
 
 const KEY = 'rr-ai';
 const USAGE_KEY = 'zone-ai-usage-v2';
-const DEFAULTS = { baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat', apiKey: '' };
+const DEFAULTS = { baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', model: 'gemini-2.5-flash', apiKey: '' };
 const CLOUD_FALLBACK_DEFAULT = 'https://sichao-v2-server.onrender.com';
 
 export const AI_PRESETS = [
-  { id: 'deepseek', label: 'DeepSeek', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
-  { id: 'siliconflow', label: '硅基流动', baseUrl: 'https://api.siliconflow.cn/v1', model: 'deepseek-ai/DeepSeek-V3' },
-  { id: 'qwen', label: '通义千问', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-plus' },
-  { id: 'kimi', label: 'Kimi', baseUrl: 'https://api.moonshot.cn/v1', model: 'moonshot-v1-8k' },
-  { id: 'glm', label: '智谱 GLM', baseUrl: 'https://open.bigmodel.cn/api/paas/v4', model: 'glm-4-flash' },
-  { id: 'doubao', label: '豆包', baseUrl: 'https://ark.cn-beijing.volces.com/api/v3', model: 'doubao-1-5-pro-32k-250115' },
-  { id: 'openrouter', label: 'OpenRouter', baseUrl: 'https://openrouter.ai/api/v1', model: 'openai/gpt-4o-mini' },
-  { id: 'openai', label: 'OpenAI', baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
   { id: 'gemini', label: 'Gemini', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', model: 'gemini-2.5-flash' },
+  { id: 'openai', label: 'OpenAI', baseUrl: 'https://api.openai.com/v1', model: 'gpt-4.1-mini' },
+  { id: 'codex', label: 'Codex API', baseUrl: 'https://api.openai.com/v1', model: 'gpt-5.1-codex-mini' },
+  { id: 'claude', label: 'Claude', baseUrl: 'https://api.anthropic.com/v1', model: 'claude-sonnet-4-5' },
+  { id: 'openrouter', label: 'OpenRouter', baseUrl: 'https://openrouter.ai/api/v1', model: 'google/gemini-2.5-flash' },
   { id: 'grok', label: 'Grok', baseUrl: 'https://api.x.ai/v1', model: 'grok-3-mini' },
-  { id: 'claude', label: 'Claude', baseUrl: 'https://api.anthropic.com/v1', model: 'claude-3-5-sonnet-latest' }
+  { id: 'groq', label: 'Groq', baseUrl: 'https://api.groq.com/openai/v1', model: 'llama-3.3-70b-versatile' },
+  { id: 'codex-cli', label: 'Codex 订阅桥', baseUrl: 'http://127.0.0.1:8787/v1', model: 'codex-cli', localBridge: true },
+  { id: 'gemini-cli', label: 'Gemini 订阅桥', baseUrl: 'http://127.0.0.1:8787/v1', model: 'gemini-cli', localBridge: true },
+  { id: 'claude-cli', label: 'Claude 订阅桥', baseUrl: 'http://127.0.0.1:8787/v1', model: 'claude-cli', localBridge: true }
 ];
 
 const NEEDS_V1_RE = /^https?:\/\/(api\.openai\.com|api\.deepseek\.com|api\.siliconflow\.cn|api\.moonshot\.cn|api\.x\.ai|openrouter\.ai\/api|api\.groq\.com\/openai|dashscope\.aliyuncs\.com\/compatible-mode)$/i;
+const NO_TEMP_MODEL_RE = /(?:^|\/)(?:o1|o3|o4|gpt-5|codex)/i;
+const RESPONSES_ONLY_MODEL_RE = /(?:^|\/).*codex/i;
 
-export function resolveChatEndpoint(rawBase) {
+export function resolveChatEndpoint(rawBase, model = '') {
   let base = String(rawBase || '').replace(/[\s\u200b-\u200d\ufeff]+/g, '').replace(/\/+$/, '');
   if (!base) base = DEFAULTS.baseUrl;
   if (!/^https?:\/\//i.test(base)) {
@@ -33,6 +34,19 @@ export function resolveChatEndpoint(rawBase) {
     if (low.endsWith('/messages')) return { url: base, proto: 'anthropic', base };
     if (low.endsWith('/v1')) return { url: `${base}/messages`, proto: 'anthropic', base };
     return { url: `${base}/v1/messages`, proto: 'anthropic', base };
+  }
+  if (low.includes('generativelanguage.googleapis.com')) {
+    if (low.endsWith('/chat/completions')) return { url: base, proto: 'openai', base: base.replace(/\/chat\/completions$/i, '') };
+    if (low.endsWith('/openai')) return { url: `${base}/chat/completions`, proto: 'openai', base };
+    if (low.endsWith('/v1beta') || low.endsWith('/v1')) return { url: `${base}/openai/chat/completions`, proto: 'openai', base: `${base}/openai` };
+    return { url: `${base}/v1beta/openai/chat/completions`, proto: 'openai', base: `${base}/v1beta/openai` };
+  }
+  if (low.endsWith('/responses')) {
+    return { url: base, proto: 'openai-responses', base: base.replace(/\/responses$/i, '') };
+  }
+  if (low.includes('api.openai.com') && RESPONSES_ONLY_MODEL_RE.test(String(model || ''))) {
+    const rootBase = low.endsWith('/chat/completions') ? base.replace(/\/chat\/completions$/i, '') : (low.endsWith('/v1') ? base : `${base}/v1`);
+    return { url: `${rootBase}/responses`, proto: 'openai-responses', base: rootBase };
   }
   if (low.endsWith('/chat/completions')) return { url: base, proto: 'openai', base: base.replace(/\/chat\/completions$/i, '') };
   if (NEEDS_V1_RE.test(base)) return { url: `${base}/v1/chat/completions`, proto: 'openai', base: `${base}/v1` };
@@ -322,11 +336,45 @@ function formatHttpApiError(status, data, model) {
   if (status === 404) return `接口地址或模型「${model}」不存在（404）${rawMsg ? `：${rawMsg.slice(0, 90)}` : ''}`;
   if (status === 429) {
     if (QUOTA_ERR_RE.test(rawMsg)) {
-      return `当前 API 密钥额度已用尽（429）：${rawMsg.slice(0, 130)}。请到对应平台充值，或换用 DeepSeek / 智谱 GLM-4-Flash / 硅基流动。`;
+      return `当前 API 密钥额度已用尽（429）：${rawMsg.slice(0, 130)}。请切换 Gemini / OpenRouter / Groq 或本地 Codex 桥接。`;
     }
     return `服务商限流或免费额度已满（429）${rawMsg ? `：${rawMsg.slice(0, 130)}` : '（请检查该 API Key 是否有余额或免费速率已达上限）'}`;
   }
   return rawMsg || `请求失败（HTTP ${status || '未知'}）`;
+}
+
+function toResponsesBody(messages, model) {
+  const sys = [];
+  const input = [];
+  for (const m of messages || []) {
+    if (m.role === 'system') { sys.push(String(m.content || '')); continue; }
+    const role = m.role === 'assistant' ? 'assistant' : 'user';
+    if (Array.isArray(m.content)) {
+      const parts = [];
+      for (const p of m.content) {
+        if (p?.type === 'text') parts.push({ type: role === 'assistant' ? 'output_text' : 'input_text', text: String(p.text || '') });
+        else if (p?.type === 'image_url' && p.image_url?.url) parts.push({ type: 'input_image', image_url: String(p.image_url.url) });
+      }
+      input.push({ role, content: parts.length ? parts : [{ type: 'input_text', text: '' }] });
+    } else {
+      input.push({ role, content: String(m.content || '') });
+    }
+  }
+  const body = { model, input: input.length ? input : [{ role: 'user', content: '你好' }] };
+  if (sys.length) body.instructions = sys.join('\n\n');
+  return body;
+}
+
+function extractResponsesText(data) {
+  if (typeof data?.output_text === 'string' && data.output_text.trim()) return data.output_text.trim();
+  const out = [];
+  for (const item of (Array.isArray(data?.output) ? data.output : [])) {
+    if (typeof item?.text === 'string') out.push(item.text);
+    for (const c of (Array.isArray(item?.content) ? item.content : [])) {
+      if (typeof c?.text === 'string') out.push(c.text);
+    }
+  }
+  return out.join('\n').trim();
 }
 
 function toAnthropicBody(messages, model, temperature) {
@@ -363,7 +411,7 @@ export async function complete(messages, override) {
     throw err;
   }
   const model = String(cfg.model || DEFAULTS.model).trim() || DEFAULTS.model;
-  const { url: endpoint, proto } = resolveChatEndpoint(cfg.baseUrl);
+  const { url: endpoint, proto } = resolveChatEndpoint(cfg.baseUrl, model);
   if (!/^https?:\/\//i.test(endpoint)) throw new Error('接口地址需要以 http:// 或 https:// 开头');
 
   const recordAndReturn = (text, reasoning, pt, ct, tt) => {
@@ -382,11 +430,13 @@ export async function complete(messages, override) {
   let directErr = '';
   try {
     const headers = proto === 'anthropic'
-      ? { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' }
+      ? { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' }
       : { Authorization: 'Bearer ' + apiKey };
     const body = proto === 'anthropic'
       ? toAnthropicBody(messages, model, 0.3)
-      : { model, temperature: 0.3, messages };
+      : (proto === 'openai-responses'
+        ? toResponsesBody(messages, model)
+        : (NO_TEMP_MODEL_RE.test(model) ? { model, messages } : { model, temperature: 0.3, messages }));
     let res = await nativePostJson(endpoint, headers, body, 45000);
     // 瞬时 429 速率限制自动退避重试 1 次（若是明确余额/配额耗尽则不浪费时间直接提示）
     if (res.status === 429 && !QUOTA_ERR_RE.test(extractApiErrorText(res.data))) {
@@ -403,6 +453,11 @@ export async function complete(messages, override) {
       const text = blocks.filter(b => b?.type === 'text').map(b => b.text || '').join('\n').trim();
       const u = res.data?.usage || {};
       return recordAndReturn(text, '', u.input_tokens || 0, u.output_tokens || 0, (u.input_tokens || 0) + (u.output_tokens || 0));
+    }
+    if (proto === 'openai-responses') {
+      const text = extractResponsesText(res.data);
+      const u = res.data?.usage || {};
+      return recordAndReturn(text, '', u.input_tokens || 0, u.output_tokens || 0, u.total_tokens || ((u.input_tokens || 0) + (u.output_tokens || 0)));
     }
     const msgObj = res.data?.choices?.[0]?.message || {};
     const u = res.data?.usage || {};
